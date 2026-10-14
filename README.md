@@ -34,6 +34,15 @@ uv run pytest
 uv run ruff check .
 ```
 
+If your shell points `UV_INDEX_URL` at an unavailable mirror (this workspace's
+configured mirror returned HTTP 403), use the official index for these commands:
+
+```sh
+UV_INDEX_URL=https://pypi.org/simple uv sync
+UV_INDEX_URL=https://pypi.org/simple uv run pytest
+UV_INDEX_URL=https://pypi.org/simple uv run ruff check .
+```
+
 Create a disposable known-code demo repository and review the regression:
 
 ```sh
