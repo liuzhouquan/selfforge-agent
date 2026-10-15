@@ -20,16 +20,20 @@ from verified_pr_agent.integrations.github_pr import (
     checkout_pr,
     load_pr,
 )
+from verified_pr_agent.integrations.model_http import ProviderHTTPError
 from verified_pr_agent.models import EvidenceReport
 from verified_pr_agent.providers import (
+    AvailableModel,
     ModelAttempt,
     ProviderChoice,
     ProviderInfo,
     ProviderStatus,
     check_provider,
     configured_providers,
+    list_models,
     provider_info,
     route_providers,
+    save_provider_settings,
 )
 from verified_pr_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
 from verified_pr_agent.service import ReviewService
@@ -87,6 +91,18 @@ class ProviderCheckRequest(BaseModel):
     provider: Literal["all", "deepseek", "openrouter"] = "all"
 
 
+class ProviderSettingsRequest(BaseModel):
+    provider: Literal["deepseek", "openrouter"]
+    base_url: str
+    model: str
+    api_key: str | None = None
+
+
+def _require_local(client: Request) -> None:
+    if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        raise HTTPException(status_code=403, detail="Provider settings are available only from localhost")
+
+
 @app.get("/", include_in_schema=False)
 def home() -> FileResponse:
     return FileResponse(_STATIC / "index.html")
@@ -107,12 +123,31 @@ def config() -> AppConfig:
 
 @app.post("/api/providers/check", response_model=list[ProviderStatus])
 def provider_check(request: ProviderCheckRequest, client: Request) -> list[ProviderStatus]:
-    if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
-        raise HTTPException(status_code=403, detail="Provider checks are available only from localhost")
+    _require_local(client)
     return [
         check_provider(item) for item in configured_providers()
         if request.provider == "all" or request.provider == item.name
     ]
+
+
+@app.post("/api/providers/config", response_model=ProviderInfo)
+def provider_config(request: ProviderSettingsRequest, client: Request) -> ProviderInfo:
+    _require_local(client)
+    try:
+        return save_provider_settings(request.provider, api_key=request.api_key,
+                                      base_url=request.base_url, model=request.model)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/providers/{provider}/models", response_model=list[AvailableModel])
+def provider_models(provider: Literal["deepseek", "openrouter"], client: Request) -> list[AvailableModel]:
+    _require_local(client)
+    item = next(entry for entry in configured_providers() if entry.name == provider)
+    try:
+        return list_models(item)
+    except (ValueError, TypeError, ProviderHTTPError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/github/review", response_model=GitHubReviewResponse)

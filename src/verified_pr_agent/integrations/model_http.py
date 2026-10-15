@@ -39,7 +39,11 @@ def request_json(
                 if remaining <= 0:
                     raise ProviderHTTPError("Provider response timed out")
                 if socket is not None:
-                    socket.settimeout(remaining)
+                    try:
+                        socket.settimeout(remaining)
+                    except OSError:
+                        # Some proxy transports close their socket after buffering the body.
+                        socket = None
                 chunk = response.read1(min(8192, max_bytes + 1 - size))
                 if not chunk:
                     break

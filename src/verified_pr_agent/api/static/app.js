@@ -226,9 +226,34 @@ $("check-providers").addEventListener("click", async () => {
   }
 });
 
-fetch("/api/config").then((response) => response.json()).then((config) => {
+async function syncModels(name) {
+  const status = $(`${name}-sync-state`);
+  status.textContent = "正在同步模型列表…";
+  try {
+    const response = await fetch(`/api/providers/${name}/models`);
+    const models = await response.json();
+    if (!response.ok) throw new Error(models.detail || `HTTP ${response.status}`);
+    const list = $(`${name}-models`);
+    list.replaceChildren(...models.map((model) => {
+      const option = document.createElement("option");
+      option.value = model.id;
+      option.label = model.name;
+      return option;
+    }));
+    status.textContent = `已同步 ${models.length} 个模型。输入名称或 ID 选择，也可手动填写。`;
+  } catch (error) {
+    status.textContent = `同步失败：${error.message}。仍可手动输入模型 ID。`;
+  }
+}
+
+function applyConfig(config) {
   configuredProviders = config.providers.filter((item) => item.configured);
   $("model-state").textContent = configuredProviders.length ? `已配置：${configuredProviders.map((item) => `${item.label} (${item.model})`).join("、")}` : "未检测到模型密钥，规则审查可用";
+  for (const item of config.providers) {
+    $(`${item.name}-url`).value = item.base_url;
+    $(`${item.name}-model`).value = item.model;
+    $(`${item.name}-key-state`).textContent = item.configured ? `已连接 · ${item.key_source === "local" ? "本地密钥" : "环境变量"}` : "未连接";
+  }
   for (const select of [$("review-provider"), $("repair-provider")]) {
     for (const option of select.options) {
       if (["deepseek", "openrouter"].includes(option.value)) option.disabled = !configuredProviders.some((item) => item.name === option.value);
@@ -237,4 +262,40 @@ fetch("/api/config").then((response) => response.json()).then((config) => {
   hostTestsEnabled = config.host_tests_enabled && configuredProviders.length > 0;
   $("repair-button").disabled = !hostTestsEnabled;
   $("repair-availability").textContent = hostTestsEnabled ? "还需勾选上面的可信执行选项" : "需配置模型密钥并设置 VPA_ENABLE_HOST_TESTS=1 后重启服务";
+}
+
+for (const form of document.querySelectorAll(".settings-card")) {
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = form.dataset.provider;
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    $(`${name}-sync-state`).textContent = "正在保存…";
+    try {
+      await postJson("/api/providers/config", {
+        provider: name,
+        base_url: $(`${name}-url`).value.trim(),
+        api_key: $(`${name}-key`).value.trim() || null,
+        model: $(`${name}-model`).value.trim(),
+      });
+      $(`${name}-key`).value = "";
+      const response = await fetch("/api/config");
+      if (!response.ok) throw new Error(`配置读取失败 (${response.status})`);
+      applyConfig(await response.json());
+      await syncModels(name);
+    } catch (error) {
+      $(`${name}-sync-state`).textContent = `保存失败：${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+document.querySelectorAll(".sync-models").forEach((button) => {
+  button.addEventListener("click", () => syncModels(button.dataset.provider));
+});
+
+fetch("/api/config").then((response) => response.json()).then((config) => {
+  applyConfig(config);
+  for (const provider of configuredProviders) syncModels(provider.name);
 }).catch(() => { $("model-state").textContent = "无法读取模型配置"; });
