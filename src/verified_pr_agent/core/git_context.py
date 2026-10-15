@@ -36,7 +36,7 @@ def _commit(repo: Path, revision: str) -> str:
     return _git(repo, "rev-parse", "--verify", f"{revision}^{{commit}}").decode().strip()
 
 
-def _parse_hunks(patch: str) -> list[DiffHunk]:
+def parse_hunks(patch: str) -> list[DiffHunk]:
     hunks: list[DiffHunk] = []
     old_line = new_line = 0
     for line in patch.splitlines():
@@ -106,7 +106,7 @@ def build_context(repository: Path, base: str, head: str) -> PRContext:
                 path=path,
                 previous_path=old_path,
                 status=status,
-                hunks=_parse_hunks(patch),
+                hunks=parse_hunks(patch),
                 binary="Binary files" in patch or "GIT binary patch" in patch,
             )
         )

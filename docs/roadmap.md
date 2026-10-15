@@ -1,21 +1,10 @@
 # Roadmap
 
-1. **PR Review baseline — implemented.** Local Git context, hunk line mapping, and
-   deterministic heuristic findings.
-2. **Test Execution — implemented for explicitly trusted local repositories.** Existing
-   pytest suite, timeout, process evidence, JUnit counts. Docker isolation is pending.
-3. **Risk-driven Test Generation — pending.** Generate a targeted test from a finding,
-   validate that the test itself is sound, and run it on base and head.
-4. **Test-driven Repair — partial.** A bounded model-backed loop edits changed Python
-   source in a temporary Git worktree and emits a patch after existing pytest tests
-   pass. It does not yet use generated, targeted tests.
-5. **Objective Verification Loop — partial.** Compare existing pytest suites on base,
-   head, and repaired trees. Per-finding causality and richer failure classification
-   remain pending.
-6. **GitHub integration — pending.** Fetch PRs, trigger reviews, and gate publishing of
-   comments behind human approval.
-7. **Benchmark / Tracing — pending.** Measure precision, recall, false positives,
-   verification success, cost, and trace each evidence transition.
-
-An optional bounded LLM reviewer and OpenHands SDK runtime investigation remain pending.
-The new coding adapter is OpenAI-compatible but is not a PR reviewer.
+1. **PR review baseline — implemented.** Local and GitHub PR context, hunk line mapping, deterministic heuristic findings, and a web diff workbench.
+2. **External PR workflow — partial.** Import any accessible PR and clone its head into an editable branch. Publishing edits, opening a follow-up PR, and submitting review comments are pending; source-branch permissions must be respected.
+3. **LLM review — partial.** Optional DeepSeek review of a bounded set of added lines. Output is validated against actual diff locations; richer cross-file context, prompt-injection defenses, and evaluation are pending.
+4. **Test execution — partial.** Explicitly trusted local repositories can run their existing pytest suite, with timeout, process evidence, and JUnit counts. A container sandbox is pending.
+5. **Test-driven repair — partial.** A bounded model-backed loop edits changed Python source in temporary Git worktrees and emits a patch if the existing suite regresses on head and passes after repair. The web UI can run this only with operator and per-request trust.
+6. **Risk-driven test generation — pending.** Generate and validate targeted tests for particular findings, then compare base and head.
+7. **Objective verification — partial.** Existing suite health is compared across base, head, and repaired trees. Per-finding causality and richer failure classification remain pending.
+8. **Benchmark and tracing — pending.** Measure false positives, verification success, time, and model cost.

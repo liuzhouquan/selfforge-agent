@@ -1,37 +1,11 @@
 # Architecture
 
-`core.git_context` validates a working tree and two commit SHAs, then parses file
-changes and hunk lines. `review.baseline` inspects added lines through the `ReviewAgent`
-interface. `verification.runner` executes the existing pytest suite in a trusted local
-repository and reads JUnit XML. `ReviewService` combines these into an `EvidenceReport`.
-The CLI and FastAPI app both call that service.
+The FastAPI app serves the local web workbench. `integrations.github_pr` reads metadata and file patches through `gh api`, then converts GitHub's diff into the shared `PRContext`. The same module can clone a repository and check out the PR head into a fresh directory. Checkout records the Git merge base for later test comparison. Local CLI reviews build `PRContext` directly from Git.
 
-The CLI trust flag is the host execution boundary. The HTTP API accepts no path and no
-test request; its repository is fixed by an operator environment variable. The test
-runner captures actual process results and kills its process group on timeout on POSIX.
-It does not isolate filesystem or network access. Docker sandboxing is a future backend.
+`ReviewService` runs `BaselineReviewer` on changed lines. `DeepSeekReviewer` optionally sends a capped selection of added lines to DeepSeek, parses structured JSON, and accepts findings only at real added line locations. Both sources produce suspected findings. Neither source claims test-backed reproduction. GitHub may omit patches for binary or oversized files, which are marked unavailable.
 
-Review findings are hypotheses. The current test result records suite health, without
-claiming causality between a finding and a test. The `VerificationStatus` enum reserves
-`reproduced`, `refuted`, `unverified`, and `error` for a later targeted verification loop.
-The current baseline emits only `suspected`.
+`RepairAgent` runs pytest in detached base, head, and candidate worktrees. The agent accepts a repair only when base tests pass, head tests fail with an assertion, and repaired tests pass. At most two candidate edits are attempted by default, each restricted to changed Python source files. The tracked diff must contain no test edits. It returns a patch and a structured report; it does not change the review checkout or push to GitHub. This checks existing suite health, not per-finding causality.
 
-Current review scope excludes GitHub authentication, LLM-based review, generated tests,
-and benchmarking. A future LLM reviewer can implement `ReviewAgent` while returning the
-same validated `Finding` model and using bounded read-only repository tools.
+The local web repair endpoint requires localhost access, an operator setting `VPA_ENABLE_HOST_TESTS=1`, and an explicit per-request trust flag. `TestRunner` executes repository code on the host, captures real process results, and kills the process group on timeout on POSIX. It does not isolate filesystem or network access. A container execution backend is planned. PR import and review never execute the PR code.
 
-## Bounded coding loop
-
-`coding.agent.RepairAgent` compares pytest on detached base and head worktrees before
-asking a `CodingModel` for an exact source replacement. A third worktree holds the
-candidate repair. Each attempt records the validated edit, patch, and real test result;
-at most three attempts are allowed. The agent accepts a repair only when base passes,
-head has an assertion failure, repaired tests pass, and the tracked diff contains only
-the allowed changed Python source files. Temporary worktrees are removed afterward.
-The output patch is reviewable; it is never applied to the user's working tree.
-
-`OpenAICompatibleCodingModel` is an optional chat completion adapter. It sends the task,
-small changed source files, heuristic PR findings, and capped test output to the
-configured endpoint, then
-validates a `CodeEdit` object. The API itself does not decide whether a repair worked;
-the pytest process does. No model service is called in the offline test suite.
+The API key stays on the server. PR source snippets and failing test output are sent to the configured coding model for repair. The web UI uses text-only DOM insertion for untrusted PR content. The app has no GitHub write operation; checkout and report generation are local operations.

@@ -33,9 +33,14 @@ def main() -> int:
     repair.add_argument("--test-path", default="tests")
     repair.add_argument("--timeout", type=float, default=60)
     repair.add_argument("--max-attempts", type=int, default=2)
-    repair.add_argument("--model", default=os.environ.get("VPA_MODEL"))
+    deepseek_configured = bool(os.environ.get("DEEPSEEK_API_KEY"))
     repair.add_argument(
-        "--base-url", default=os.environ.get("VPA_API_BASE_URL", "https://api.openai.com/v1")
+        "--model", default=os.environ.get("VPA_MODEL") or ("deepseek-flash" if deepseek_configured else None)
+    )
+    repair.add_argument(
+        "--base-url",
+        default=os.environ.get("VPA_API_BASE_URL")
+        or ("https://api.deepseek.com" if deepseek_configured else "https://api.openai.com/v1"),
     )
     repair.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     repair.add_argument("--patch-output", type=Path, help="Write a verified patch to this file")
@@ -47,7 +52,11 @@ def main() -> int:
             model = OpenAICompatibleCodingModel(
                 model=args.model,
                 base_url=args.base_url,
-                api_key=os.environ.get("VPA_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
+                api_key=(
+                    os.environ.get("VPA_API_KEY")
+                    or os.environ.get("DEEPSEEK_API_KEY")
+                    or os.environ.get("OPENAI_API_KEY", "")
+                ),
             )
             result = RepairAgent(model).run(
                 args.repo,
