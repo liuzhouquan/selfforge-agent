@@ -1,49 +1,53 @@
 # Verified PR Agent
 
-**Evidence-Driven Code Review, Testing & Repair**
+A local web workbench for reviewing GitHub pull requests, inspecting diffs, checking out editable branches, and running a bounded coding and test loop. It accepts any public PR or PR accessible to the signed-in `gh` account, including other people's PRs. A CLI remains available for local repositories and automation.
 
-This first MVP reviews a comparison between two commits in a local Git repository. It
-records parsed diff hunks, clearly labeled heuristic risk findings, and optionally the
-result of running that repository's existing pytest suite. A failing existing test does
-not prove that a particular finding is true; findings stay `suspected` until future
-targeted verification connects the failure to the finding.
+## Start the web workbench
 
-## Current features
-
-- Validate a repository and hexadecimal commit IDs; collect changed files, line numbers,
-  and diff hunks, including rename metadata.
-- Apply four deterministic patterns (`eval`, `exec`, `shell=True`, `verify=False`) to
-  added lines. These are heuristic suspicions, not autonomous LLM review.
-- Run existing pytest tests only when the CLI user explicitly selects
-  `--trust-local-tests`. Capture the real exit code, duration, environment, logs and
-  JUnit XML counts, with a timeout.
-- Write a structured JSON evidence report and a short terminal summary.
-- Expose `GET /health` and `POST /review`. The HTTP endpoint uses one server-configured
-  repository and never runs tests.
-
-The stack is Python 3.11+, FastAPI, Pydantic v2, pytest, Git CLI, and uv. The local test
-runner executes trusted code on the host; it is not a Docker sandbox.
-
-## Install and run
-
-Install [uv](https://docs.astral.sh/uv/) and Git, then from this directory:
+Install Python 3.11+, [uv](https://docs.astral.sh/uv/), Git, and [GitHub CLI](https://cli.github.com/). Sign in with `gh auth login` to access private PRs. From this directory:
 
 ```sh
 uv sync
-uv run pytest
-uv run ruff check .
+uv run uvicorn verified_pr_agent.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-If your shell points `UV_INDEX_URL` at an unavailable mirror (this workspace's
-configured mirror returned HTTP 403), use the official index for these commands:
+Open `http://127.0.0.1:8000`, paste a GitHub PR URL, and click **导入并审查**. The browser shows changed files, diff hunks, and suspected findings from deterministic rules. Importing a PR reads GitHub metadata and patches; it does not execute the PR's code. GitHub omits text patches for some files, such as binary files and large diffs; these are marked in the UI. Reviews are limited to 300 changed files, and model input is further capped.
+
+To enable optional DeepSeek review, provide your key in the server environment and restart the server:
 
 ```sh
-UV_INDEX_URL=https://pypi.org/simple uv sync
-UV_INDEX_URL=https://pypi.org/simple uv run pytest
-UV_INDEX_URL=https://pypi.org/simple uv run ruff check .
+export DEEPSEEK_API_KEY='your-key'
+uv run uvicorn verified_pr_agent.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-Create a disposable known-code demo repository and review the regression:
+The key is never sent to the browser. DeepSeek receives a bounded list of added lines and returns proposed findings. Findings must point to an actual added line and remain `suspected`; model output alone does not verify a defect. If the model request fails, the rule-based review remains visible with an error message. The default model is `deepseek-flash` at `https://api.deepseek.com`.
+
+Click **下载可编辑工作区** to clone the repository and check out the PR head into a new branch under `.workspaces/`. The app creates a new directory for each checkout and does not overwrite your own checkout. You can open that path in your IDE, edit files, commit, and use Git normally. A minimal manual equivalent is:
+
+```sh
+gh repo clone OWNER/REPO my-review
+cd my-review
+gh pr checkout 123 --branch my-pr-123
+# edit and test
+git add .
+git commit -m 'Fix issue found in review'
+```
+
+Pushing back to the same PR requires write access to its source branch or an eligible fork PR with **Allow edits from maintainers** enabled. If you do not have that permission, push your change to your own fork and open a new PR. The workbench currently prepares a local branch and a patch; it does not push commits, post review comments, or create a GitHub PR on your behalf.
+
+After committing, inspect `git remote -v`. If you have write access to the PR's source branch, push the local checkout to that branch with `git push <source-remote> HEAD:<source-branch>`; GitHub updates the existing PR automatically. If the push is denied, fork the repository with `gh repo fork OWNER/REPO --remote`, inspect the newly added fork remote, push your branch to it, and open a follow-up PR with `gh pr create --repo OWNER/REPO --head YOUR_USER:YOUR_BRANCH --base BASE_BRANCH`. Review the resulting diff before creating the PR.
+
+## Coding and test loop
+
+The web workbench has a **隔离修复尝试** form. To use it, set `VPA_ENABLE_HOST_TESTS=1`, configure `DEEPSEEK_API_KEY`, restart the server, enter a repair goal, and check the per-request trust box. This runs the checked-out PR's pytest suite on your host, so use it only for code you trust. The server listens on localhost by default, and the endpoint rejects non-local clients.
+
+The agent compares tests on the PR merge base and head, proposes at most two edits to changed Python source files, runs tests on each repair attempt in disposable Git worktrees, and offers a patch only when the existing suite passed on base, failed on head, and passed after repair. Tests cannot be edited by the agent. The source checkout is retained for your own work; the agent's attempts do not modify it. This proves the existing suite's regression was repaired, not that a particular review finding was objectively verified. It requires an existing pytest suite that reproduces the regression; targeted test generation and sandboxed execution are still planned.
+
+The HTTP API also exposes `/health`, `POST /api/github/review`, `POST /api/github/checkout`, and `POST /api/github/repair`; interactive schemas are at `/docs`. The older `POST /review` endpoint can inspect a local repository configured with `VERIFIED_PR_AGENT_REPO_ROOT` and does not run tests.
+
+## Local CLI and development
+
+Create a disposable example repository and review it:
 
 ```sh
 DEMO="/tmp/verified-pr-demo-$$"
@@ -54,37 +58,15 @@ uv run verified-pr-agent review --repo "$DEMO" --base "$BASE" --head "$HEAD" \
   --trust-local-tests --output "$DEMO/report.json"
 ```
 
-The terminal should show one suspected `eval` finding and one failing test. The JSON
-report includes the exact SHAs, hunk lines, test command, exit code, JUnit counts,
-timestamps, and error messages. For a repository that you have not explicitly trusted,
-omit `--trust-local-tests`; the review and JSON report still work.
+The offline repair fixture is available with `uv run python examples/repair_demo.py`. For a live CLI repair, use `uv run verified-pr-agent repair --repo "$DEMO" --base "$BASE" --head "$HEAD" --task 'Restore the add function' --trust-local-tests --output "$DEMO/repair.json" --patch-output "$DEMO/repair.patch"` with `DEEPSEEK_API_KEY` set. You can override the model with `VPA_MODEL` and the endpoint with `VPA_API_BASE_URL` for the CLI and coding adapter.
 
-Example report excerpt (IDs, paths, SHAs, and timestamps vary):
-
-```json
-{
-  "execution_status": "completed",
-  "findings": [{"category": "dynamic-code", "verification_status": "suspected", "source": "heuristic"}],
-  "test_results": [{"status": "failed", "exit_code": 1, "passed": 0, "failed": 1}]
-}
-```
-
-`execution_status=completed` means the requested review steps ran. The failing test
-remains visible in `test_results`; it does not change the finding's verification status.
-
-To serve the HTTP API, choose one repository on the server:
+Run the checks with:
 
 ```sh
-export VERIFIED_PR_AGENT_REPO_ROOT="$DEMO"
-uv run uvicorn verified_pr_agent.api.app:app --host 127.0.0.1 --port 8000
+uv run pytest
+uv run ruff check .
 ```
 
-Then send `POST /review` with `{"base":"<hex SHA>","head":"<hex SHA>"}`. The API
-does not accept a repository path or test command from callers. Do not expose this local
-service publicly without authentication and deployment controls.
+If the configured package mirror fails, prefix these commands with `UV_INDEX_URL=https://pypi.org/simple`.
 
-## Roadmap
-
-See [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md). Targeted test
-generation, repair, objective verification, GitHub integration, and LLM review are future
-work. No API key is needed for the current version.
+See [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md) for implementation boundaries and remaining work.

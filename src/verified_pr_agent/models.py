@@ -32,6 +32,7 @@ class ChangedFile(BaseModel):
     status: str
     hunks: list[DiffHunk]
     binary: bool = False
+    patch_available: bool = True
 
 
 class PRContext(BaseModel):
