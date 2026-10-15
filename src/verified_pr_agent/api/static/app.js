@@ -2,6 +2,27 @@ const $ = (id) => document.getElementById(id);
 let current = null;
 let hostTestsEnabled = false;
 let verifiedPatch = "";
+let configuredProviders = [];
+
+function providerLabel(name) {
+  return name === "deepseek" ? "DeepSeek" : name === "openrouter" ? "OpenRouter" : name;
+}
+
+function providerStatusLabel(status) {
+  return ({
+    ready: "可用",
+    invalid_key: "密钥无效",
+    insufficient_credits: "额度不足",
+    unavailable: "暂不可用",
+    unconfigured: "未配置",
+  })[status] || status;
+}
+
+function attemptText(attempt) {
+  const usage = attempt.usage;
+  const tokens = usage ? ` · ${usage.prompt_tokens} 输入 / ${usage.completion_tokens} 输出 / ${usage.total_tokens} 总 tokens` : "";
+  return `${providerLabel(attempt.provider)} (${attempt.model})：${attempt.status === "success" ? "成功" : `失败 · ${attempt.error}`}${tokens}`;
+}
 
 function showAlert(message) {
   const element = $("alert");
@@ -90,13 +111,15 @@ function render(data) {
   $("github-link").href = pr.url;
   $("metric-files").textContent = pr.context.files.length;
   $("metric-findings").textContent = report.findings.length;
-  $("metric-status").textContent = data.ai_error ? "部分完成" : "完成";
+  $("metric-status").textContent = data.model_provider ? providerLabel(data.model_provider) : data.ai_error ? "部分完成" : "规则完成";
   $("file-count").textContent = `${pr.context.files.length} files`;
 
   const notes = [...pr.warnings];
-  if (data.ai_error) notes.unshift(`DeepSeek 审查失败：${data.ai_error}。规则审查结果仍可查看。`);
+  if (data.ai_error) notes.unshift(`${data.ai_error}。规则审查结果仍可查看。`);
   $("warnings").textContent = notes.join(" · ");
   $("warnings").hidden = !notes.length;
+  $("model-summary").textContent = data.model_attempts.map(attemptText).join(" → ");
+  $("model-summary").hidden = !data.model_attempts.length;
 
   const files = $("file-list");
   files.replaceChildren();
@@ -119,7 +142,8 @@ $("review-form").addEventListener("submit", async (event) => {
   try {
     const data = await postJson("/api/github/review", {
       url: $("pr-url").value.trim(),
-      use_deepseek: $("use-deepseek").checked,
+      provider: $("review-provider").value,
+      fallback: $("review-fallback").checked,
     });
     render(data);
   } catch (error) {
@@ -159,11 +183,13 @@ $("repair-form").addEventListener("submit", async (event) => {
       url: current.pr.url,
       task: $("repair-task").value.trim(),
       trust_local_tests: $("trust-tests").checked,
+      provider: $("repair-provider").value,
+      fallback: $("repair-fallback").checked,
     });
     const report = response.report;
     verifiedPatch = report.verified_patch;
     $("repair-status").textContent = `状态：${report.status}`;
-    $("repair-detail").textContent = `Base ${report.base_test?.status ?? "未运行"} · Head ${report.head_test?.status ?? "未运行"} · ${report.attempts.length} 次尝试 · 本地 checkout：${response.checkout.path}${report.errors.length ? ` · ${report.errors.join("; ")}` : ""}`;
+    $("repair-detail").textContent = `Base ${report.base_test?.status ?? "未运行"} · Head ${report.head_test?.status ?? "未运行"} · ${report.attempts.length} 次尝试 · 编码模型：${response.model_provider ? providerLabel(response.model_provider) : "未调用"} · 本地 checkout：${response.checkout.path}${report.errors.length ? ` · ${report.errors.join("; ")}` : ""}${response.model_attempts.length ? ` · ${response.model_attempts.map(attemptText).join(" → ")}` : ""}`;
     $("repair-patch").textContent = verifiedPatch || "没有生成已验证补丁。请查看报告中的测试和错误信息。";
     $("download-patch").hidden = !verifiedPatch;
     $("repair-result").hidden = false;
@@ -184,10 +210,31 @@ $("download-patch").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 });
 
+$("check-providers").addEventListener("click", async () => {
+  const button = $("check-providers");
+  button.disabled = true;
+  button.textContent = "正在检查…";
+  try {
+    const statuses = await postJson("/api/providers/check", { provider: "all" });
+    $("provider-status").textContent = statuses.map((item) => `${providerLabel(item.name)}：${providerStatusLabel(item.status)}${item.balance ? ` · 余额 ${item.balance}` : ""}${item.usage ? ` · ${item.usage}` : ""}${item.error ? ` · ${item.error}` : ""}`).join("\n");
+    $("provider-status").hidden = false;
+  } catch (error) {
+    showAlert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "检查密钥与额度";
+  }
+});
+
 fetch("/api/config").then((response) => response.json()).then((config) => {
-  $("use-deepseek").disabled = !config.deepseek_available;
-  $("model-state").textContent = config.deepseek_available ? "DeepSeek 已配置，可按需启用" : "未检测到 DEEPSEEK_API_KEY，规则审查可用";
-  hostTestsEnabled = config.host_tests_enabled && config.deepseek_available;
+  configuredProviders = config.providers.filter((item) => item.configured);
+  $("model-state").textContent = configuredProviders.length ? `已配置：${configuredProviders.map((item) => `${item.label} (${item.model})`).join("、")}` : "未检测到模型密钥，规则审查可用";
+  for (const select of [$("review-provider"), $("repair-provider")]) {
+    for (const option of select.options) {
+      if (["deepseek", "openrouter"].includes(option.value)) option.disabled = !configuredProviders.some((item) => item.name === option.value);
+    }
+  }
+  hostTestsEnabled = config.host_tests_enabled && configuredProviders.length > 0;
   $("repair-button").disabled = !hostTestsEnabled;
-  $("repair-availability").textContent = hostTestsEnabled ? "还需勾选上面的可信执行选项" : "需配置 DeepSeek 并设置 VPA_ENABLE_HOST_TESTS=1 后重启服务";
+  $("repair-availability").textContent = hostTestsEnabled ? "还需勾选上面的可信执行选项" : "需配置模型密钥并设置 VPA_ENABLE_HOST_TESTS=1 后重启服务";
 }).catch(() => { $("model-state").textContent = "无法读取模型配置"; });

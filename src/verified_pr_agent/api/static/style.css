@@ -753,6 +753,60 @@ button {
 .repair-result p {
   max-width:none
 }
+.provider-controls {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:9px;
+  margin-top:13px;
+  font-size:11px;
+  color:#587263
+}
+.provider-controls select,.repair-card select {
+  padding:8px 10px;
+  border:1px solid #d9e7db;
+  border-radius:8px;
+  background:#fff;
+  color:#274b37;
+  font:inherit
+}
+.provider-fallback {
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  font-size:11px
+}
+.provider-controls button {
+  margin-left:auto;
+  padding:8px 11px;
+  border:1px solid #bad7c1;
+  border-radius:8px;
+  background:#f3faf2;
+  color:#286442;
+  font-size:11px
+}
+.provider-controls button:disabled {
+  opacity:.6;
+  cursor:wait
+}
+.model-state {
+  margin-top:10px;
+  color:#799084;
+  font-size:11px
+}
+.provider-status,.model-summary {
+  margin-top:12px;
+  padding:10px 13px;
+  border-radius:8px;
+  background:#edf7ed;
+  color:#326448;
+  font-size:11px;
+  line-height:1.6;
+  white-space:pre-wrap
+}
+.model-summary {
+  margin:0 0 14px
+}
 @media(max-width:760px) {
   .repair-card {
     grid-template-columns:1fr;

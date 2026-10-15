@@ -1,14 +1,18 @@
 """Small OpenAI-compatible chat adapter; model output is validated before any edit."""
 
-import json
 from typing import Protocol
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 from pydantic import ValidationError
 
 from verified_pr_agent.coding.models import CodeEdit, RepairObservation
+from verified_pr_agent.integrations.model_http import ProviderHTTPError, request_json
+from verified_pr_agent.providers import (
+    ModelAttempt,
+    ProviderConfig,
+    TokenUsage,
+    token_usage_from_response,
+)
 
 
 class ModelError(ValueError):
@@ -36,6 +40,7 @@ class OpenAICompatibleCodingModel:
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = api_key
         self.timeout = timeout
+        self.last_usage: TokenUsage | None = None
 
     def propose(self, observation: RepairObservation) -> CodeEdit:
         payload = {
@@ -54,26 +59,52 @@ class OpenAICompatibleCodingModel:
             ],
             "response_format": {"type": "json_object"},
         }
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        request = Request(
-            self.url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                body = response.read(131073)
-        except HTTPError as exc:
-            raise ModelError(f"Model endpoint returned HTTP {exc.code}") from exc
-        except (OSError, URLError) as exc:
-            raise ModelError(f"Model request failed: {exc}") from exc
-        if len(body) > 131072:
-            raise ModelError("Model response exceeded 128 KiB")
-        try:
-            content = json.loads(body)["choices"][0]["message"]["content"]
-            return CodeEdit.model_validate_json(content)
+            response = request_json(self.url, self.api_key, payload=payload, timeout=self.timeout)
+            self.last_usage = token_usage_from_response(response)
+            content = response["choices"][0]["message"]["content"]
+            edit = CodeEdit.model_validate_json(content)
+            return edit
+        except ProviderHTTPError as exc:
+            raise ModelError(str(exc)) from exc
         except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
             raise ModelError("Model did not return a valid CodeEdit JSON object") from exc
+
+
+class FallbackCodingModel:
+    """Try configured providers in order; stop retrying one after a request failure."""
+
+    def __init__(self, providers: list[ProviderConfig], *, timeout: float = 25) -> None:
+        if not providers:
+            raise ValueError("At least one configured model provider is required")
+        self.providers = providers
+        self.timeout = timeout
+        self.active_index = 0
+        self.attempts: list[ModelAttempt] = []
+        self.selected_provider: str | None = None
+
+    def propose(self, observation: RepairObservation) -> CodeEdit:
+        failures = []
+        for index in range(self.active_index, len(self.providers)):
+            provider = self.providers[index]
+            client = OpenAICompatibleCodingModel(
+                model=provider.model, base_url=provider.base_url,
+                api_key=provider.key, timeout=self.timeout,
+            )
+            try:
+                edit = client.propose(observation)
+            except ModelError as exc:
+                failures.append(f"{provider.name}: {exc}")
+                self.attempts.append(ModelAttempt(
+                    provider=provider.name, model=provider.model, status="error",
+                    error=str(exc), usage=client.last_usage,
+                ))
+                self.active_index = index + 1
+                continue
+            self.active_index = index
+            self.selected_provider = provider.name
+            self.attempts.append(ModelAttempt(
+                provider=provider.name, model=provider.model, status="success", usage=client.last_usage
+            ))
+            return edit
+        raise ModelError("All model providers failed: " + "; ".join(failures))

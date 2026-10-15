@@ -6,9 +6,10 @@ import sys
 from pathlib import Path
 
 from verified_pr_agent.coding.agent import RepairAgent
-from verified_pr_agent.coding.model_client import OpenAICompatibleCodingModel
+from verified_pr_agent.coding.model_client import FallbackCodingModel, OpenAICompatibleCodingModel
 from verified_pr_agent.coding.worktree import WorktreeError
 from verified_pr_agent.core.git_context import GitContextError
+from verified_pr_agent.providers import route_providers
 from verified_pr_agent.service import ReviewService
 from verified_pr_agent.verification.runner import TrustRequiredError
 
@@ -33,31 +34,26 @@ def main() -> int:
     repair.add_argument("--test-path", default="tests")
     repair.add_argument("--timeout", type=float, default=60)
     repair.add_argument("--max-attempts", type=int, default=2)
-    deepseek_configured = bool(os.environ.get("DEEPSEEK_API_KEY"))
-    repair.add_argument(
-        "--model", default=os.environ.get("VPA_MODEL") or ("deepseek-flash" if deepseek_configured else None)
-    )
-    repair.add_argument(
-        "--base-url",
-        default=os.environ.get("VPA_API_BASE_URL")
-        or ("https://api.deepseek.com" if deepseek_configured else "https://api.openai.com/v1"),
-    )
+    repair.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    repair.add_argument("--no-fallback", action="store_true")
+    repair.add_argument("--model", default=os.environ.get("VPA_MODEL"))
+    repair.add_argument("--base-url", default=os.environ.get("VPA_API_BASE_URL"))
     repair.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     repair.add_argument("--patch-output", type=Path, help="Write a verified patch to this file")
     args = parser.parse_args()
     if args.command == "repair":
-        if not args.model:
-            parser.error("repair requires --model or VPA_MODEL")
         try:
-            model = OpenAICompatibleCodingModel(
-                model=args.model,
-                base_url=args.base_url,
-                api_key=(
-                    os.environ.get("VPA_API_KEY")
-                    or os.environ.get("DEEPSEEK_API_KEY")
-                    or os.environ.get("OPENAI_API_KEY", "")
-                ),
-            )
+            candidates = route_providers(args.provider, not args.no_fallback)
+            if args.model or args.base_url or os.environ.get("VPA_API_KEY"):
+                first = candidates[0] if candidates else None
+                model = OpenAICompatibleCodingModel(
+                    model=args.model or (first.model if first else ""),
+                    base_url=args.base_url or (first.base_url if first else "https://api.openai.com/v1"),
+                    api_key=(os.environ.get("VPA_API_KEY") or (first.key if first else "")
+                             or os.environ.get("OPENAI_API_KEY", "")),
+                )
+            else:
+                model = FallbackCodingModel(candidates)
             result = RepairAgent(model).run(
                 args.repo,
                 args.base,
