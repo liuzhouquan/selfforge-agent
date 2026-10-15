@@ -2,14 +2,15 @@
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from verified_pr_agent.coding.agent import RepairAgent
-from verified_pr_agent.coding.model_client import OpenAICompatibleCodingModel
+from verified_pr_agent.coding.model_client import FallbackCodingModel
 from verified_pr_agent.coding.models import RepairReport
 from verified_pr_agent.core.git_context import GitContextError
 from verified_pr_agent.integrations.github_pr import (
@@ -20,7 +21,17 @@ from verified_pr_agent.integrations.github_pr import (
     load_pr,
 )
 from verified_pr_agent.models import EvidenceReport
-from verified_pr_agent.review.deepseek import DeepSeekReviewer, DeepSeekReviewError
+from verified_pr_agent.providers import (
+    ModelAttempt,
+    ProviderChoice,
+    ProviderInfo,
+    ProviderStatus,
+    check_provider,
+    configured_providers,
+    provider_info,
+    route_providers,
+)
+from verified_pr_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
 from verified_pr_agent.service import ReviewService
 
 app = FastAPI(title="Verified PR Agent")
@@ -36,7 +47,8 @@ class ReviewRequest(BaseModel):
 
 class GitHubReviewRequest(BaseModel):
     url: str
-    use_deepseek: bool = False
+    provider: ProviderChoice = "rules"
+    fallback: bool = True
 
 
 class GitHubCheckoutRequest(BaseModel):
@@ -47,17 +59,32 @@ class GitHubReviewResponse(BaseModel):
     pr: GitHubPR
     report: EvidenceReport
     ai_error: str | None = None
+    model_provider: str | None = None
+    model_attempts: list[ModelAttempt] = Field(default_factory=list)
 
 
 class GitHubRepairRequest(BaseModel):
     url: str
     task: str
     trust_local_tests: bool = False
+    provider: Literal["auto", "deepseek", "openrouter"] = "auto"
+    fallback: bool = True
 
 
 class GitHubRepairResponse(BaseModel):
     checkout: CheckoutResult
     report: RepairReport
+    model_provider: str | None = None
+    model_attempts: list[ModelAttempt] = Field(default_factory=list)
+
+
+class AppConfig(BaseModel):
+    providers: list[ProviderInfo]
+    host_tests_enabled: bool
+
+
+class ProviderCheckRequest(BaseModel):
+    provider: Literal["all", "deepseek", "openrouter"] = "all"
 
 
 @app.get("/", include_in_schema=False)
@@ -70,12 +97,22 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/config")
-def config() -> dict[str, bool]:
-    return {
-        "deepseek_available": bool(os.environ.get("DEEPSEEK_API_KEY")),
-        "host_tests_enabled": os.environ.get("VPA_ENABLE_HOST_TESTS") == "1",
-    }
+@app.get("/api/config", response_model=AppConfig)
+def config() -> AppConfig:
+    return AppConfig(
+        providers=provider_info(),
+        host_tests_enabled=os.environ.get("VPA_ENABLE_HOST_TESTS") == "1",
+    )
+
+
+@app.post("/api/providers/check", response_model=list[ProviderStatus])
+def provider_check(request: ProviderCheckRequest, client: Request) -> list[ProviderStatus]:
+    if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        raise HTTPException(status_code=403, detail="Provider checks are available only from localhost")
+    return [
+        check_provider(item) for item in configured_providers()
+        if request.provider == "all" or request.provider == item.name
+    ]
 
 
 @app.post("/api/github/review", response_model=GitHubReviewResponse)
@@ -86,19 +123,36 @@ def github_review(request: GitHubReviewRequest) -> GitHubReviewResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     report = ReviewService().review_context(pr.context)
     ai_error = None
-    if request.use_deepseek:
-        key = os.environ.get("DEEPSEEK_API_KEY")
-        if not key:
-            ai_error = "DEEPSEEK_API_KEY is not configured"
-        else:
+    selected = None
+    attempts: list[ModelAttempt] = []
+    if request.provider != "rules":
+        candidates = route_providers(request.provider, request.fallback)
+        if not candidates:
+            ai_error = "No configured model provider is available for this selection"
+        for item in candidates:
             try:
-                report.findings.extend(DeepSeekReviewer(key).review(pr.context))
+                findings, usage = ProviderReviewer(item).review_with_usage(pr.context)
             except DeepSeekReviewError as exc:
-                ai_error = str(exc)
+                attempts.append(ModelAttempt(
+                    provider=item.name, model=item.model, status="error",
+                    error=str(exc), usage=exc.usage,
+                ))
+                continue
+            report.findings.extend(findings)
+            attempts.append(ModelAttempt(
+                provider=item.name, model=item.model, status="success", usage=usage
+            ))
+            selected = item.name
+            break
+        if candidates and selected is None:
+            ai_error = "All configured model providers failed"
         if ai_error:
             report.errors.append(ai_error)
             report.execution_status = "error"
-    return GitHubReviewResponse(pr=pr, report=report, ai_error=ai_error)
+    return GitHubReviewResponse(
+        pr=pr, report=report, ai_error=ai_error,
+        model_provider=selected, model_attempts=attempts,
+    )
 
 
 @app.post("/api/github/checkout", response_model=CheckoutResult)
@@ -117,17 +171,13 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
         raise HTTPException(status_code=403, detail="Repair is available only from localhost")
     if os.environ.get("VPA_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests:
         raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this PR")
-    key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("VPA_API_KEY")
-    if not key:
-        raise HTTPException(status_code=503, detail="A model API key is required for repair")
+    candidates = route_providers(request.provider, request.fallback)
+    if not candidates:
+        raise HTTPException(status_code=503, detail="A configured model provider is required")
     try:
         pr = load_pr(request.url)
         checkout = checkout_pr(pr.url, _WORKSPACES)
-        model = OpenAICompatibleCodingModel(
-            model=os.environ.get("VPA_MODEL") or "deepseek-flash",
-            base_url=os.environ.get("VPA_API_BASE_URL") or "https://api.deepseek.com",
-            api_key=key,
-        )
+        model = FallbackCodingModel(candidates)
         report = RepairAgent(model).run(
             Path(checkout.path),
             checkout.diff_base_sha,
@@ -135,7 +185,10 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
             request.task,
             trusted=True,
         )
-        return GitHubRepairResponse(checkout=checkout, report=report)
+        return GitHubRepairResponse(
+            checkout=checkout, report=report,
+            model_provider=model.selected_provider, model_attempts=model.attempts,
+        )
     except (GitHubPRError, GitContextError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -28,7 +28,15 @@
           <form id="review-form" class="import-form">
             <label for="pr-url">GitHub Pull Request URL</label>
             <div class="import-row"><input id="pr-url" type="url" required placeholder="https://github.com/owner/repo/pull/123" autocomplete="url" /><button id="review-button" type="submit">导入并审查 <span>→</span></button></div>
-            <div class="form-options"><label class="toggle"><input id="use-deepseek" type="checkbox" /><span class="toggle-track"></span> 使用 DeepSeek 辅助审查</label><span id="model-state">正在检测模型配置…</span></div>
+            <div class="provider-controls">
+              <label for="review-provider">审查模型</label>
+              <select id="review-provider"><option value="rules" selected>仅规则审查</option><option value="auto">自动选择</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option></select>
+              <label class="provider-fallback"><input id="review-fallback" type="checkbox" checked /> 失败时切换备用供应商</label>
+              <button id="check-providers" type="button">检查密钥与额度</button>
+            </div>
+            <div id="model-state" class="model-state">正在检测模型配置…</div>
+            <div class="model-state">选择模型后，最多 200 行新增代码会发送给对应供应商；仅规则审查不会发送代码。</div>
+            <div id="provider-status" class="provider-status" hidden></div>
           </form>
         </section>
 
@@ -44,6 +52,7 @@
           <div class="pr-heading"><div><div class="section-kicker">PULL REQUEST <span id="pr-number"></span></div><h2 id="pr-title"></h2><p id="pr-meta"></p></div><div class="heading-actions"><a id="github-link" target="_blank" rel="noopener">GitHub ↗</a><button id="checkout-button" type="button">下载可编辑工作区</button></div></div>
           <div class="metrics"><div><small>变更文件</small><strong id="metric-files">0</strong></div><div><small>风险发现</small><strong id="metric-findings">0</strong></div><div><small>基线审查</small><strong id="metric-status">完成</strong></div><div><small>测试执行</small><strong>未运行</strong></div></div>
           <div id="warnings" class="warnings" hidden></div>
+          <div id="model-summary" class="model-summary" hidden></div>
           <div id="checkout-result" class="checkout-result" hidden></div>
           <div class="workspace-grid">
             <section class="panel files-panel"><div class="panel-head"><h3>变更文件</h3><span id="file-count"></span></div><div id="file-list" class="file-list"></div></section>
@@ -55,6 +64,9 @@
             <form id="repair-form">
               <label for="repair-task">修复目标</label>
               <input id="repair-task" required placeholder="例如：修复这个 PR 引入的 add 函数回归" />
+              <label for="repair-provider">编码模型</label>
+              <select id="repair-provider"><option value="auto">自动选择</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option></select>
+              <label class="provider-fallback"><input id="repair-fallback" type="checkbox" checked /> 失败时切换备用供应商</label>
               <label class="trust-label"><input id="trust-tests" type="checkbox" /> 我信任此 PR，允许在本机执行它的 pytest 测试</label>
               <button id="repair-button" type="submit" disabled>运行验证修复</button>
               <small id="repair-availability">需设置 VPA_ENABLE_HOST_TESTS=1 后重启服务</small>
