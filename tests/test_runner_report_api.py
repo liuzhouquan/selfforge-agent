@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from verified_pr_agent.api.app import app
-from verified_pr_agent.service import ReviewService
-from verified_pr_agent.verification.runner import TestRunner, TrustRequiredError
+from selfforge_agent.api.app import app
+from selfforge_agent.service import ReviewService
+from selfforge_agent.verification.runner import TestRunner, TrustRequiredError
 
 
 def test_pytest_pass_fail_and_trust(demo_repo: tuple[Path, str, str]) -> None:
@@ -52,7 +52,7 @@ def test_report_json_keeps_findings_suspected(demo_repo: tuple[Path, str, str]) 
 
 
 def test_api_requires_configured_repository(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("VERIFIED_PR_AGENT_REPO_ROOT", raising=False)
+    monkeypatch.delenv("SELFFORGE_REPO_ROOT", raising=False)
     client = TestClient(app)
     assert client.get("/health").json() == {"status": "ok"}
     assert client.post("/review", json={"base": "a" * 40, "head": "b" * 40}).status_code == 503
@@ -62,7 +62,7 @@ def test_api_review_no_test_execution(
     monkeypatch: pytest.MonkeyPatch, demo_repo: tuple[Path, str, str]
 ) -> None:
     repo, base, head = demo_repo
-    monkeypatch.setenv("VERIFIED_PR_AGENT_REPO_ROOT", str(repo))
+    monkeypatch.setenv("SELFFORGE_REPO_ROOT", str(repo))
     response = TestClient(app).post("/review", json={"base": base, "head": head})
     assert response.status_code == 200
     assert response.json()["test_results"] == []

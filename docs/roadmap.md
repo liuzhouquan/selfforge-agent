@@ -1,10 +1,14 @@
 # Roadmap
 
-1. **PR review baseline — implemented.** Local and GitHub PR context, hunk line mapping, deterministic heuristic findings, and a web diff workbench.
-2. **External PR workflow — partial.** Import any accessible PR and clone its head into an editable branch. Publishing edits, opening a follow-up PR, and submitting review comments are pending; source-branch permissions must be respected.
-3. **LLM review and routing — partial.** DeepSeek and OpenRouter selection, fallback, key/credit checks, and actual token usage. Output is validated against actual diff locations; richer cross-file context, prompt-injection defenses, cost estimates, and evaluation are pending.
-4. **Test execution — partial.** Explicitly trusted local repositories can run their existing pytest suite, with timeout, process evidence, and JUnit counts. A container sandbox is pending.
-5. **Test-driven repair — partial.** A bounded model-backed loop edits changed Python source in temporary Git worktrees and emits a patch if the existing suite regresses on head and passes after repair. The web UI can run this only with operator and per-request trust.
-6. **Risk-driven test generation — pending.** Generate and validate targeted tests for particular findings, then compare base and head.
-7. **Objective verification — partial.** Existing suite health is compared across base, head, and repaired trees. Per-finding causality and richer failure classification remain pending.
-8. **Benchmark and tracing — pending.** Measure false positives, verification success, time, and model cost.
+| Priority | Status | Work |
+| --- | --- | --- |
+| 1 | Implemented | General native tool-calling Runtime, validated file/search/bash/test tools, model fallback, step and time limits |
+| 1 | Implemented | Project-local resumable JSONL sessions, metadata traces, output caps, approximate context compaction |
+| 1 | Implemented | Objective two-case coding evaluation and deterministic offline end-to-end demo |
+| 2 | In Progress | Docker command executor: constrained flags and timeout cleanup implemented; real daemon integration not yet validated |
+| 2 | In Progress | Unify PR Repair with the general Runtime's tools, session trace, and Docker-backed TestRunner while preserving Base/Head/Repaired evidence |
+| 3 | Planned | Targeted test generation that can objectively reproduce a PR finding on Head but not Base |
+| 3 | Planned | Risk-driven PR test selection, broader multi-repository evaluation, repeated-run success rates and cost/latency tracking |
+| 4 | Planned | More precise tokenization, richer compaction, interactive approval and a general Coding UI |
+
+The current general agent edits its selected workspace directly. A disposable Git worktree remains the recommended input for risky tasks until an automatic workspace lifecycle is implemented. Docker isolation applies to commands, while file tools are constrained to the selected workspace. The existing web repair workflow still runs trusted host tests and must not be used on untrusted code.

@@ -5,9 +5,9 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from verified_pr_agent.coding.models import CodeEdit, RepairObservation
-from verified_pr_agent.integrations.model_http import ProviderHTTPError, request_json
-from verified_pr_agent.providers import (
+from selfforge_agent.coding.models import CodeEdit, RepairObservation
+from selfforge_agent.integrations.model_http import ProviderHTTPError, request_json
+from selfforge_agent.providers import (
     ModelAttempt,
     ProviderConfig,
     TokenUsage,

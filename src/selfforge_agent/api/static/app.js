@@ -261,7 +261,7 @@ function applyConfig(config) {
   }
   hostTestsEnabled = config.host_tests_enabled && configuredProviders.length > 0;
   $("repair-button").disabled = !hostTestsEnabled;
-  $("repair-availability").textContent = hostTestsEnabled ? "还需勾选上面的可信执行选项" : "需配置模型密钥并设置 VPA_ENABLE_HOST_TESTS=1 后重启服务";
+  $("repair-availability").textContent = hostTestsEnabled ? "还需勾选上面的可信执行选项" : "需配置模型密钥并设置 SELFFORGE_ENABLE_HOST_TESTS=1 后重启服务";
 }
 
 for (const form of document.querySelectorAll(".settings-card")) {

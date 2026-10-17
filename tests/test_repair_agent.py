@@ -5,16 +5,16 @@ from pathlib import Path
 import pytest
 from conftest import git
 
-from verified_pr_agent.cli import main
-from verified_pr_agent.coding.agent import RepairAgent
-from verified_pr_agent.coding.model_client import (
+from selfforge_agent.cli import main
+from selfforge_agent.coding.agent import RepairAgent
+from selfforge_agent.coding.model_client import (
     FallbackCodingModel,
     ModelError,
     OpenAICompatibleCodingModel,
 )
-from verified_pr_agent.coding.models import CodeEdit, RepairObservation, SourceFile
-from verified_pr_agent.providers import ProviderConfig, TokenUsage
-from verified_pr_agent.verification.runner import TrustRequiredError
+from selfforge_agent.coding.models import CodeEdit, RepairObservation, SourceFile
+from selfforge_agent.providers import ProviderConfig, TokenUsage
+from selfforge_agent.verification.runner import TrustRequiredError
 
 
 class FixedModel:
@@ -108,7 +108,7 @@ def test_model_client_parses_validated_edit(monkeypatch: pytest.MonkeyPatch) -> 
         content = {"path": "x.py", "old_text": "old", "new_text": "new", "rationale": "fix"}
         return {"choices": [{"message": {"content": json.dumps(content)}}]}
 
-    monkeypatch.setattr("verified_pr_agent.coding.model_client.request_json", fake_request_json)
+    monkeypatch.setattr("selfforge_agent.coding.model_client.request_json", fake_request_json)
     client = OpenAICompatibleCodingModel(
         model="test-model", base_url="https://example.com/v1", api_key="secret-for-test", timeout=5
     )
@@ -123,7 +123,7 @@ def test_model_client_parses_validated_edit(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_model_client_rejects_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "verified_pr_agent.coding.model_client.request_json",
+        "selfforge_agent.coding.model_client.request_json",
         lambda *_a, **_k: {"choices": [{"message": {"content": "not json"}}]},
     )
     client = OpenAICompatibleCodingModel(model="m", base_url="http://localhost:1234/v1")
@@ -133,7 +133,7 @@ def test_model_client_rejects_invalid_json(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_coding_model_switches_provider_after_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from verified_pr_agent.coding import model_client
+    from selfforge_agent.coding import model_client
 
     class FakeClient:
         def __init__(self, *, model: str, **_kwargs: object) -> None:
@@ -168,17 +168,17 @@ def test_repair_cli_writes_evidence_and_verified_patch(
         "new_text": "return a + b", "rationale": "Restore addition",
     }
     monkeypatch.setattr(
-        "verified_pr_agent.coding.model_client.request_json",
+        "selfforge_agent.coding.model_client.request_json",
         lambda *_a, **_k: {"choices": [{"message": {"content": json.dumps(edit)}}]},
     )
-    monkeypatch.setenv("VPA_API_KEY", "test-key")
+    monkeypatch.setenv("SELFFORGE_API_KEY", "test-key")
     repo, base, head = demo_repo
     output, patch = tmp_path / "report.json", tmp_path / "fix.patch"
     monkeypatch.setattr(
         sys,
         "argv",
         [
-            "verified-pr-agent", "repair", "--repo", str(repo), "--base", base,
+            "selfforge-agent", "repair", "--repo", str(repo), "--base", base,
             "--head", head, "--task", "Fix add", "--trust-local-tests", "--model", "fake",
             "--output", str(output), "--patch-output", str(patch),
         ],

@@ -10,7 +10,7 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from verified_pr_agent.models import TestResult
+from selfforge_agent.models import TestResult
 
 
 class TrustRequiredError(ValueError):
@@ -35,7 +35,7 @@ class TestRunner:
         if not target.is_relative_to(repo) or not target.exists():
             raise ValueError("test_path must exist inside the repository")
         environment = f"local; python={sys.version.split()[0]}; platform={platform.platform()}"
-        with tempfile.TemporaryDirectory(prefix="verified-pr-agent-") as tempdir:
+        with tempfile.TemporaryDirectory(prefix="selfforge-agent-") as tempdir:
             xml_path = Path(tempdir) / "junit.xml"
             command = [sys.executable, "-m", "pytest", str(target), f"--junitxml={xml_path}"]
             start = time.monotonic()

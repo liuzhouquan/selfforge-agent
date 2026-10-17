@@ -5,8 +5,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from verified_pr_agent.coding.agent import RepairAgent
-from verified_pr_agent.coding.models import CodeEdit, RepairObservation
+from selfforge_agent.coding.agent import RepairAgent
+from selfforge_agent.coding.models import CodeEdit, RepairObservation
 
 
 class KnownFixtureModel:

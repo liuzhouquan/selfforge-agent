@@ -1,11 +1,27 @@
-# Architecture
+# selfForge Agent architecture
 
-The FastAPI app serves the local web workbench. `integrations.github_pr` reads metadata and file patches through `gh api`, then converts GitHub's diff into the shared `PRContext`. The same module can clone a repository and check out the PR head into a fresh directory. Checkout records the Git merge base for later test comparison. Local CLI reviews build `PRContext` directly from Git.
+## General Coding Runtime
 
-`ReviewService` runs `BaselineReviewer` on changed lines. `ProviderReviewer` optionally sends a capped selection of added lines to DeepSeek or OpenRouter, parses structured JSON, and accepts findings only at real added line locations. The server-side registry chooses providers, and review or coding requests can fall back after a provider error. Each attempt is recorded without exposing API keys. Provider status checks use the official balance/key endpoints; actual token usage is read from successful model responses. Both review sources produce suspected findings. Neither source claims test-backed reproduction. GitHub may omit patches for binary or oversized files, which are marked unavailable.
+`cli code` resolves a provider (DeepSeek, OpenRouter, or a custom OpenAI-compatible endpoint), selects a command executor, creates a project-local `SessionStore`, and starts `CodingAgent`.
 
-`RepairAgent` runs pytest in detached base, head, and candidate worktrees. The agent accepts a repair only when base tests pass, head tests fail with an assertion, and repaired tests pass. At most two candidate edits are attempted by default, each restricted to changed Python source files. The tracked diff must contain no test edits. It returns a patch and a structured report; it does not change the review checkout or push to GitHub. This checks existing suite health, not per-finding causality.
+```text
+Task → CodingAgent → ContextManager → OpenAIChatAdapter
+                    ↑                  ↓ native tool calls
+                 SessionStore ← ToolRegistry → file/search tools
+                    ↓                       → DockerExecutor / trusted HostExecutor → pytest
+                JSONL trace
+```
 
-The local web repair endpoint requires localhost access, an operator setting `VPA_ENABLE_HOST_TESTS=1`, and an explicit per-request trust flag. `TestRunner` executes repository code on the host, captures real process results, and kills the process group on timeout on POSIX. It does not isolate filesystem or network access. A container execution backend is planned. PR import and review never execute the PR code.
+The loop asks the model for native function calls, validates arguments with Pydantic JSON Schema, executes one tool at a time, and returns every tool result to the model. It stops on a final answer, step/time limit, cancellation, or unrecoverable model failure. Tool errors are returned as tool observations so the model can recover. `completed` requires a successful `run_tests` after the last `edit_file`; otherwise the final state is `unverified`. A model statement alone is never test evidence.
 
-The API key stays on the server. PR source snippets and failing test output are sent to the configured coding model for repair. The web UI uses text-only DOM insertion for untrusted PR content. The app has no GitHub write operation; checkout and report generation are local operations.
+`ToolRegistry` confines paths to the workspace, rejects traversal and symlink escapes, caps file sizes, search results, command timeouts, and tool output. `SessionStore` appends messages and status to mode-0600 JSONL, and a separate metadata-only JSONL trace records model calls, tool durations, token usage, errors, and status transitions. Resume reconstructs messages and fills any interrupted tool response. `ContextManager` estimates tokens by size, truncates tool output, and summarizes earlier actions when a budget is exceeded while retaining the system prompt and original/latest user task. This is a deterministic approximate budget, not tokenizer-exact accounting.
+
+Docker command execution stages a temporary workspace copy that excludes `.env`, `.local`, `.selfforge`, `.git`, and `.venv`; container writes are discarded. It uses `--network none`, read-only container root, a single staged bind mount, non-root UID, dropped capabilities, no-new-privileges, CPU/memory/PID limits, and a wall timeout. The image is built from `docker/Dockerfile`. Host execution requires `--sandbox host --trust-local`. Docker arguments have unit coverage, but this development environment has no Docker daemon; an actual container integration test is still required. The general agent's `edit_file` writes to the requested workspace directly. For untrusted or important repositories, use a disposable Git worktree as `--repo` so edits are isolated and reviewable.
+
+## Existing specialized PR workflows
+
+The FastAPI app serves a PR workbench. `integrations.github_pr` reads PR metadata and patches with `gh api`, creates `PRContext`, and can clone the head into an editable checkout. `ReviewService` runs deterministic baseline findings. `ProviderReviewer` optionally calls configured models and validates findings against actual added lines; findings remain `suspected`. PR import/review never executes PR code.
+
+`RepairAgent` retains its bounded Base/Head/Repaired process in three detached Git worktrees. It only edits changed Python source and emits a patch when Base pytest passes, Head has an assertion failure, and Repaired pytest passes. `TestRunner` records JUnit counts and process exit status. Web repair currently executes trusted host pytest behind localhost, operator, and per-request trust gates. It is not yet routed through the new general Docker executor or session loop. This integration is the next architectural step; the old repair logic remains the authoritative specialized implementation in the meantime.
+
+Provider settings and HTTP transport are shared across general coding and PR workflows. Keys stay in the server environment or ignored `.local/providers.json`; traces do not include credentials. CLI evaluation uses generated fixtures and independently reruns tests to prevent model self-assessment from determining success.

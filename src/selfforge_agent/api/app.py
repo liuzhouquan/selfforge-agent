@@ -9,20 +9,20 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from verified_pr_agent.coding.agent import RepairAgent
-from verified_pr_agent.coding.model_client import FallbackCodingModel
-from verified_pr_agent.coding.models import RepairReport
-from verified_pr_agent.core.git_context import GitContextError
-from verified_pr_agent.integrations.github_pr import (
+from selfforge_agent.coding.agent import RepairAgent
+from selfforge_agent.coding.model_client import FallbackCodingModel
+from selfforge_agent.coding.models import RepairReport
+from selfforge_agent.core.git_context import GitContextError
+from selfforge_agent.integrations.github_pr import (
     CheckoutResult,
     GitHubPR,
     GitHubPRError,
     checkout_pr,
     load_pr,
 )
-from verified_pr_agent.integrations.model_http import ProviderHTTPError
-from verified_pr_agent.models import EvidenceReport
-from verified_pr_agent.providers import (
+from selfforge_agent.integrations.model_http import ProviderHTTPError
+from selfforge_agent.models import EvidenceReport
+from selfforge_agent.providers import (
     AvailableModel,
     ModelAttempt,
     ProviderChoice,
@@ -35,10 +35,10 @@ from verified_pr_agent.providers import (
     route_providers,
     save_provider_settings,
 )
-from verified_pr_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
-from verified_pr_agent.service import ReviewService
+from selfforge_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
+from selfforge_agent.service import ReviewService
 
-app = FastAPI(title="Verified PR Agent")
+app = FastAPI(title="selfForge Agent")
 _STATIC = Path(__file__).resolve().parent / "static"
 _WORKSPACES = Path(__file__).resolve().parents[3] / ".workspaces"
 app.mount("/assets", StaticFiles(directory=_STATIC), name="assets")
@@ -117,7 +117,7 @@ def health() -> dict[str, str]:
 def config() -> AppConfig:
     return AppConfig(
         providers=provider_info(),
-        host_tests_enabled=os.environ.get("VPA_ENABLE_HOST_TESTS") == "1",
+        host_tests_enabled=os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") == "1",
     )
 
 
@@ -204,7 +204,7 @@ def github_checkout(request: GitHubCheckoutRequest, client: Request) -> Checkout
 def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepairResponse:
     if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
         raise HTTPException(status_code=403, detail="Repair is available only from localhost")
-    if os.environ.get("VPA_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests:
+    if os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests:
         raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this PR")
     candidates = route_providers(request.provider, request.fallback)
     if not candidates:
@@ -230,7 +230,7 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
 
 @app.post("/review", response_model=EvidenceReport)
 def review(request: ReviewRequest) -> EvidenceReport:
-    configured = os.environ.get("VERIFIED_PR_AGENT_REPO_ROOT")
+    configured = os.environ.get("SELFFORGE_REPO_ROOT")
     if not configured:
         raise HTTPException(status_code=503, detail="Repository root is not configured")
     try:

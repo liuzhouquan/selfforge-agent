@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from verified_pr_agent.models import Finding, PRContext, TestResult
+from selfforge_agent.models import Finding, PRContext, TestResult
 
 
 class SourceFile(BaseModel):

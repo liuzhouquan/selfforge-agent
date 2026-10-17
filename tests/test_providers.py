@@ -1,10 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from verified_pr_agent import providers
-from verified_pr_agent.api.app import app
-from verified_pr_agent.integrations import model_http
-from verified_pr_agent.integrations.model_http import ProviderHTTPError
+from selfforge_agent import providers
+from selfforge_agent.api.app import app
+from selfforge_agent.integrations import model_http
+from selfforge_agent.integrations.model_http import ProviderHTTPError
 
 
 def test_provider_order_and_explicit_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,7 +46,7 @@ def test_settings_save_and_discover_models_without_exposing_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     path = tmp_path / "providers.json"
-    monkeypatch.setenv("VPA_PROVIDER_CONFIG_PATH", str(path))
+    monkeypatch.setenv("SELFFORGE_PROVIDER_CONFIG_PATH", str(path))
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = TestClient(app)
@@ -89,7 +89,7 @@ def test_settings_save_and_discover_models_without_exposing_key(
 def test_provider_settings_reject_unsafe_url(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
-    monkeypatch.setenv("VPA_PROVIDER_CONFIG_PATH", str(tmp_path / "providers.json"))
+    monkeypatch.setenv("SELFFORGE_PROVIDER_CONFIG_PATH", str(tmp_path / "providers.json"))
     client = TestClient(app)
     for url in ["http://remote.example/v1", "https://user:pass@example.com/v1",
                 "https://example.com/v1?token=secret"]:
