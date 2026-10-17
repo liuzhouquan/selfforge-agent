@@ -11,6 +11,10 @@
   suite failure alone does not prove a finding. Preserve exit codes and report errors.
 - Web review reads any accessible GitHub PR via `gh`, without executing code. The older
   local `/review` API accepts commit IDs in `VERIFIED_PR_AGENT_REPO_ROOT`.
+- Model keys remain on the local server, either in its environment or the ignored
+  `.local/providers.json` file (mode 0600). Never return or log secrets. DeepSeek and
+  OpenRouter are configured independently; log provider attempts and actual usage. Provider balance
+  checks run only on explicit user request. Review API calls default to rules only.
 - Host test execution requires `trusted=True`; web repair also requires localhost,
   `VPA_ENABLE_HOST_TESTS=1`, and explicit per-request trust. It has no sandbox.
 - `repair` uses three temporary detached worktrees (base, head, repair). It edits only

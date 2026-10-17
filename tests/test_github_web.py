@@ -11,6 +11,7 @@ from verified_pr_agent.coding.models import RepairReport
 from verified_pr_agent.integrations import github_pr
 from verified_pr_agent.integrations.github_pr import GitHubPR, GitHubPRError, parse_pr_url
 from verified_pr_agent.models import ChangedFile, DiffHunk, DiffLine, PRContext
+from verified_pr_agent.providers import TokenUsage
 from verified_pr_agent.review.deepseek import DeepSeekReviewer, DeepSeekReviewError
 
 
@@ -155,7 +156,12 @@ def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tm
         path=str(tmp_path), branch="vpa-pr-2", head_sha="b" * 40,
         diff_base_sha=merge_base, pr_url=pr.url,
     ))
-    monkeypatch.setattr(api_module, "OpenAICompatibleCodingModel", lambda **_kwargs: object())
+    class FakeRouter:
+        def __init__(self, _candidates: object) -> None:
+            self.selected_provider = None
+            self.attempts: list[object] = []
+
+    monkeypatch.setattr(api_module, "FallbackCodingModel", FakeRouter)
     monkeypatch.setattr(api_module, "RepairAgent", FakeAgent)
     response = TestClient(app).post("/api/github/repair", json={
         "url": pr.url, "task": "Fix the regression", "trust_local_tests": True,
@@ -168,28 +174,17 @@ def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tm
 
 
 def test_deepseek_findings_must_point_to_added_lines(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Response:
-        def __init__(self) -> None:
-            self.complete = False
-            self.fp = None
-
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read1(self, _limit: int) -> bytes:
-            if self.complete:
-                return b""
-            self.complete = True
-            findings = [
-                {"file_path": "app.py", "line_number": 1, "severity": "high", "category": "bug", "description": "Risk"},
-                {"file_path": "app.py", "line_number": 99, "severity": "high", "category": "bug", "description": "Invented"},
-            ]
-            return json.dumps({"choices": [{"message": {"content": json.dumps({"findings": findings})}}]}).encode()
-
-    monkeypatch.setattr("verified_pr_agent.review.deepseek.urlopen", lambda *_a, **_k: Response())
+    findings = [
+        {"file_path": "app.py", "line_number": 1, "severity": "high", "category": "bug", "description": "Risk"},
+        {"file_path": "app.py", "line_number": 99, "severity": "high", "category": "bug", "description": "Invented"},
+    ]
+    monkeypatch.setattr(
+        "verified_pr_agent.review.deepseek.request_json",
+        lambda *_a, **_k: {
+            "choices": [{"message": {"content": json.dumps({"findings": findings})}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        },
+    )
     findings = DeepSeekReviewer("test-key").review(sample_pr().context)
     assert len(findings) == 1
     assert findings[0].evidence == "eval(value)"
@@ -197,7 +192,7 @@ def test_deepseek_findings_must_point_to_added_lines(monkeypatch: pytest.MonkeyP
     assert findings[0].verification_status == "suspected"
 
 
-def test_deepseek_response_has_wall_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_response_has_wall_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     class TrickleResponse:
         fp = None
 
@@ -211,9 +206,66 @@ def test_deepseek_response_has_wall_deadline(monkeypatch: pytest.MonkeyPatch) ->
             return b" "
 
     clock = iter([0.0, 0.0, 2.0])
-    monkeypatch.setattr("verified_pr_agent.review.deepseek.monotonic", lambda: next(clock))
+    monkeypatch.setattr("verified_pr_agent.integrations.model_http.monotonic", lambda: next(clock))
     monkeypatch.setattr(
-        "verified_pr_agent.review.deepseek.urlopen", lambda *_a, **_k: TrickleResponse()
+        "verified_pr_agent.integrations.model_http.urlopen", lambda *_a, **_k: TrickleResponse()
     )
     with pytest.raises(DeepSeekReviewError, match="timed out"):
         DeepSeekReviewer("test-key", timeout=1).review(sample_pr().context)
+
+
+def test_review_switches_provider_and_reports_actual_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    from verified_pr_agent.api import app as api_module
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
+    monkeypatch.setattr(api_module, "load_pr", lambda _url: sample_pr())
+
+    def fake_review(self: object, _context: PRContext) -> tuple[list, TokenUsage]:
+        if self.provider.name == "deepseek":
+            raise DeepSeekReviewError("Provider response timed out")
+        return [], TokenUsage(prompt_tokens=12, completion_tokens=3, total_tokens=15)
+
+    monkeypatch.setattr(api_module.ProviderReviewer, "review_with_usage", fake_review)
+    response = TestClient(app).post("/api/github/review", json={
+        "url": sample_pr().url, "provider": "auto", "fallback": True,
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["model_provider"] == "openrouter"
+    assert [attempt["status"] for attempt in data["model_attempts"]] == ["error", "success"]
+    assert data["model_attempts"][1]["usage"]["total_tokens"] == 15
+    assert data["report"]["execution_status"] == "completed"
+    no_fallback = TestClient(app).post("/api/github/review", json={
+        "url": sample_pr().url, "provider": "deepseek", "fallback": False,
+    }).json()
+    assert no_fallback["model_provider"] is None
+    assert len(no_fallback["model_attempts"]) == 1
+    assert no_fallback["report"]["execution_status"] == "error"
+
+
+def test_provider_status_check_does_not_expose_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    from verified_pr_agent import providers
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
+
+    def fake_request(url: str, _key: str, **_kwargs: object) -> dict:
+        if "deepseek.com" in url:
+            return {"is_available": True, "balance_infos": [
+                {"currency": "USD", "total_balance": "5.00"}
+            ]}
+        return {"data": {"limit_remaining": 2.5, "usage": 1.25}}
+
+    monkeypatch.setattr(providers, "request_json", fake_request)
+    client = TestClient(app)
+    config = client.get("/api/config")
+    assert config.status_code == 200
+    assert [item["configured"] for item in config.json()["providers"]] == [True, True]
+    assert "test-key" not in config.text
+    statuses = client.post("/api/providers/check", json={"provider": "all"})
+    assert statuses.status_code == 200
+    assert [item["status"] for item in statuses.json()] == ["ready", "ready"]
+    assert statuses.json()[0]["balance"] == "5.00 USD"
+    assert statuses.json()[1]["balance"] == "$2.5000 remaining"
+    assert "test-key" not in statuses.text

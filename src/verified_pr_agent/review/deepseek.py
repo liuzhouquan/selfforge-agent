@@ -1,17 +1,20 @@
-"""Optional DeepSeek review of changed lines, grounded in the supplied PR diff."""
+"""Grounded diff review through configured OpenAI-compatible providers."""
 
 import json
-from time import monotonic
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field, ValidationError
 
+from verified_pr_agent.integrations.model_http import ProviderHTTPError, request_json
 from verified_pr_agent.models import ChangeKind, Finding, PRContext, VerificationStatus
+from verified_pr_agent.providers import ProviderConfig, TokenUsage, token_usage_from_response
 
 
 class DeepSeekReviewError(ValueError):
-    """The model review could not produce validated findings."""
+    """A model provider could not produce validated review findings."""
+
+    def __init__(self, message: str, *, usage: TokenUsage | None = None) -> None:
+        super().__init__(message)
+        self.usage = usage
 
 
 class _ProposedFinding(BaseModel):
@@ -26,25 +29,17 @@ class _ReviewOutput(BaseModel):
     findings: list[_ProposedFinding]
 
 
-class DeepSeekReviewer:
-    def __init__(
-        self,
-        api_key: str,
-        *,
-        model: str = "deepseek-flash",
-        base_url: str = "https://api.deepseek.com",
-        timeout: float = 45,
-    ) -> None:
-        if not api_key or not model or timeout <= 0:
-            raise DeepSeekReviewError("DeepSeek API key, model, and positive timeout are required")
-        if base_url.rstrip("/") != "https://api.deepseek.com":
-            raise DeepSeekReviewError("DeepSeek review uses the official API endpoint")
-        self.api_key = api_key
-        self.model = model
-        self.base_url = base_url.rstrip("/")
+class ProviderReviewer:
+    def __init__(self, provider: ProviderConfig, *, timeout: float = 25) -> None:
+        if not provider.key or timeout <= 0:
+            raise DeepSeekReviewError("A provider API key and positive timeout are required")
+        self.provider = provider
         self.timeout = timeout
 
     def review(self, context: PRContext) -> list[Finding]:
+        return self.review_with_usage(context)[0]
+
+    def review_with_usage(self, context: PRContext) -> tuple[list[Finding], TokenUsage | None]:
         added: dict[tuple[str, int], str] = {}
         for file in context.files[:100]:
             for hunk in file.hunks:
@@ -52,7 +47,7 @@ class DeepSeekReviewer:
                     if line.kind == ChangeKind.added and line.new_line is not None:
                         added[(file.path, line.new_line)] = line.content
         if not added:
-            return []
+            return [], None
         lines = [
             {"file_path": path, "line_number": number, "code": text}
             for (path, number), text in list(added.items())[:200]
@@ -62,7 +57,7 @@ class DeepSeekReviewer:
             lines.pop()
             user_content = json.dumps(lines, ensure_ascii=False)
         payload = {
-            "model": self.model,
+            "model": self.provider.model,
             "messages": [
                 {
                     "role": "system",
@@ -80,46 +75,23 @@ class DeepSeekReviewer:
             "response_format": {"type": "json_object"},
             "max_tokens": 1200,
         }
-        request = Request(
-            self.base_url + "/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
+        usage = None
         try:
-            deadline = monotonic() + self.timeout
-            with urlopen(request, timeout=self.timeout) as response:
-                chunks: list[bytes] = []
-                size = 0
-                socket = getattr(getattr(response.fp, "raw", None), "_sock", None)
-                while True:
-                    remaining = deadline - monotonic()
-                    if remaining <= 0:
-                        raise DeepSeekReviewError("DeepSeek response timed out")
-                    if socket is not None:
-                        socket.settimeout(remaining)
-                    chunk = response.read1(min(8192, 131_073 - size))
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                    size += len(chunk)
-                    if size > 131_072:
-                        raise DeepSeekReviewError("DeepSeek response exceeded 128 KiB")
-                body = b"".join(chunks)
-        except HTTPError as exc:
-            raise DeepSeekReviewError(f"DeepSeek returned HTTP {exc.code}") from exc
-        except (OSError, URLError) as exc:
-            raise DeepSeekReviewError(f"DeepSeek request failed: {exc}") from exc
-        try:
-            response_data = json.loads(body)
-            choice = response_data["choices"][0]
+            response = request_json(
+                self.provider.base_url + "/chat/completions", self.provider.key,
+                payload=payload, timeout=self.timeout,
+            )
+            usage = token_usage_from_response(response)
+            choice = response["choices"][0]
             if choice.get("finish_reason") == "length":
-                raise DeepSeekReviewError("DeepSeek response was truncated")
+                raise DeepSeekReviewError("Model response was truncated", usage=usage)
             proposed = _ReviewOutput.model_validate_json(choice["message"]["content"])
+        except ProviderHTTPError as exc:
+            raise DeepSeekReviewError(str(exc)) from exc
         except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
             if isinstance(exc, DeepSeekReviewError):
                 raise
-            raise DeepSeekReviewError("DeepSeek returned invalid review JSON") from exc
+            raise DeepSeekReviewError("Model returned invalid review JSON", usage=usage) from exc
         findings: list[Finding] = []
         seen: set[tuple[str, int, str]] = set()
         for item in proposed.findings[:8]:
@@ -137,7 +109,26 @@ class DeepSeekReviewer:
                     description=item.description,
                     evidence=added[key].strip() or "<blank added line>",
                     verification_status=VerificationStatus.suspected,
-                    source="deepseek",
+                    source=self.provider.name,
                 )
             )
-        return findings
+        return findings, usage
+
+
+class DeepSeekReviewer(ProviderReviewer):
+    """Compatibility wrapper for the original DeepSeek-only reviewer."""
+
+    def __init__(
+        self, api_key: str, *, model: str = "deepseek-flash",
+        base_url: str = "https://api.deepseek.com", timeout: float = 25,
+    ) -> None:
+        if base_url.rstrip("/") != "https://api.deepseek.com":
+            raise DeepSeekReviewError("DeepSeek review uses the official API endpoint")
+        super().__init__(
+            ProviderConfig(
+                name="deepseek", label="DeepSeek", key=api_key, model=model,
+                base_url=base_url.rstrip("/"),
+                status_url="https://api.deepseek.com/user/balance",
+            ),
+            timeout=timeout,
+        )

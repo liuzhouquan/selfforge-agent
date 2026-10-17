@@ -1,15 +1,19 @@
 import json
 import sys
 from pathlib import Path
-from typing import Self
 
 import pytest
 from conftest import git
 
 from verified_pr_agent.cli import main
 from verified_pr_agent.coding.agent import RepairAgent
-from verified_pr_agent.coding.model_client import ModelError, OpenAICompatibleCodingModel
+from verified_pr_agent.coding.model_client import (
+    FallbackCodingModel,
+    ModelError,
+    OpenAICompatibleCodingModel,
+)
 from verified_pr_agent.coding.models import CodeEdit, RepairObservation, SourceFile
+from verified_pr_agent.providers import ProviderConfig, TokenUsage
 from verified_pr_agent.verification.runner import TrustRequiredError
 
 
@@ -96,24 +100,15 @@ def test_retries_after_rejected_edit(demo_repo: tuple[Path, str, str]) -> None:
 
 
 def test_model_client_parses_validated_edit(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Response:
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, _limit: int) -> bytes:
-            content = {"path": "x.py", "old_text": "old", "new_text": "new", "rationale": "fix"}
-            return json.dumps({"choices": [{"message": {"content": json.dumps(content)}}]}).encode()
-
-    def fake_urlopen(request: object, timeout: float) -> Response:
+    def fake_request_json(url: str, key: str, *, payload: dict, timeout: float) -> dict:
         assert timeout == 5
-        assert request.get_header("Authorization") == "Bearer secret-for-test"
-        assert b"Fix x" in request.data
-        return Response()
+        assert key == "secret-for-test"
+        assert url == "https://example.com/v1/chat/completions"
+        assert "Fix x" in payload["messages"][1]["content"]
+        content = {"path": "x.py", "old_text": "old", "new_text": "new", "rationale": "fix"}
+        return {"choices": [{"message": {"content": json.dumps(content)}}]}
 
-    monkeypatch.setattr("verified_pr_agent.coding.model_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("verified_pr_agent.coding.model_client.request_json", fake_request_json)
     client = OpenAICompatibleCodingModel(
         model="test-model", base_url="https://example.com/v1", api_key="secret-for-test", timeout=5
     )
@@ -127,43 +122,55 @@ def test_model_client_parses_validated_edit(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_model_client_rejects_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Response:
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, _limit: int) -> bytes:
-            return b'{"choices":[{"message":{"content":"not json"}}]}'
-
-    monkeypatch.setattr("verified_pr_agent.coding.model_client.urlopen", lambda *_a, **_k: Response())
+    monkeypatch.setattr(
+        "verified_pr_agent.coding.model_client.request_json",
+        lambda *_a, **_k: {"choices": [{"message": {"content": "not json"}}]},
+    )
     client = OpenAICompatibleCodingModel(model="m", base_url="http://localhost:1234/v1")
     observation = RepairObservation(task="Fix", attempt=1, files=[], failing_test_output="failed")
     with pytest.raises(ModelError):
         client.propose(observation)
 
 
+def test_coding_model_switches_provider_after_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from verified_pr_agent.coding import model_client
+
+    class FakeClient:
+        def __init__(self, *, model: str, **_kwargs: object) -> None:
+            self.model = model
+            self.last_usage = TokenUsage(prompt_tokens=8, completion_tokens=2, total_tokens=10)
+
+        def propose(self, _observation: RepairObservation) -> CodeEdit:
+            if self.model == "first":
+                raise ModelError("Provider response timed out")
+            return CodeEdit(path="x.py", old_text="old", new_text="new", rationale="fix")
+
+    monkeypatch.setattr(model_client, "OpenAICompatibleCodingModel", FakeClient)
+    configs = [
+        ProviderConfig(name="deepseek", label="DeepSeek", key="a", model="first",
+                       base_url="https://api.deepseek.com", status_url=""),
+        ProviderConfig(name="openrouter", label="OpenRouter", key="b", model="second",
+                       base_url="https://openrouter.ai/api/v1", status_url=""),
+    ]
+    router = FallbackCodingModel(configs)
+    observation = RepairObservation(task="Fix", attempt=1, files=[], failing_test_output="failed")
+    assert router.propose(observation).new_text == "new"
+    assert router.selected_provider == "openrouter"
+    assert [attempt.status for attempt in router.attempts] == ["error", "success"]
+    assert router.attempts[-1].usage.total_tokens == 10
+
+
 def test_repair_cli_writes_evidence_and_verified_patch(
     demo_repo: tuple[Path, str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class Response:
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, _limit: int) -> bytes:
-            edit = {
-                "path": "calculator.py",
-                "old_text": "return a - b",
-                "new_text": "return a + b",
-                "rationale": "Restore addition",
-            }
-            return json.dumps({"choices": [{"message": {"content": json.dumps(edit)}}]}).encode()
-
-    monkeypatch.setattr("verified_pr_agent.coding.model_client.urlopen", lambda *_a, **_k: Response())
+    edit = {
+        "path": "calculator.py", "old_text": "return a - b",
+        "new_text": "return a + b", "rationale": "Restore addition",
+    }
+    monkeypatch.setattr(
+        "verified_pr_agent.coding.model_client.request_json",
+        lambda *_a, **_k: {"choices": [{"message": {"content": json.dumps(edit)}}]},
+    )
     monkeypatch.setenv("VPA_API_KEY", "test-key")
     repo, base, head = demo_repo
     output, patch = tmp_path / "report.json", tmp_path / "fix.patch"
