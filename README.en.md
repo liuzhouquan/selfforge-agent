@@ -27,9 +27,9 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding Agent Runtime | Implemented | OpenAI-compatible native tool calling, multiple turns, step/time limits, provider fallback |
 | Tools and sessions | Implemented | read/edit/search/bash/run_tests; JSON Schema, workspace path checks, resumable JSONL sessions and traces |
 | Context management | Implemented | Truncated tool output, approximate token budget, deterministic summary retaining task constraints |
-| Docker executor | In Progress | Network-disabled, resource-limited command path mounting only the workspace; no Docker daemon was available for an actual container run in this development environment |
+| Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Uses actual pytest exit status; tasks without test evidence are `unverified` |
-| PR Review / Repair | Implemented | Existing web review, editable checkout, and Base/Head/Repaired verification remain; integration with the shared Runtime is ongoing |
+| PR Review / Repair | Implemented | Web review and checkout; repair reuses Docker execution, JUnit evidence, and JSONL traces, while its model loop remains separate |
 | Targeted test generation | Planned | The current implementation uses existing tests |
 
 ## Quick Start
@@ -44,7 +44,7 @@ docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
 uv run selfforge-agent code --repo ./your-project --task 'Fix the failing test and verify it'
 ```
 
-`code` runs commands in Docker by default. The container has no network, bounded CPU/memory/processes, and mounts a temporary workspace copy that excludes `.env`, local keys, and sessions. Container command edits do not propagate back; `edit_file` makes persistent edits. The sample image includes pytest only; extend it for project-specific dependencies. If Docker is unavailable, use `--sandbox host --trust-local` only for a trusted repository. File tools stay inside `--repo`; choose the code execution environment carefully. The model receives files it reads and tool output.
+`code` runs commands in Docker by default. The container has no network and bounded CPU/memory/processes. A temporary workspace copy excluding `.env`, local keys, and sessions is transferred into container tmpfs. Container command edits do not propagate back; `edit_file` makes persistent edits. The sample image includes pytest only; extend it for project-specific dependencies. If Docker is unavailable, use `--sandbox host --trust-local` only for a trusted repository. File tools stay inside `--repo`; the model receives files it reads and tool output.
 
 DeepSeek and OpenRouter have default URLs and models. The web workbench can save a local key, URL, and automatically sync model lists. For another OpenAI-compatible endpoint, use `--model ID --base-url URL` and set `SELFFORGE_API_KEY` or `OPENAI_API_KEY`. `--provider openrouter` pins a provider; the default route falls back on request failure.
 
@@ -62,14 +62,20 @@ uv run selfforge-agent trace --repo ./your-project SESSION_ID
 # Run tests; Docker is the default
 uv run selfforge-agent test --repo ./your-project --path tests
 
+# Live Docker repair demo without an API key (build the image first)
+uv run python examples/repair_demo.py
+
 # Trusted host tests with JUnit counts
 uv run selfforge-agent test --repo ./your-project --sandbox host --trust-local
 
 # Specialized local PR comparison and Base/Head/Repaired repair
 uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
-  --task 'Repair the regression shown by existing tests' --trust-local-tests \
-  --patch-output repair.patch
+  --task 'Repair the regression shown by existing tests' --patch-output repair.patch
+
+# Explicit host execution for a trusted PR only
+uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
+  --task 'Repair the regression' --sandbox host --trust-local-tests
 ```
 
 Agent statuses are `completed` (pytest succeeded after the last edit), `unverified` (finished without test evidence), `failed`, `max_steps`, `timed_out`, and `cancelled`. Ignored `.selfforge/` stores local sessions and traces. Ctrl-C interrupts a run; cancellation is checked between model and tool calls, while each call has its own timeout.
@@ -87,10 +93,12 @@ flowchart LR
   X --> P[pytest]
   CLI --> S[SessionStore / JSONL trace]
   P --> CLI
-  PR[PR Review / Repair] --> E[Existing ReviewService / TestRunner / Git worktrees]
+  PR[PR Review / Repair] --> E[Git worktrees / DockerTestRunner]
+  E --> X
+  E --> S
 ```
 
-The Runtime separates the loop, model adapter, tools, executor, context, and session modules. See the [architecture document](./docs/architecture.md). General coding and older PR workflows share provider settings; PR Repair still uses its bounded repair loop and has not yet moved fully to the shared Runtime.
+The Runtime separates the loop, model adapter, tools, executor, context, and session modules. See the [architecture document](./docs/architecture.md). PR Repair shares provider settings, Docker execution, and session traces. Its bounded repair loop remains separate from the general tool-calling agent.
 
 ## Verification and Evaluation
 
@@ -107,8 +115,8 @@ On 2026-10-17, one local run produced **2/2** for the offline protocol fixtures 
 
 ## Specialized Workflows: PR Review
 
-Run `uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000` for the web workbench. Import your own or someone else's accessible GitHub PR, inspect diffs and heuristic/model findings, check out an editable branch, and optionally run trusted repair. Findings remain `suspected`; import and review never execute PR code. Web repair runs host pytest and requires `SELFFORGE_ENABLE_HOST_TESTS=1` plus per-request trust. It has no Docker isolation yet; do not enable host tests for untrusted PRs. The app does not push, comment on, or merge PRs.
+Run `uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000` for the web workbench. Import your own or someone else's accessible GitHub PR, inspect diffs and heuristic/model findings, check out an editable branch, and optionally run verified repair. Findings remain `suspected`; import and review never execute PR code. Web repair tests run in Docker by default. Explicit host execution still requires `SELFFORGE_ENABLE_HOST_TESTS=1` and per-request trust. The app does not push, comment on, or merge PRs. Repair traces are stored in the checkout's `.selfforge/sessions/`; inspect them with `selfforge-agent trace --repo CHECKOUT RUN_ID`.
 
 ## Roadmap
 
-Next, merge PR Repair into the general Runtime's tools, executors, and session trace, and validate Docker isolation with a running daemon. Then add targeted test generation, PR risk-driven tests, and broader objective evaluations. See the [roadmap](./docs/roadmap.md).
+Next, route PR Repair's model-edit step through the general Tool Registry, then add targeted test generation, PR risk-driven tests, and broader objective evaluations. See the [roadmap](./docs/roadmap.md).

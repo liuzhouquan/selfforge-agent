@@ -122,6 +122,7 @@ def test_web_repair_requires_operator_and_request_trust(monkeypatch: pytest.Monk
         "url": "https://github.com/example/project/pull/2",
         "task": "Fix the regression",
         "trust_local_tests": True,
+        "sandbox": "host",
     }
     monkeypatch.delenv("SELFFORGE_ENABLE_HOST_TESTS", raising=False)
     assert client.post("/api/github/repair", json=payload).status_code == 403
@@ -138,8 +139,8 @@ def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tm
     merge_base = "c" * 40
 
     class FakeAgent:
-        def __init__(self, _model: object) -> None:
-            pass
+        def __init__(self, _model: object, *, runner: object, session: object) -> None:
+            called.update(runner=type(runner).__name__, session_root=session.root)
 
         def run(self, repository: Path, base: str, head: str, task: str, *, trusted: bool) -> RepairReport:
             called.update(repository=repository, base=base, head=head, task=task, trusted=trusted)
@@ -166,12 +167,56 @@ def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(api_module, "RepairAgent", FakeAgent)
     response = TestClient(app).post("/api/github/repair", json={
         "url": pr.url, "task": "Fix the regression", "trust_local_tests": True,
+        "sandbox": "host",
     })
     assert response.status_code == 200
     assert called == {
         "repository": tmp_path, "base": merge_base, "head": "b" * 40,
         "task": "Fix the regression", "trusted": True,
+        "runner": "TestRunner", "session_root": tmp_path,
     }
+
+
+def test_web_repair_defaults_to_docker_without_host_trust(monkeypatch: pytest.MonkeyPatch,
+                                                         tmp_path: Path) -> None:
+    from selfforge_agent.api import app as api_module
+
+    called: dict[str, object] = {}
+    pr = sample_pr()
+
+    class FakeAgent:
+        def __init__(self, _model: object, *, runner: object, session: object) -> None:
+            called.update(runner=type(runner).__name__, session_root=session.root)
+
+        def run(self, repository: Path, base: str, head: str, task: str, *, trusted: bool) -> RepairReport:
+            called["trusted"] = trusted
+            now = datetime.now(UTC)
+            return RepairReport(
+                run_id="test", repository=str(repository), base_sha=base, head_sha=head,
+                task=task, context=pr.context, findings=[], status="inconclusive",
+                started_at=now, finished_at=now,
+            )
+
+    class FakeRouter:
+        def __init__(self, _candidates: object) -> None:
+            self.selected_provider = None
+            self.attempts: list[object] = []
+
+    monkeypatch.delenv("SELFFORGE_ENABLE_HOST_TESTS", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setattr(api_module, "load_pr", lambda _url: pr)
+    monkeypatch.setattr(api_module, "checkout_pr", lambda _url, _root: github_pr.CheckoutResult(
+        path=str(tmp_path), branch="vpa-pr-2", head_sha="b" * 40,
+        diff_base_sha="a" * 40, pr_url=pr.url,
+    ))
+    monkeypatch.setattr(api_module, "FallbackCodingModel", FakeRouter)
+    monkeypatch.setattr(api_module, "RepairAgent", FakeAgent)
+    response = TestClient(app).post("/api/github/repair", json={
+        "url": pr.url, "task": "Fix the regression",
+    })
+    assert response.status_code == 200
+    assert called == {"runner": "DockerTestRunner", "session_root": tmp_path,
+                      "trusted": False}
 
 
 def test_deepseek_findings_must_point_to_added_lines(monkeypatch: pytest.MonkeyPatch) -> None:

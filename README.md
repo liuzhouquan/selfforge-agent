@@ -27,9 +27,9 @@ uv run python examples/coding_demo.py
 | Coding Agent Runtime | Implemented | OpenAI-compatible 原生工具调用，多轮执行，步数/时间限制，供应商回退 |
 | 工具与会话 | Implemented | read/edit/search/bash/run_tests；JSON Schema、工作区路径校验、JSONL 恢复与轨迹 |
 | Context 管理 | Implemented | 工具输出截断、近似 token 预算、保留任务约束的确定性摘要压缩 |
-| Docker 执行器 | In Progress | 已实现无网络、资源限制、只挂载工作区的命令路径；当前开发环境没有可用 Docker daemon，容器实跑待验证 |
+| Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 通过真实 pytest 退出码判断；未运行测试的任务标记 `unverified` |
-| PR Review / Repair | Implemented | 原有 Web 审查、可编辑 checkout、Base/Head/Repaired 验证仍可用；逐步接入共享 Runtime |
+| PR Review / Repair | Implemented | Web 审查与 checkout；修复工作流已复用 Docker 执行器、JUnit 证据与 JSONL 轨迹，模型修复循环仍独立 |
 | 自动生成针对性测试 | Planned | 现阶段依赖仓库已有测试 |
 
 ## Quick Start
@@ -44,7 +44,7 @@ docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
 uv run selfforge-agent code --repo ./your-project --task '修复失败的测试，并运行测试验证'
 ```
 
-`code` 默认通过 Docker 运行命令，容器禁用网络、限制 CPU/内存/进程数，只挂载排除了 `.env`、本地密钥和会话目录的临时工作区副本；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时需要扩展镜像。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。Agent 的文件工具始终限制在 `--repo` 内；执行仓库代码仍需审慎选择运行环境。模型会收到读取的代码和工具输出。
+`code` 默认通过 Docker 运行命令，容器禁用网络、限制 CPU/内存/进程数。工具把排除了 `.env`、本地密钥和会话目录的临时工作区副本送入容器 tmpfs；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时需要扩展镜像。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。Agent 的文件工具始终限制在 `--repo` 内；模型会收到读取的代码和工具输出。
 
 DeepSeek 与 OpenRouter 默认 URL 和模型已配置；Web 工作台还支持本机保存密钥、URL 与模型列表自动同步。自定义 OpenAI-compatible 端点可用 `--model ID --base-url URL`，密钥从 `SELFFORGE_API_KEY` 或 `OPENAI_API_KEY` 读取。`--provider openrouter` 可指定供应商，默认自动路由并在调用失败时切换备用供应商。
 
@@ -62,13 +62,20 @@ uv run selfforge-agent trace --repo ./your-project SESSION_ID
 # 单独运行测试，默认使用 Docker
 uv run selfforge-agent test --repo ./your-project --path tests
 
+# 无 API Key 的真实 Docker 修复演示（先构建镜像）
+uv run python examples/repair_demo.py
+
 # 已信任的本机测试，可保留 JUnit 计数
 uv run selfforge-agent test --repo ./your-project --sandbox host --trust-local
 
 # 专项：本地 PR 比较审查与 Base/Head/Repaired 修复
 uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
-  --task '修复现有测试证明的回归' --trust-local-tests --patch-output repair.patch
+  --task '修复现有测试证明的回归' --patch-output repair.patch
+
+# 仅对可信 PR 显式选择主机执行
+uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
+  --task '修复回归' --sandbox host --trust-local-tests
 ```
 
 Agent 状态有 `completed`（最后修改后 pytest 成功）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。会话与轨迹写入项目内被 Git 忽略的 `.selfforge/`，不会自动提交。运行中可用 Ctrl-C 中断；当前取消检查发生在模型调用和工具调用之间，单个调用仍受自身超时限制。
@@ -86,10 +93,12 @@ flowchart LR
   X --> P[pytest]
   CLI --> S[SessionStore / JSONL Trace]
   P --> CLI
-  PR[PR Review / Repair] --> E[现有 ReviewService / TestRunner / Git worktree]
+  PR[PR Review / Repair] --> E[Git worktree / DockerTestRunner]
+  E --> X
+  E --> S
 ```
 
-Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下文与会话模块，详见[架构文档](./docs/architecture.md)。通用 Coding 任务与旧 PR 工作流共用供应商配置；PR Repair 仍使用原有有界修复循环，迁移到统一 Runtime 是后续工作。
+Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下文与会话模块，详见[架构文档](./docs/architecture.md)。PR Repair 复用供应商配置、Docker 执行器和会话轨迹；它的有界修复循环仍独立于通用 Tool Calling Agent。
 
 ## Verification 与 Evaluation
 
@@ -106,8 +115,8 @@ uv run ruff check .
 
 ## Specialized Workflows：PR Review
 
-`uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000` 启动 Web 工作台。可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支，并按需运行受信任的修复工作流。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 修复运行主机 pytest，需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。现阶段 Web 修复没有 Docker 隔离；不要对不可信 PR 启用主机测试。工具不会自动推送、评论或合并 PR。
+`uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000` 启动 Web 工作台。可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支，并运行验证修复。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 修复默认在 Docker 中测试；选择主机执行时，仍需 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。工具不会自动推送、评论或合并 PR。修复轨迹保存在 checkout 的 `.selfforge/sessions/`，可用 `selfforge-agent trace --repo CHECKOUT RUN_ID` 查看。
 
 ## Roadmap
 
-优先把 PR Repair 与通用 Runtime 的工具、执行器和会话轨迹合并，并在可用 Docker daemon 上做真实隔离验证。之后开发针对性测试生成、PR 风险驱动测试和更广的客观评测。见[路线图](./docs/roadmap.md)。
+下一步优先把 PR Repair 的模型编辑步骤接到通用 Tool Registry，并增加针对性测试生成、PR 风险驱动测试及更广的客观评测。见[路线图](./docs/roadmap.md)。

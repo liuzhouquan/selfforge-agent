@@ -1,5 +1,6 @@
 import json
 import subprocess
+import tarfile
 import threading
 from pathlib import Path
 
@@ -120,13 +121,20 @@ def test_context_compaction_keeps_task_and_summarizes_tools() -> None:
 def test_docker_executor_restricts_network_and_resources(tmp_path: Path, monkeypatch) -> None:
     captured = []
     (tmp_path / ".env").write_text("SECRET=test", encoding="utf-8")
+    (tmp_path / ".env.production").write_text("SECRET=test", encoding="utf-8")
+    (tmp_path / ".aws").mkdir()
+    (tmp_path / ".aws" / "credentials").write_text("SECRET=test", encoding="utf-8")
     (tmp_path / "app.py").write_text("print(1)", encoding="utf-8")
 
     def fake_run(argv, **kwargs):
         captured.append(argv)
-        staged = Path(argv[argv.index("--mount") + 1].split(",src=", 1)[1].split(",dst=", 1)[0])
-        assert (staged / "app.py").exists()
-        assert not (staged / ".env").exists()
+        if kwargs.get("stdin") is not None:
+            with tarfile.open(fileobj=kwargs["stdin"]) as archive:
+                names = archive.getnames()
+            assert "app.py" in names
+            assert ".env" not in names
+            assert ".env.production" not in names
+            assert not any(name.startswith(".aws") for name in names)
         return subprocess.CompletedProcess(argv, 0, "ok", "")
 
     monkeypatch.setattr("selfforge_agent.runtime.execution.subprocess.run", fake_run)
@@ -135,7 +143,8 @@ def test_docker_executor_restricts_network_and_resources(tmp_path: Path, monkeyp
     assert result.returncode == 0
     assert argv[argv.index("--network") + 1] == "none"
     assert "--read-only" in argv and "--cap-drop" in argv and "--memory" in argv
-    assert any(item.startswith("type=bind,src=/tmp/selfforge-docker-") for item in argv)
+    assert any(item.startswith("/workspace:rw,nosuid") for item in argv)
+    assert not any("type=bind" in item for item in argv)
 
 
 def test_objective_evaluation_reports_real_test_results() -> None:

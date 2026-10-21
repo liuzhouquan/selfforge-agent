@@ -17,7 +17,8 @@ from selfforge_agent.coding.worktree import WorktreeError, detached_worktree, gi
 from selfforge_agent.core.git_context import build_context
 from selfforge_agent.models import PRContext, TestResult
 from selfforge_agent.review.baseline import BaselineReviewer
-from selfforge_agent.verification.runner import TestRunner, TrustRequiredError
+from selfforge_agent.runtime.session import SessionStore
+from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
 _MAX_SOURCE_BYTES = 16_384
 _MAX_FILES = 8
@@ -82,9 +83,19 @@ def _test_output(result: TestResult) -> str:
 
 
 class RepairAgent:
-    def __init__(self, model: CodingModel, runner: TestRunner | None = None) -> None:
+    def __init__(self, model: CodingModel, runner: TestRunner | DockerTestRunner | None = None,
+                 session: SessionStore | None = None) -> None:
         self.model = model
         self.runner = runner or TestRunner()
+        self.session = session
+
+    def _trace_test(self, stage: str, result: TestResult) -> None:
+        if self.session:
+            self.session.trace("repair_test", stage=stage, status=result.status,
+                               passed=result.passed, failed=result.failed,
+                               errors=result.errors, exit_code=result.exit_code,
+                               duration_seconds=result.duration_seconds,
+                               environment=result.environment)
 
     def run(
         self,
@@ -98,14 +109,14 @@ class RepairAgent:
         timeout: float = 60,
         max_attempts: int = 2,
     ) -> RepairReport:
-        if not trusted:
-            raise TrustRequiredError("Repair requires --trust-local-tests")
+        if not trusted and getattr(self.runner, "requires_trust", True):
+            raise TrustRequiredError("Host repair requires --trust-local-tests")
         if not task.strip() or not 1 <= max_attempts <= 3:
             raise ValueError("A task and 1–3 repair attempts are required")
         context = build_context(repository, base, head)
         findings = BaselineReviewer().review(context)
         report = RepairReport(
-            run_id=str(uuid4()),
+            run_id=self.session.session_id if self.session else str(uuid4()),
             repository=context.repository,
             base_sha=context.base_sha,
             head_sha=context.head_sha,
@@ -117,6 +128,11 @@ class RepairAgent:
             finished_at=datetime.now(UTC),
         )
         repo = Path(context.repository)
+        if self.session:
+            self.session.record_status("running")
+            self.session.trace("repair_start", sandbox="host" if getattr(self.runner, "requires_trust", True) else "docker",
+                               base_sha=context.base_sha, head_sha=context.head_sha,
+                               max_attempts=max_attempts)
         try:
             with tempfile.TemporaryDirectory(prefix="verified-pr-repair-") as temp:
                 root = Path(temp)
@@ -126,11 +142,20 @@ class RepairAgent:
                     detached_worktree(repo, context.head_sha, root / "repair") as repair_tree,
                 ):
                     report.base_test = self.runner.run(
-                        base_tree, trusted=True, timeout=timeout, test_path=test_path
+                        base_tree, trusted=trusted, timeout=timeout, test_path=test_path
                     )
+                    self._trace_test("base", report.base_test)
                     report.head_test = self.runner.run(
-                        head_tree, trusted=True, timeout=timeout, test_path=test_path
+                        head_tree, trusted=trusted, timeout=timeout, test_path=test_path
                     )
+                    self._trace_test("head", report.head_test)
+                    for stage, result in (("Base", report.base_test), ("Head", report.head_test)):
+                        if result.status in {"error", "timeout"}:
+                            report.status = "error"
+                            report.errors.append(
+                                f"{stage} test execution failed: {result.error_message or result.stdout[-500:]}"
+                            )
+                            return report
                     if report.base_test.status != "passed":
                         report.errors.append("Base tests did not pass; regression is not established")
                         return report
@@ -160,17 +185,25 @@ class RepairAgent:
                         )
                         attempt = RepairAttempt(number=number)
                         report.attempts.append(attempt)
+                        if self.session:
+                            self.session.trace("repair_attempt", number=number)
                         try:
                             edit = self.model.propose(observation)
                             attempt.edit = edit
+                            if self.session:
+                                self.session.trace("repair_edit", number=number, path=edit.path)
                             _apply_edit(repair_tree, edit, allowed)
                             attempt.patch = _safe_patch(repair_tree, allowed)
                             attempt.test_result = self.runner.run(
-                                repair_tree, trusted=True, timeout=timeout, test_path=test_path
+                                repair_tree, trusted=trusted, timeout=timeout, test_path=test_path
                             )
+                            self._trace_test("repaired", attempt.test_result)
                             attempt.patch = _safe_patch(repair_tree, allowed)
                         except (EditRejected, ModelError, OSError, ValueError) as exc:
                             attempt.error = str(exc)
+                            if self.session:
+                                self.session.trace("repair_attempt_error", number=number,
+                                                   error_type=type(exc).__name__)
                             feedback = attempt.error
                             continue
                         if attempt.test_result.status == "passed":
@@ -186,9 +219,11 @@ class RepairAgent:
                         failure_output = _test_output(attempt.test_result)
                         feedback = f"Previous edit did not pass: {attempt.test_result.status}"
                     return report
-        except (OSError, ValueError, WorktreeError) as exc:
+        except (OSError, ValueError, RuntimeError, WorktreeError) as exc:
             report.status = "error"
             report.errors.append(str(exc))
             return report
         finally:
             report.finished_at = datetime.now(UTC)
+            if self.session:
+                self.session.record_status(report.status)

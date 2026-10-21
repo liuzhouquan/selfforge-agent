@@ -173,7 +173,8 @@ $("checkout-button").addEventListener("click", async () => {
 
 $("repair-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!current || !hostTestsEnabled) return;
+  if (!current || $("repair-button").disabled) return;
+  const host = $("repair-sandbox").value === "host";
   showAlert("");
   const button = $("repair-button");
   button.disabled = true;
@@ -182,21 +183,22 @@ $("repair-form").addEventListener("submit", async (event) => {
     const response = await postJson("/api/github/repair", {
       url: current.pr.url,
       task: $("repair-task").value.trim(),
-      trust_local_tests: $("trust-tests").checked,
+      trust_local_tests: host && $("trust-tests").checked,
+      sandbox: $("repair-sandbox").value,
       provider: $("repair-provider").value,
       fallback: $("repair-fallback").checked,
     });
     const report = response.report;
     verifiedPatch = report.verified_patch;
     $("repair-status").textContent = `状态：${report.status}`;
-    $("repair-detail").textContent = `Base ${report.base_test?.status ?? "未运行"} · Head ${report.head_test?.status ?? "未运行"} · ${report.attempts.length} 次尝试 · 编码模型：${response.model_provider ? providerLabel(response.model_provider) : "未调用"} · 本地 checkout：${response.checkout.path}${report.errors.length ? ` · ${report.errors.join("; ")}` : ""}${response.model_attempts.length ? ` · ${response.model_attempts.map(attemptText).join(" → ")}` : ""}`;
+    $("repair-detail").textContent = `Base ${report.base_test?.status ?? "未运行"} · Head ${report.head_test?.status ?? "未运行"} · ${report.attempts.length} 次尝试 · ${$("repair-sandbox").value} 测试 · 轨迹 ID：${report.run_id} · 编码模型：${response.model_provider ? providerLabel(response.model_provider) : "未调用"} · 本地 checkout：${response.checkout.path}${report.errors.length ? ` · ${report.errors.join("; ")}` : ""}${response.model_attempts.length ? ` · ${response.model_attempts.map(attemptText).join(" → ")}` : ""}`;
     $("repair-patch").textContent = verifiedPatch || "没有生成已验证补丁。请查看报告中的测试和错误信息。";
     $("download-patch").hidden = !verifiedPatch;
     $("repair-result").hidden = false;
   } catch (error) {
     showAlert(error.message);
   } finally {
-    button.disabled = false;
+    refreshRepairAvailability();
     button.textContent = "运行验证修复";
   }
 });
@@ -259,10 +261,22 @@ function applyConfig(config) {
       if (["deepseek", "openrouter"].includes(option.value)) option.disabled = !configuredProviders.some((item) => item.name === option.value);
     }
   }
-  hostTestsEnabled = config.host_tests_enabled && configuredProviders.length > 0;
-  $("repair-button").disabled = !hostTestsEnabled;
-  $("repair-availability").textContent = hostTestsEnabled ? "还需勾选上面的可信执行选项" : "需配置模型密钥并设置 SELFFORGE_ENABLE_HOST_TESTS=1 后重启服务";
+  hostTestsEnabled = config.host_tests_enabled;
+  refreshRepairAvailability();
 }
+
+function refreshRepairAvailability() {
+  const host = $("repair-sandbox").value === "host";
+  $("host-trust-label").hidden = !host;
+  $("repair-button").disabled = !configuredProviders.length || (host && (!hostTestsEnabled || !$("trust-tests").checked));
+  $("repair-availability").textContent = !configuredProviders.length
+    ? "需先配置模型密钥"
+    : host ? (hostTestsEnabled ? "本机测试需明确勾选信任" : "本机测试需设置 SELFFORGE_ENABLE_HOST_TESTS=1")
+      : "Docker 模式需先构建 selfforge-agent-sandbox:latest 镜像";
+}
+
+$("repair-sandbox").addEventListener("change", refreshRepairAvailability);
+$("trust-tests").addEventListener("change", refreshRepairAvailability);
 
 for (const form of document.querySelectorAll(".settings-card")) {
   form.addEventListener("submit", async (event) => {

@@ -36,7 +36,9 @@ from selfforge_agent.providers import (
     save_provider_settings,
 )
 from selfforge_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
+from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.service import ReviewService
+from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
 app = FastAPI(title="selfForge Agent")
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -71,6 +73,7 @@ class GitHubRepairRequest(BaseModel):
     url: str
     task: str
     trust_local_tests: bool = False
+    sandbox: Literal["docker", "host"] = "docker"
     provider: Literal["auto", "deepseek", "openrouter"] = "auto"
     fallback: bool = True
 
@@ -204,7 +207,8 @@ def github_checkout(request: GitHubCheckoutRequest, client: Request) -> Checkout
 def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepairResponse:
     if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
         raise HTTPException(status_code=403, detail="Repair is available only from localhost")
-    if os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests:
+    if (request.sandbox == "host" and
+            (os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests)):
         raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this PR")
     candidates = route_providers(request.provider, request.fallback)
     if not candidates:
@@ -213,12 +217,14 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
         pr = load_pr(request.url)
         checkout = checkout_pr(pr.url, _WORKSPACES)
         model = FallbackCodingModel(candidates)
-        report = RepairAgent(model).run(
+        runner = TestRunner() if request.sandbox == "host" else DockerTestRunner()
+        report = RepairAgent(model, runner=runner,
+                             session=SessionStore(Path(checkout.path))).run(
             Path(checkout.path),
             checkout.diff_base_sha,
             pr.context.head_sha,
             request.task,
-            trusted=True,
+            trusted=request.trust_local_tests if request.sandbox == "host" else False,
         )
         return GitHubRepairResponse(
             checkout=checkout, report=report,

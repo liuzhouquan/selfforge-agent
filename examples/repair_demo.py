@@ -1,5 +1,6 @@
 """Offline end-to-end repair demo with a fixed proposer for the known fixture only."""
 
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.models import CodeEdit, RepairObservation
+from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
 
 class KnownFixtureModel:
@@ -26,6 +28,12 @@ def git(repo: Path, *args: str) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    parser.add_argument("--trust-local-tests", action="store_true")
+    args = parser.parse_args()
+    if args.sandbox == "host" and not args.trust_local_tests:
+        parser.error("Host tests require --trust-local-tests")
     with tempfile.TemporaryDirectory(prefix="verified-pr-demo-") as temporary:
         repo = Path(temporary) / "repo"
         subprocess.run(
@@ -34,8 +42,9 @@ def main() -> None:
         )
         base = git(repo, "rev-list", "--max-parents=0", "HEAD")
         head = git(repo, "rev-parse", "HEAD")
-        report = RepairAgent(KnownFixtureModel()).run(
-            repo, base, head, "Fix the add regression", trusted=True
+        runner = TestRunner() if args.sandbox == "host" else DockerTestRunner()
+        report = RepairAgent(KnownFixtureModel(), runner=runner).run(
+            repo, base, head, "Fix the add regression", trusted=args.trust_local_tests
         )
         print(f"Status: {report.status}")
         print(f"Base: {report.base_test.status}; Head: {report.head_test.status}")
