@@ -14,6 +14,7 @@ from selfforge_agent.coding.model_client import (
 )
 from selfforge_agent.coding.models import CodeEdit, RepairObservation, SourceFile
 from selfforge_agent.providers import ProviderConfig, TokenUsage
+from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.verification.runner import TrustRequiredError
 
 
@@ -54,6 +55,19 @@ def test_verified_repair_keeps_original_tree_untouched(
     assert "tests/test_calculator.py" not in restored.verified_patch
     assert "return a - b" in (repo / "calculator.py").read_text()
     assert git(repo, "worktree", "list", "--porcelain") == before
+
+
+def test_repair_records_metadata_trace(demo_repo: tuple[Path, str, str]) -> None:
+    repo, base, head = demo_repo
+    session = SessionStore(repo)
+    report = RepairAgent(FixedModel(), session=session).run(
+        repo, base, head, "Fix add regression", trusted=True)
+    assert report.run_id == session.session_id
+    assert session.load()[1] == "verified"
+    events = session.trace_events()
+    assert [event["stage"] for event in events if event["event"] == "repair_test"] == [
+        "base", "head", "repaired"]
+    assert not any("return a - b" in str(event) for event in events)
 
 
 def test_rejects_test_edits(demo_repo: tuple[Path, str, str]) -> None:
@@ -179,7 +193,8 @@ def test_repair_cli_writes_evidence_and_verified_patch(
         "argv",
         [
             "selfforge-agent", "repair", "--repo", str(repo), "--base", base,
-            "--head", head, "--task", "Fix add", "--trust-local-tests", "--model", "fake",
+                "--head", head, "--task", "Fix add", "--sandbox", "host",
+                "--trust-local-tests", "--model", "fake",
             "--output", str(output), "--patch-output", str(patch),
         ],
     )

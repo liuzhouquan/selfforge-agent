@@ -21,4 +21,6 @@ DEEPSEEK_API_KEY=... uv run selfforge-agent eval --provider deepseek
 uv run pytest tests/test_runtime.py
 ```
 
-Evaluation uses only generated code on the explicitly trusted local host. No external repository code is executed. The temporary sessions are removed after each case. For a stronger benchmark, add varied tasks and repositories, repeated runs, Docker execution, token/cost/latency summaries, and saved failure traces with secrets scrubbed.
+The two-case coding evaluation uses generated code on the explicitly trusted local host. No external repository code is executed. The temporary sessions are removed after each case. For a stronger benchmark, add varied tasks and repositories, repeated runs, Docker execution, token/cost/latency summaries, and saved failure traces with secrets scrubbed.
+
+On 2026-10-21, `uv run --no-sync pytest -q` passed **45 tests**, including one live Docker integration fixture. In that fixture, Base passed, Head had a JUnit assertion failure, and Repaired passed; the verified patch changed `calculator.py` while the original checkout stayed unchanged. This is a single generated smoke test of the sandbox and repair evidence, not a model benchmark. The test skips when the local daemon or `selfforge-agent-sandbox:latest` image is unavailable. Reproduce it with `docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .` and `uv run --no-sync pytest -q tests/test_docker_repair.py`.

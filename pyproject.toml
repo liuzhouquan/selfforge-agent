@@ -20,6 +20,7 @@ packages = ["src/selfforge_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: requires a local Docker daemon and the sandbox image"]
 
 [tool.ruff]
 line-length = 100

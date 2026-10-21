@@ -90,16 +90,18 @@
             <section class="panel findings-panel"><div class="panel-head"><h3>审查发现</h3><span>均为待验证</span></div><div id="finding-list" class="finding-list"></div></section>
           </div>
           <section class="repair-card">
-            <div><div class="section-kicker">CODING AGENT</div><h3>隔离修复尝试</h3><p>仅对你明确可信的 PR 执行测试。Agent 会在临时 worktree 里比较 Base、Head 和修复版，生成补丁；不会推送或修改原 PR。</p></div>
+            <div><div class="section-kicker">CODING AGENT</div><h3>隔离修复尝试</h3><p>Agent 在临时 worktree 里比较 Base、Head 和修复版，生成补丁；测试默认在无网络的 Docker 容器中运行。不会推送或修改原 PR。</p></div>
             <form id="repair-form">
               <label for="repair-task">修复目标</label>
               <input id="repair-task" required placeholder="例如：修复这个 PR 引入的 add 函数回归" />
               <label for="repair-provider">编码模型</label>
               <select id="repair-provider"><option value="auto">自动选择</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option></select>
               <label class="provider-fallback"><input id="repair-fallback" type="checkbox" checked /> 失败时切换备用供应商</label>
-              <label class="trust-label"><input id="trust-tests" type="checkbox" /> 我信任此 PR，允许在本机执行它的 pytest 测试</label>
+              <label for="repair-sandbox">测试执行环境</label>
+              <select id="repair-sandbox"><option value="docker">Docker 隔离（默认）</option><option value="host">本机执行（仅可信 PR）</option></select>
+              <label class="trust-label" id="host-trust-label" hidden><input id="trust-tests" type="checkbox" /> 我信任此 PR，允许在本机执行它的 pytest 测试</label>
               <button id="repair-button" type="submit" disabled>运行验证修复</button>
-              <small id="repair-availability">需设置 SELFFORGE_ENABLE_HOST_TESTS=1 后重启服务</small>
+              <small id="repair-availability">需配置模型密钥和 Docker 镜像</small>
             </form>
             <div id="repair-result" class="repair-result" hidden><strong id="repair-status"></strong><p id="repair-detail"></p><button id="download-patch" type="button" hidden>下载已验证补丁</button><pre id="repair-patch"></pre></div>
           </section>

@@ -18,7 +18,7 @@ from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.service import ReviewService
-from selfforge_agent.verification.runner import TestRunner, TrustRequiredError
+from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
 
 def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -119,7 +119,10 @@ def main() -> int:
     repair.add_argument("--base", required=True)
     repair.add_argument("--head", required=True)
     repair.add_argument("--task", required=True)
-    repair.add_argument("--trust-local-tests", action="store_true", required=True)
+    repair.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    repair.add_argument("--trust-local-tests", action="store_true",
+                        help="Required only for host pytest execution")
+    repair.add_argument("--image", default="selfforge-agent-sandbox:latest")
     repair.add_argument("--test-path", default="tests")
     repair.add_argument("--timeout", type=float, default=60)
     repair.add_argument("--max-attempts", type=int, default=2)
@@ -168,7 +171,8 @@ def main() -> int:
                 )
             else:
                 model = FallbackCodingModel(candidates)
-            result = RepairAgent(model).run(
+            runner = TestRunner() if args.sandbox == "host" else DockerTestRunner(args.image)
+            result = RepairAgent(model, runner=runner, session=SessionStore(args.repo)).run(
                 args.repo,
                 args.base,
                 args.head,
