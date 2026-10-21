@@ -5,19 +5,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from verified_pr_agent.coding.model_client import CodingModel, ModelError
-from verified_pr_agent.coding.models import (
+from selfforge_agent.coding.model_client import CodingModel, ModelError
+from selfforge_agent.coding.models import (
     CodeEdit,
     RepairAttempt,
     RepairObservation,
     RepairReport,
     SourceFile,
 )
-from verified_pr_agent.coding.worktree import WorktreeError, detached_worktree, git
-from verified_pr_agent.core.git_context import build_context
-from verified_pr_agent.models import PRContext, TestResult
-from verified_pr_agent.review.baseline import BaselineReviewer
-from verified_pr_agent.verification.runner import TestRunner, TrustRequiredError
+from selfforge_agent.coding.worktree import WorktreeError, detached_worktree, git
+from selfforge_agent.core.git_context import build_context
+from selfforge_agent.models import PRContext, TestResult
+from selfforge_agent.review.baseline import BaselineReviewer
+from selfforge_agent.verification.runner import TestRunner, TrustRequiredError
 
 _MAX_SOURCE_BYTES = 16_384
 _MAX_FILES = 8

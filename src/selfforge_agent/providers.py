@@ -11,9 +11,9 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel
 
-from verified_pr_agent.integrations.model_http import ProviderHTTPError, request_json
+from selfforge_agent.integrations.model_http import ProviderHTTPError, request_json
 
-ProviderName = Literal["deepseek", "openrouter"]
+ProviderName = Literal["deepseek", "openrouter", "custom"]
 ProviderChoice = Literal["auto", "deepseek", "openrouter", "rules"]
 
 
@@ -48,7 +48,7 @@ _DEFAULTS = {
 
 
 def _settings_path() -> Path:
-    return Path(os.environ.get("VPA_PROVIDER_CONFIG_PATH") or
+    return Path(os.environ.get("SELFFORGE_PROVIDER_CONFIG_PATH") or
                 Path(__file__).resolve().parents[2] / ".local" / "providers.json")
 
 
@@ -158,7 +158,7 @@ def configured_providers() -> list[ProviderConfig]:
     for name, (label, default_url, default_model, env_key) in _DEFAULTS.items():
         local = settings.get(name, {})
         base_url = validate_base_url(local.get("base_url") or default_url)
-        model = local.get("model") or os.environ.get(f"VPA_{name.upper()}_MODEL") or default_model
+        model = local.get("model") or os.environ.get(f"SELFFORGE_{name.upper()}_MODEL") or default_model
         key = local.get("api_key") or os.environ.get(env_key, "")
         result.append(ProviderConfig(name=name, label=label, key=key, model=model,
                                      base_url=base_url, status_url=base_url +

@@ -3,7 +3,7 @@
 import re
 from typing import Protocol
 
-from verified_pr_agent.models import ChangeKind, Finding, PRContext, VerificationStatus
+from selfforge_agent.models import ChangeKind, Finding, PRContext, VerificationStatus
 
 
 class ReviewAgent(Protocol):

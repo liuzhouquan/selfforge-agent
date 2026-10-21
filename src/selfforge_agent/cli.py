@@ -1,0 +1,225 @@
+"""Command line interface for coding tasks and specialized workflows."""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+from selfforge_agent.coding.agent import RepairAgent
+from selfforge_agent.coding.model_client import FallbackCodingModel, OpenAICompatibleCodingModel
+from selfforge_agent.coding.worktree import WorktreeError
+from selfforge_agent.core.git_context import GitContextError
+from selfforge_agent.providers import ProviderConfig, route_providers
+from selfforge_agent.runtime.agent import CodingAgent
+from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
+from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
+from selfforge_agent.runtime.model import OpenAIChatAdapter
+from selfforge_agent.runtime.session import SessionStore
+from selfforge_agent.runtime.tools import ToolRegistry
+from selfforge_agent.service import ReviewService
+from selfforge_agent.verification.runner import TestRunner, TrustRequiredError
+
+
+def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if not args.task and not args.resume:
+        parser.error("code requires --task or --resume")
+    root = args.repo.resolve()
+    if not root.is_dir():
+        parser.error("Repository directory does not exist")
+    try:
+        executor = (HostExecutor(root, trusted=args.trust_local) if args.sandbox == "host"
+                    else DockerExecutor(root, image=args.image))
+        if args.model or args.base_url:
+            if not args.model or not args.base_url:
+                parser.error("Custom model requires both --model and --base-url")
+            candidates = [ProviderConfig(
+                name="custom", label="Custom", model=args.model, base_url=args.base_url,
+                key=os.environ.get("SELFFORGE_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
+                status_url="",
+            )]
+        else:
+            candidates = route_providers(args.provider, not args.no_fallback)
+        agent = CodingAgent(OpenAIChatAdapter(candidates), ToolRegistry(root, executor),
+                            SessionStore(root, args.resume), max_steps=args.max_steps,
+                            time_budget=args.time_budget, context_budget=args.context_tokens)
+        result = agent.run(args.task or "", resume=bool(args.resume))
+    except (ValueError, RuntimeError, OSError) as exc:
+        parser.error(str(exc))
+    print(f"Session {result.session_id}: {result.status} ({result.steps} steps, "
+          f"{result.tools_used} tools)")
+    if result.answer:
+        print(result.answer)
+    if result.error:
+        print(result.error, file=sys.stderr)
+    return 0 if result.status == "completed" else 1
+
+
+def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    root = args.repo.resolve()
+    try:
+        if args.sandbox == "host":
+            report = TestRunner().run(root, trusted=args.trust_local,
+                                      timeout=args.timeout, test_path=args.path)
+            print(f"pytest: {report.status}; passed={report.passed}; failed={report.failed}; "
+                  f"errors={report.errors}; exit={report.exit_code}")
+            if report.error_message:
+                print(report.error_message, file=sys.stderr)
+            return 0 if report.status == "passed" else 1
+        outcome = ToolRegistry(root, DockerExecutor(root, image=args.image)).execute(
+            "run_tests", {"path": args.path, "timeout": args.timeout})
+        print(outcome.content)
+        return 0 if outcome.ok else 1
+    except (ValueError, OSError, RuntimeError) as exc:
+        parser.error(str(exc))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="selfforge-agent")
+    subcommands = parser.add_subparsers(dest="command", required=True)
+    code = subcommands.add_parser("code", help="Run a general autonomous coding task")
+    code.add_argument("--repo", type=Path, default=Path.cwd())
+    code.add_argument("--task", help="Natural-language development task")
+    code.add_argument("--resume", help="Resume a prior session ID")
+    code.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    code.add_argument("--trust-local", action="store_true", help="Required for host execution")
+    code.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    code.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    code.add_argument("--no-fallback", action="store_true")
+    code.add_argument("--model")
+    code.add_argument("--base-url")
+    code.add_argument("--max-steps", type=int, default=12)
+    code.add_argument("--time-budget", type=float, default=300)
+    code.add_argument("--context-tokens", type=int, default=8_000)
+    testing = subcommands.add_parser("test", help="Run pytest with Docker or explicit host trust")
+    testing.add_argument("--repo", type=Path, default=Path.cwd())
+    testing.add_argument("--path", default="tests")
+    testing.add_argument("--timeout", type=float, default=60)
+    testing.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    testing.add_argument("--trust-local", action="store_true")
+    testing.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    trace = subcommands.add_parser("trace", help="Show a session's structured trace")
+    trace.add_argument("--repo", type=Path, default=Path.cwd())
+    trace.add_argument("session_id")
+    evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
+    evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
+    evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    evaluation.add_argument("--max-steps", type=int, default=10)
+    evaluation.add_argument("--time-budget", type=float, default=180)
+    review = subcommands.add_parser("review", help="Review a local Git comparison")
+    review.add_argument("--repo", type=Path, required=True)
+    review.add_argument("--base", required=True)
+    review.add_argument("--head", required=True)
+    review.add_argument("--trust-local-tests", action="store_true")
+    review.add_argument("--test-path", default="tests")
+    review.add_argument("--timeout", type=float, default=60)
+    review.add_argument("--output", type=Path, help="Write full JSON evidence to this file")
+    repair = subcommands.add_parser("repair", help="Repair a verified local regression")
+    repair.add_argument("--repo", type=Path, required=True)
+    repair.add_argument("--base", required=True)
+    repair.add_argument("--head", required=True)
+    repair.add_argument("--task", required=True)
+    repair.add_argument("--trust-local-tests", action="store_true", required=True)
+    repair.add_argument("--test-path", default="tests")
+    repair.add_argument("--timeout", type=float, default=60)
+    repair.add_argument("--max-attempts", type=int, default=2)
+    repair.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    repair.add_argument("--no-fallback", action="store_true")
+    repair.add_argument("--model", default=os.environ.get("SELFFORGE_MODEL"))
+    repair.add_argument("--base-url", default=os.environ.get("SELFFORGE_API_BASE_URL"))
+    repair.add_argument("--output", type=Path, help="Write JSON evidence to this file")
+    repair.add_argument("--patch-output", type=Path, help="Write a verified patch to this file")
+    args = parser.parse_args()
+    if args.command == "code":
+        return _run_code(args, parser)
+    if args.command == "test":
+        return _run_test(args, parser)
+    if args.command == "trace":
+        try:
+            events = SessionStore(args.repo, args.session_id).trace_events()
+        except ValueError as exc:
+            parser.error(str(exc))
+        for event in events:
+            print(json.dumps(event, ensure_ascii=False))
+        return 0
+    if args.command == "eval":
+        try:
+            if args.offline:
+                factory = OfflineFixtureModel
+            else:
+                providers = route_providers(args.provider, False)
+                factory = lambda _case: OpenAIChatAdapter(providers)
+            report = evaluate(factory, max_steps=args.max_steps,
+                              time_budget=args.time_budget)
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["successes"] == report["tasks"] else 1
+    if args.command == "repair":
+        try:
+            candidates = route_providers(args.provider, not args.no_fallback)
+            if args.model or args.base_url or os.environ.get("SELFFORGE_API_KEY"):
+                first = candidates[0] if candidates else None
+                model = OpenAICompatibleCodingModel(
+                    model=args.model or (first.model if first else ""),
+                    base_url=args.base_url or (first.base_url if first else "https://api.openai.com/v1"),
+                    api_key=(os.environ.get("SELFFORGE_API_KEY") or (first.key if first else "")
+                             or os.environ.get("OPENAI_API_KEY", "")),
+                )
+            else:
+                model = FallbackCodingModel(candidates)
+            result = RepairAgent(model).run(
+                args.repo,
+                args.base,
+                args.head,
+                args.task,
+                trusted=args.trust_local_tests,
+                test_path=args.test_path,
+                timeout=args.timeout,
+                max_attempts=args.max_attempts,
+            )
+        except (GitContextError, TrustRequiredError, WorktreeError, ValueError) as exc:
+            parser.error(str(exc))
+        if args.output:
+            args.output.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        if result.status == "verified" and args.patch_output:
+            args.patch_output.write_text(result.verified_patch, encoding="utf-8")
+        print(f"Run {result.run_id}: {result.status}")
+        if result.base_test and result.head_test:
+            print(f"Base tests: {result.base_test.status}; Head tests: {result.head_test.status}")
+        for attempt in result.attempts:
+            outcome = attempt.test_result.status if attempt.test_result else attempt.error
+            print(f"Attempt {attempt.number}: {outcome}")
+        if result.errors:
+            print("Errors: " + "; ".join(result.errors), file=sys.stderr)
+        return 0 if result.status == "verified" else 1
+    try:
+        report = ReviewService().review(
+            args.repo,
+            args.base,
+            args.head,
+            trusted_tests=args.trust_local_tests,
+            test_path=args.test_path,
+            timeout=args.timeout,
+        )
+    except (GitContextError, ValueError) as exc:
+        parser.error(str(exc))
+    if args.output:
+        args.output.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    print(f"Run {report.run_id}: {report.execution_status}")
+    print(f"{report.base_sha[:12]}..{report.head_sha[:12]} | {len(report.context.files)} files")
+    print(f"Findings: {len(report.findings)} heuristic suspected")
+    for finding in report.findings:
+        print(f"  {finding.file_path}:{finding.line_number} [{finding.severity}] {finding.description}")
+    for result in report.test_results:
+        print(
+            f"Tests: {result.status} (exit={result.exit_code}, "
+            f"passed={result.passed}, failed={result.failed}, errors={result.errors})"
+        )
+    if report.errors:
+        print("Errors: " + "; ".join(report.errors), file=sys.stderr)
+    return 2 if report.execution_status == "error" else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

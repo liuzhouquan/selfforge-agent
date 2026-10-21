@@ -171,6 +171,48 @@ button {
   font-size:13px;
   margin:0 0 28px
 }
+.coding-quickstart {
+  max-width:860px;
+  padding:17px 20px;
+  border:1px solid #cfe4d1;
+  border-radius:12px;
+  background:#fff;
+  box-shadow:0 8px 25px #315f3c0b
+}
+.coding-quickstart strong,.coding-quickstart small {
+  display:block
+}
+.coding-quickstart strong {
+  font-size:12px;
+  color:#315a40
+}
+.coding-quickstart code {
+  display:block;
+  overflow:auto;
+  margin:11px 0;
+  padding:12px;
+  border-radius:8px;
+  background:#142a25;
+  color:#d7f6d8;
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace
+}
+.coding-quickstart small {
+  color:#788d7e;
+  font-size:10px
+}
+.workflow {
+  padding:30px 40px 38px;
+  background:#f7faf7
+}
+.workflow h2 {
+  margin:8px 0;
+  font-size:22px
+}
+.workflow>p {
+  font-size:12px;
+  color:#6a806f;
+  margin:0 0 18px
+}
 .import-form {
   max-width:860px;
   background:#fff;
@@ -610,6 +652,9 @@ button {
   }
   .hero {
     padding:30px 18px
+  }
+  .workflow {
+    padding:28px 18px
   }
   .hero h1 {
     font-size:28px

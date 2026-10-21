@@ -1,27 +1,12 @@
 # Engineering notes for future sessions
 
-- This repository is independent from sibling projects. Existing source may be reused
-  where it helps, after checking its license and preserving required notices and
-  attribution. Do not modify sibling repositories as part of this project.
-- Python 3.11+, uv, FastAPI, Pydantic v2, pytest, Git CLI. Run `uv run pytest` and
-  `uv run ruff check .` before committing.
-- `ReviewService` is the shared CLI/API workflow. `ReviewAgent` is a Protocol; the
-  current `BaselineReviewer` is deterministic and must always label findings heuristic.
-- A finding is `suspected` until a targeted test objectively reproduces it. Existing
-  suite failure alone does not prove a finding. Preserve exit codes and report errors.
-- Web review reads any accessible GitHub PR via `gh`, without executing code. The older
-  local `/review` API accepts commit IDs in `VERIFIED_PR_AGENT_REPO_ROOT`.
-- Model keys remain on the local server, either in its environment or the ignored
-  `.local/providers.json` file (mode 0600). Never return or log secrets. DeepSeek and
-  OpenRouter are configured independently; log provider attempts and actual usage. Provider balance
-  checks run only on explicit user request. Review API calls default to rules only.
-- Host test execution requires `trusted=True`; web repair also requires localhost,
-  `VPA_ENABLE_HOST_TESTS=1`, and explicit per-request trust. It has no sandbox.
-- `repair` uses three temporary detached worktrees (base, head, repair). It edits only
-  changed Python source files, preserves tests, and emits a patch only after the full
-  existing suite passes on repair while base passes and head fails. It needs explicit
-  local trust and a configured model. Web repair may invoke it only behind the trust gates.
-- Never add `shell=True`, arbitrary HTTP test commands, or unbounded agent loops. A
-  future sandbox backend should replace `TestRunner`, not silently weaken its trust gate.
-- Use the generated local fixture for demos. Keep secrets, `.env`, virtual environments,
-  external course code, and generated reports out of commits.
+- This repository is selfForge Agent, a Python Coding Agent. General `code` tasks are the primary workflow; PR Review and Base/Head/Repaired repair remain specialized workflows. Preserve Git history and existing behavior.
+- The repository is independent from sibling projects. Study MiniCode, mini-SWE-agent, and OpenHands SDK locally; reuse source only after checking its license and preserving required notices. Do not modify sibling repositories.
+- Python 3.11+, uv, FastAPI, Pydantic v2, pytest, Git CLI. Run `uv run pytest` and `uv run ruff check .` before committing. Keep docs truthful about implemented and untested capabilities.
+- `runtime.agent.CodingAgent` is the general native tool-calling loop. `runtime.tools.ToolRegistry` validates schemas, paths, timeouts, and output size. Keep tool results in the model conversation and session log. Bound steps and wall time. Do not add `shell=True`.
+- General command execution defaults to Docker. Host execution needs explicit trust. File tools stay inside the selected workspace. Docker integration was not live-tested in the original development environment; do not claim otherwise until a daemon test passes.
+- A general task is `completed` only after `run_tests` succeeds after the last edit; without such evidence use `unverified`. Evaluation must inspect actual files and run pytest independently, not trust the model's answer.
+- `.selfforge/` stores mode-0600 sessions and traces; `.local/providers.json` may contain a key. Both are ignored by Git. Never log or commit keys, generated reports, `.env`, virtual environments, or external course source.
+- `ReviewService` findings are heuristic and `suspected`. Existing suite failure alone does not prove a particular finding. Preserve subprocess exit codes and error statuses.
+- PR import/review through `gh` never runs code. Web repair requires localhost, `SELFFORGE_ENABLE_HOST_TESTS=1`, and per-request trust. Its existing `TestRunner` uses host pytest and has no sandbox.
+- `RepairAgent` keeps three temporary detached worktrees and only emits a patch when Base passes, Head has assertion failure, and Repaired passes. It edits changed Python source, not tests. Integrate it with the general Runtime incrementally without weakening evidence or trust gates.

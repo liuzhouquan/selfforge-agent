@@ -9,8 +9,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from verified_pr_agent.core.git_context import parse_hunks
-from verified_pr_agent.models import ChangedFile, PRContext
+from selfforge_agent.core.git_context import parse_hunks
+from selfforge_agent.models import ChangedFile, PRContext
 
 _PR_URL = re.compile(
     r"https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)/pull/(?P<number>[1-9][0-9]*)(?:/)?\Z"

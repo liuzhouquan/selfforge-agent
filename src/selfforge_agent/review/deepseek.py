@@ -4,9 +4,9 @@ import json
 
 from pydantic import BaseModel, Field, ValidationError
 
-from verified_pr_agent.integrations.model_http import ProviderHTTPError, request_json
-from verified_pr_agent.models import ChangeKind, Finding, PRContext, VerificationStatus
-from verified_pr_agent.providers import ProviderConfig, TokenUsage, token_usage_from_response
+from selfforge_agent.integrations.model_http import ProviderHTTPError, request_json
+from selfforge_agent.models import ChangeKind, Finding, PRContext, VerificationStatus
+from selfforge_agent.providers import ProviderConfig, TokenUsage, token_usage_from_response
 
 
 class DeepSeekReviewError(ValueError):

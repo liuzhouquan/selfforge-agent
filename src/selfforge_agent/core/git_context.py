@@ -4,7 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from verified_pr_agent.models import ChangedFile, ChangeKind, DiffHunk, DiffLine, PRContext
+from selfforge_agent.models import ChangedFile, ChangeKind, DiffHunk, DiffLine, PRContext
 
 _HEX_SHA = re.compile(r"[0-9a-fA-F]{7,40}\Z")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")

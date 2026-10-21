@@ -6,13 +6,13 @@ from typing import Self
 import pytest
 from fastapi.testclient import TestClient
 
-from verified_pr_agent.api.app import app
-from verified_pr_agent.coding.models import RepairReport
-from verified_pr_agent.integrations import github_pr
-from verified_pr_agent.integrations.github_pr import GitHubPR, GitHubPRError, parse_pr_url
-from verified_pr_agent.models import ChangedFile, DiffHunk, DiffLine, PRContext
-from verified_pr_agent.providers import TokenUsage
-from verified_pr_agent.review.deepseek import DeepSeekReviewer, DeepSeekReviewError
+from selfforge_agent.api.app import app
+from selfforge_agent.coding.models import RepairReport
+from selfforge_agent.integrations import github_pr
+from selfforge_agent.integrations.github_pr import GitHubPR, GitHubPRError, parse_pr_url
+from selfforge_agent.models import ChangedFile, DiffHunk, DiffLine, PRContext
+from selfforge_agent.providers import TokenUsage
+from selfforge_agent.review.deepseek import DeepSeekReviewer, DeepSeekReviewError
 
 
 def sample_pr() -> GitHubPR:
@@ -88,9 +88,9 @@ def test_github_files_create_reviewable_context(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_web_review_and_checkout_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("verified_pr_agent.api.app.load_pr", lambda _url: sample_pr())
+    monkeypatch.setattr("selfforge_agent.api.app.load_pr", lambda _url: sample_pr())
     monkeypatch.setattr(
-        "verified_pr_agent.api.app.checkout_pr",
+        "selfforge_agent.api.app.checkout_pr",
         lambda _url, _root: github_pr.CheckoutResult(
             path=str(tmp_path), branch="vpa-pr-2", head_sha="b" * 40,
             diff_base_sha="a" * 40,
@@ -99,7 +99,8 @@ def test_web_review_and_checkout_routes(monkeypatch: pytest.MonkeyPatch, tmp_pat
     )
     client = TestClient(app)
     assert client.get("/").status_code == 200
-    assert "PR 工作台" in client.get("/").text
+    assert "selfForge Agent · Python Coding Agent" in client.get("/").text
+    assert "PR 审查与验证" in client.get("/").text
     response = client.post(
         "/api/github/review",
         json={"url": "https://github.com/example/project/pull/2"},
@@ -122,15 +123,15 @@ def test_web_repair_requires_operator_and_request_trust(monkeypatch: pytest.Monk
         "task": "Fix the regression",
         "trust_local_tests": True,
     }
-    monkeypatch.delenv("VPA_ENABLE_HOST_TESTS", raising=False)
+    monkeypatch.delenv("SELFFORGE_ENABLE_HOST_TESTS", raising=False)
     assert client.post("/api/github/repair", json=payload).status_code == 403
-    monkeypatch.setenv("VPA_ENABLE_HOST_TESTS", "1")
+    monkeypatch.setenv("SELFFORGE_ENABLE_HOST_TESTS", "1")
     payload["trust_local_tests"] = False
     assert client.post("/api/github/repair", json=payload).status_code == 403
 
 
 def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from verified_pr_agent.api import app as api_module
+    from selfforge_agent.api import app as api_module
 
     called: dict[str, object] = {}
     pr = sample_pr()
@@ -149,7 +150,7 @@ def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tm
                 started_at=now, finished_at=now,
             )
 
-    monkeypatch.setenv("VPA_ENABLE_HOST_TESTS", "1")
+    monkeypatch.setenv("SELFFORGE_ENABLE_HOST_TESTS", "1")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setattr(api_module, "load_pr", lambda _url: pr)
     monkeypatch.setattr(api_module, "checkout_pr", lambda _url, _root: github_pr.CheckoutResult(
@@ -179,7 +180,7 @@ def test_deepseek_findings_must_point_to_added_lines(monkeypatch: pytest.MonkeyP
         {"file_path": "app.py", "line_number": 99, "severity": "high", "category": "bug", "description": "Invented"},
     ]
     monkeypatch.setattr(
-        "verified_pr_agent.review.deepseek.request_json",
+        "selfforge_agent.review.deepseek.request_json",
         lambda *_a, **_k: {
             "choices": [{"message": {"content": json.dumps({"findings": findings})}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
@@ -206,16 +207,16 @@ def test_provider_response_has_wall_deadline(monkeypatch: pytest.MonkeyPatch) ->
             return b" "
 
     clock = iter([0.0, 0.0, 2.0])
-    monkeypatch.setattr("verified_pr_agent.integrations.model_http.monotonic", lambda: next(clock))
+    monkeypatch.setattr("selfforge_agent.integrations.model_http.monotonic", lambda: next(clock))
     monkeypatch.setattr(
-        "verified_pr_agent.integrations.model_http.urlopen", lambda *_a, **_k: TrickleResponse()
+        "selfforge_agent.integrations.model_http.urlopen", lambda *_a, **_k: TrickleResponse()
     )
     with pytest.raises(DeepSeekReviewError, match="timed out"):
         DeepSeekReviewer("test-key", timeout=1).review(sample_pr().context)
 
 
 def test_review_switches_provider_and_reports_actual_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
-    from verified_pr_agent.api import app as api_module
+    from selfforge_agent.api import app as api_module
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
     monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
@@ -245,7 +246,7 @@ def test_review_switches_provider_and_reports_actual_tokens(monkeypatch: pytest.
 
 
 def test_provider_status_check_does_not_expose_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    from verified_pr_agent import providers
+    from selfforge_agent import providers
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
     monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")

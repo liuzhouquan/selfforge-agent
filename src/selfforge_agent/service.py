@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from verified_pr_agent.core.git_context import build_context
-from verified_pr_agent.models import EvidenceReport, PRContext
-from verified_pr_agent.review.baseline import BaselineReviewer, ReviewAgent
-from verified_pr_agent.verification.runner import TestRunner
+from selfforge_agent.core.git_context import build_context
+from selfforge_agent.models import EvidenceReport, PRContext
+from selfforge_agent.review.baseline import BaselineReviewer, ReviewAgent
+from selfforge_agent.verification.runner import TestRunner
 
 
 class ReviewService:

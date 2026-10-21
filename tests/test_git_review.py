@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from verified_pr_agent.core.git_context import GitContextError, build_context
-from verified_pr_agent.models import ChangeKind, Finding
-from verified_pr_agent.review.baseline import BaselineReviewer
+from selfforge_agent.core.git_context import GitContextError, build_context
+from selfforge_agent.models import ChangeKind, Finding
+from selfforge_agent.review.baseline import BaselineReviewer
 
 
 def test_diff_hunks_and_heuristic(demo_repo: tuple[Path, str, str]) -> None:

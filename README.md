@@ -1,77 +1,113 @@
-# Verified PR Agent
+# selfForge Agent
 
-A local web workbench for reviewing GitHub pull requests, inspecting diffs, checking out editable branches, and running a bounded coding and test loop. It accepts any public PR or PR accessible to the signed-in `gh` account, including other people's PRs. A CLI remains available for local repositories and automation.
+**A Python Coding Agent with Reliable Execution and Self-Testing**
 
-## Start the web workbench
+具备完整基础 Harness、以自主编程与测试验证为特色的 Python Coding Agent。
 
-Install Python 3.11+, [uv](https://docs.astral.sh/uv/), Git, and [GitHub CLI](https://cli.github.com/). Sign in with `gh auth login` to access private PRs. From this directory:
+[简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [路线图](./docs/roadmap.md)
+
+```text
+用户任务 → 原生 Tool Calling → 搜索与阅读代码 → 精确修改 → 运行 pytest → 检查退出码与轨迹
+```
+
+先运行一个无需 API Key 的端到端演示：
 
 ```sh
 uv sync
-uv run uvicorn verified_pr_agent.api.app:app --host 127.0.0.1 --port 8000
+uv run python examples/coding_demo.py
+# 两道生成夹具：search_code → read_file → edit_file → run_tests → 客观断言
 ```
 
-Open `http://127.0.0.1:8000`, paste a GitHub PR URL, and click **导入并审查**. The browser shows changed files, diff hunks, and suspected findings from deterministic rules. Importing a PR reads GitHub metadata and patches; it does not execute the PR's code. GitHub omits text patches for some files, such as binary files and large diffs; these are marked in the UI. Reviews are limited to 300 changed files, and model input is further capped.
+这是协议与执行链路演示；真实模型评测见下文。通用 Coding 任务由 `selfforge-agent code` 执行。PR Review、Base/Head/Repaired 测试修复是保留的专项工作流。
 
-To enable model review, open **模型供应商设置** in the workbench, enter a DeepSeek or OpenRouter API key, and click **保存并同步模型**. Both providers have their official base URLs filled in. The model field offers IDs fetched from each provider's `/models` endpoint; you can type a custom ID if discovery fails. Configured providers sync their lists automatically when the page opens. The key stays on the local server in `.local/providers.json` (file mode `0600`, ignored by Git) and is never returned by the configuration API. The web server should be bound to localhost.
+## 核心能力与状态
 
-Environment variables remain supported instead of saving a key in the workbench. Export one or both provider keys in the **server process environment** and restart the server:
+| 能力 | 状态 | 当前边界 |
+| --- | --- | --- |
+| Coding Agent Runtime | Implemented | OpenAI-compatible 原生工具调用，多轮执行，步数/时间限制，供应商回退 |
+| 工具与会话 | Implemented | read/edit/search/bash/run_tests；JSON Schema、工作区路径校验、JSONL 恢复与轨迹 |
+| Context 管理 | Implemented | 工具输出截断、近似 token 预算、保留任务约束的确定性摘要压缩 |
+| Docker 执行器 | In Progress | 已实现无网络、资源限制、只挂载工作区的命令路径；当前开发环境没有可用 Docker daemon，容器实跑待验证 |
+| Self-Testing | Implemented | 通过真实 pytest 退出码判断；未运行测试的任务标记 `unverified` |
+| PR Review / Repair | Implemented | 原有 Web 审查、可编辑 checkout、Base/Head/Repaired 验证仍可用；逐步接入共享 Runtime |
+| 自动生成针对性测试 | Planned | 现阶段依赖仓库已有测试 |
+
+## Quick Start
+
+需要 Python 3.11+、[uv](https://docs.astral.sh/uv/)；PR 工作流还需要 Git 和 [GitHub CLI](https://cli.github.com/)。在仓库目录执行：
 
 ```sh
-export DEEPSEEK_API_KEY='your-key'
-export OPENROUTER_API_KEY='your-other-key'
-uv run uvicorn verified_pr_agent.api.app:app --host 127.0.0.1 --port 8000
+uv sync
+export DEEPSEEK_API_KEY='你的密钥'  # 或 OPENROUTER_API_KEY
+# 为默认隔离执行构建镜像；需先启用 Docker
+docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
+uv run selfforge-agent code --repo ./your-project --task '修复失败的测试，并运行测试验证'
 ```
 
-The key is never returned to the browser after saving. Review defaults to **rules only**; selecting a model sends a bounded list of added lines to that provider. The page also offers **Auto**, **DeepSeek**, and **OpenRouter**, plus a fallback switch. Auto tries configured providers in order: DeepSeek, then OpenRouter. A failed or unavailable primary can switch to the other configured provider; the report records each attempt. The default models are `deepseek-flash` and `openai/gpt-4.1-mini` through OpenRouter. Override them in the workbench or with `VPA_DEEPSEEK_MODEL` and `VPA_OPENROUTER_MODEL`. Local workbench settings take precedence over environment variables. Findings must point to an actual added line and remain `suspected`; model output alone does not verify a defect. If both providers fail, rule-based review remains visible.
+`code` 默认通过 Docker 运行命令，容器禁用网络、限制 CPU/内存/进程数，只挂载排除了 `.env`、本地密钥和会话目录的临时工作区副本；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时需要扩展镜像。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。Agent 的文件工具始终限制在 `--repo` 内；执行仓库代码仍需审慎选择运行环境。模型会收到读取的代码和工具输出。
 
-Click **检查密钥与额度** to query the providers' read-only status endpoints. DeepSeek reports whether its balance supports API calls; OpenRouter reports the current key's remaining credits and usage. A successful model review also shows the actual prompt, completion, and total token counts returned by that provider. These are **observed usage**, not a preflight token estimate. A configured key alone does not prove a provider is reachable; use the status button to check. If your key is set only in `.zshrc`, start the server from a shell that has loaded it, or export it before starting the server.
+DeepSeek 与 OpenRouter 默认 URL 和模型已配置；Web 工作台还支持本机保存密钥、URL 与模型列表自动同步。自定义 OpenAI-compatible 端点可用 `--model ID --base-url URL`，密钥从 `SELFFORGE_API_KEY` 或 `OPENAI_API_KEY` 读取。`--provider openrouter` 可指定供应商，默认自动路由并在调用失败时切换备用供应商。
 
-Click **下载可编辑工作区** to clone the repository and check out the PR head into a new branch under `.workspaces/`. The app creates a new directory for each checkout and does not overwrite your own checkout. You can open that path in your IDE, edit files, commit, and use Git normally. A minimal manual equivalent is:
+## CLI
 
 ```sh
-gh repo clone OWNER/REPO my-review
-cd my-review
-gh pr checkout 123 --branch my-pr-123
-# edit and test
-git add .
-git commit -m 'Fix issue found in review'
+# 通用 Coding：自主检查、修改并运行测试
+uv run selfforge-agent code --repo ./your-project --task '修复 add 的回归' \
+  --max-steps 12 --time-budget 300
+
+# 继续一个已有会话；会话保存在项目的 .selfforge/sessions/
+uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task '继续并验证'
+uv run selfforge-agent trace --repo ./your-project SESSION_ID
+
+# 单独运行测试，默认使用 Docker
+uv run selfforge-agent test --repo ./your-project --path tests
+
+# 已信任的本机测试，可保留 JUnit 计数
+uv run selfforge-agent test --repo ./your-project --sandbox host --trust-local
+
+# 专项：本地 PR 比较审查与 Base/Head/Repaired 修复
+uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
+uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
+  --task '修复现有测试证明的回归' --trust-local-tests --patch-output repair.patch
 ```
 
-Pushing back to the same PR requires write access to its source branch or an eligible fork PR with **Allow edits from maintainers** enabled. If you do not have that permission, push your change to your own fork and open a new PR. The workbench currently prepares a local branch and a patch; it does not push commits, post review comments, or create a GitHub PR on your behalf.
+Agent 状态有 `completed`（最后修改后 pytest 成功）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。会话与轨迹写入项目内被 Git 忽略的 `.selfforge/`，不会自动提交。运行中可用 Ctrl-C 中断；当前取消检查发生在模型调用和工具调用之间，单个调用仍受自身超时限制。
 
-After committing, inspect `git remote -v`. If you have write access to the PR's source branch, push the local checkout to that branch with `git push <source-remote> HEAD:<source-branch>`; GitHub updates the existing PR automatically. If the push is denied, fork the repository with `gh repo fork OWNER/REPO --remote`, inspect the newly added fork remote, push your branch to it, and open a follow-up PR with `gh pr create --repo OWNER/REPO --head YOUR_USER:YOUR_BRANCH --base BASE_BRANCH`. Review the resulting diff before creating the PR.
+## 架构
 
-## Coding and test loop
-
-The web workbench has a **隔离修复尝试** form. To use it, set `VPA_ENABLE_HOST_TESTS=1`, configure at least one provider key, restart the server, enter a repair goal, and check the per-request trust box. The coding model has the same provider selection and fallback controls. This runs the checked-out PR's pytest suite on your host, so use it only for code you trust. The server listens on localhost by default, and the endpoint rejects non-local clients.
-
-The agent compares tests on the PR merge base and head, proposes at most two edits to changed Python source files, runs tests on each repair attempt in disposable Git worktrees, and offers a patch only when the existing suite passed on base, failed on head, and passed after repair. Tests cannot be edited by the agent. The source checkout is retained for your own work; the agent's attempts do not modify it. This proves the existing suite's regression was repaired, not that a particular review finding was objectively verified. It requires an existing pytest suite that reproduces the regression; targeted test generation and sandboxed execution are still planned.
-
-The HTTP API also exposes `/health`, `GET /api/config`, `POST /api/providers/config`, `GET /api/providers/{provider}/models`, `POST /api/providers/check`, `POST /api/github/review`, `POST /api/github/checkout`, and `POST /api/github/repair`; interactive schemas are at `/docs`. `POST /api/github/review` defaults to rules only unless a provider is explicitly selected. The older `POST /review` endpoint can inspect a local repository configured with `VERIFIED_PR_AGENT_REPO_ROOT` and does not run tests.
-
-## Local CLI and development
-
-Create a disposable example repository and review it:
-
-```sh
-DEMO="/tmp/verified-pr-demo-$$"
-uv run python examples/create_demo.py "$DEMO"
-BASE="$(git -C "$DEMO" rev-list --max-parents=0 HEAD)"
-HEAD="$(git -C "$DEMO" rev-parse HEAD)"
-uv run verified-pr-agent review --repo "$DEMO" --base "$BASE" --head "$HEAD" \
-  --trust-local-tests --output "$DEMO/report.json"
+```mermaid
+flowchart LR
+  U[用户任务] --> CLI[CLI / CodingAgent]
+  CLI --> C[ContextManager]
+  C --> M[OpenAIChatAdapter]
+  M --> T[ToolRegistry]
+  T --> F[文件与搜索]
+  T --> X[Docker 或可信 Host 执行器]
+  X --> P[pytest]
+  CLI --> S[SessionStore / JSONL Trace]
+  P --> CLI
+  PR[PR Review / Repair] --> E[现有 ReviewService / TestRunner / Git worktree]
 ```
 
-The offline repair fixture is available with `uv run python examples/repair_demo.py`. For a live CLI repair, use `uv run verified-pr-agent repair --repo "$DEMO" --base "$BASE" --head "$HEAD" --task 'Restore the add function' --trust-local-tests --output "$DEMO/repair.json" --patch-output "$DEMO/repair.patch"` with either provider key set. CLI repair defaults to automatic fallback and accepts `--provider openrouter` or `--no-fallback`. Explicit `--model` or `--base-url` (or `VPA_MODEL`/`VPA_API_BASE_URL`) selects a single custom endpoint instead of the fallback route.
+Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下文与会话模块，详见[架构文档](./docs/architecture.md)。通用 Coding 任务与旧 PR 工作流共用供应商配置；PR Repair 仍使用原有有界修复循环，迁移到统一 Runtime 是后续工作。
 
-Run the checks with:
+## Verification 与 Evaluation
+
+通用 Coding Agent 的完成判断以 `run_tests` 的实际退出码为证据；若最后一次编辑之后没有成功测试，则返回 `unverified`。`eval` 还会独立重新运行夹具测试，并检查源文件确实发生变化，不采信模型口头结论。PR Repair 则要求 Base 测试通过、Head 出现断言失败、Repaired 测试通过，才输出已验证补丁；这证明现有测试的回归已修复，尚不证明某条审查发现的因果关系。
 
 ```sh
+uv run selfforge-agent eval --offline       # 确定性工具协议回归，不代表模型能力
+uv run selfforge-agent eval --provider deepseek  # 真正调用模型，运行生成夹具
 uv run pytest
 uv run ruff check .
 ```
 
-If the configured package mirror fails, prefix these commands with `UV_INDEX_URL=https://pypi.org/simple`.
+2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。两道夹具分别修复加法和姓名规范化，成功条件是文件已修改且独立 pytest 退出码为 0。样本很小，不构成通用 Coding Agent 基准；详情和复现限制见[评测记录](./docs/evaluation.md)。
 
-See [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md) for implementation boundaries and remaining work.
+## Specialized Workflows：PR Review
+
+`uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000` 启动 Web 工作台。可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支，并按需运行受信任的修复工作流。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 修复运行主机 pytest，需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。现阶段 Web 修复没有 Docker 隔离；不要对不可信 PR 启用主机测试。工具不会自动推送、评论或合并 PR。
+
+## Roadmap
+
+优先把 PR Repair 与通用 Runtime 的工具、执行器和会话轨迹合并，并在可用 Docker daemon 上做真实隔离验证。之后开发针对性测试生成、PR 风险驱动测试和更广的客观评测。见[路线图](./docs/roadmap.md)。

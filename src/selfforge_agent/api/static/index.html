@@ -3,28 +3,35 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Verified PR Agent · PR 工作台</title>
+    <title>selfForge Agent · Python Coding Agent</title>
     <link rel="stylesheet" href="/assets/style.css" />
   </head>
   <body>
     <div class="shell">
       <aside class="rail">
-        <div class="brand"><span class="brand-mark">V</span><div><strong>Verified PR</strong><small>AGENT WORKSPACE</small></div></div>
+        <div class="brand"><span class="brand-mark">S</span><div><strong>selfForge Agent</strong><small>CODING WORKSPACE</small></div></div>
         <div class="rail-section">工作台</div>
-        <a class="rail-link active" href="/">▦ <span>PR 审查</span></a>
+        <a class="rail-link active" href="#coding">⌘ <span>Coding Agent</span></a>
+        <a class="rail-link" href="#pr-workflow">▦ <span>PR 审查</span></a>
         <a class="rail-link" href="/docs" target="_blank" rel="noopener">⌘ <span>API 文档</span></a>
         <div class="rail-bottom">
           <div class="rail-card"><span class="signal"></span><strong>本地优先</strong><p>读取 GitHub PR 的 diff。测试执行和代码修改需要另外明确授权。</p></div>
-          <span class="rail-version">v0.3 · Evidence driven</span>
+          <span class="rail-version">selfForge · local preview</span>
         </div>
       </aside>
 
       <main class="main">
-        <header class="topbar"><div class="breadcrumb">工作台 <span>/</span> Pull Request 审查</div><div class="top-status"><span class="signal"></span> 服务已就绪</div></header>
-        <section class="hero">
-          <div class="eyebrow">CODE REVIEW / TESTING / REPAIR</div>
-          <h1>把 PR 变成<span>可核验的证据</span></h1>
-          <p>导入任何你有权限访问的 GitHub Pull Request，查看变更、风险发现，并按需下载可编辑的本地工作区。</p>
+        <header class="topbar"><div class="breadcrumb">工作台 <span>/</span> Coding Agent</div><div class="top-status"><span class="signal"></span> 服务已就绪</div></header>
+        <section class="hero" id="coding">
+          <div class="eyebrow">A PYTHON CODING AGENT WITH RELIABLE EXECUTION AND SELF-TESTING</div>
+          <h1>自主编程，<span>用测试验证结果</span></h1>
+          <p>用户任务 → Agent 搜索与阅读代码 → 修改文件 → 执行 pytest → 留下可查看的会话与执行轨迹。</p>
+          <div class="coding-quickstart"><strong>在终端运行通用 Coding 任务</strong><code>selfforge-agent code --repo ./my-project --task "修复失败的测试并验证"</code><small>默认用 Docker 隔离执行命令；本页下方提供 PR 专项工作流。</small></div>
+        </section>
+        <section class="workflow" id="pr-workflow">
+          <div class="section-kicker">SPECIALIZED WORKFLOW</div>
+          <h2>PR 审查与验证</h2>
+          <p>导入你有权限访问的 GitHub PR，查看 Diff、风险发现，并按需下载可编辑工作区。</p>
           <form id="review-form" class="import-form">
             <label for="pr-url">GitHub Pull Request URL</label>
             <div class="import-row"><input id="pr-url" type="url" required placeholder="https://github.com/owner/repo/pull/123" autocomplete="url" /><button id="review-button" type="submit">导入并审查 <span>→</span></button></div>
@@ -92,7 +99,7 @@
               <label class="provider-fallback"><input id="repair-fallback" type="checkbox" checked /> 失败时切换备用供应商</label>
               <label class="trust-label"><input id="trust-tests" type="checkbox" /> 我信任此 PR，允许在本机执行它的 pytest 测试</label>
               <button id="repair-button" type="submit" disabled>运行验证修复</button>
-              <small id="repair-availability">需设置 VPA_ENABLE_HOST_TESTS=1 后重启服务</small>
+              <small id="repair-availability">需设置 SELFFORGE_ENABLE_HOST_TESTS=1 后重启服务</small>
             </form>
             <div id="repair-result" class="repair-result" hidden><strong id="repair-status"></strong><p id="repair-detail"></p><button id="download-patch" type="button" hidden>下载已验证补丁</button><pre id="repair-patch"></pre></div>
           </section>
