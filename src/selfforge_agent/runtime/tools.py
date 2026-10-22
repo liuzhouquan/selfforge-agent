@@ -15,7 +15,7 @@ from selfforge_agent.runtime.execution import Executor
 
 MAX_TOOL_OUTPUT = 6_000
 PROTECTED_NAMES = {
-    ".git", ".venv", ".env", ".local", ".selfforge", ".aws", ".ssh",
+    ".git", ".venv", ".env", ".local", ".selfforge", ".workspaces", ".aws", ".ssh",
     ".npmrc", ".pypirc", ".netrc",
 }
 

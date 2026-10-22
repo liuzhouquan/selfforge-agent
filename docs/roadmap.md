@@ -9,9 +9,10 @@
 | 2 | Implemented | PR Repair shares the Docker executor and JSONL session trace while preserving Base/Head/Repaired evidence |
 | 2 | Implemented | PR Repair exact edits use the shared Tool Registry with a changed-source allowlist and size limit; model proposal remains specialized |
 | 2 | Implemented | Local Web Coding tasks use the common Runtime with status, recent traces, cancellation, and session resume |
-| 2 | In Progress | Automatic disposable worktree lifecycle for general Coding tasks and durable Web job recovery after server restart |
+| 2 | Implemented | General Coding defaults to persistent reviewable Git worktrees, resumes in place, and provides safe cleanup; direct edits require explicit selection |
+| 2 | In Progress | Durable Web job recovery and cross-process workspace coordination |
 | 3 | Planned | Targeted test generation that can objectively reproduce a PR finding on Head but not Base |
 | 3 | Planned | Risk-driven PR test selection, broader multi-repository evaluation, repeated-run success rates and cost/latency tracking |
 | 4 | Planned | More precise tokenization, richer compaction, interactive approval, and richer Coding UI controls |
 
-The current general agent edits its selected workspace directly. A disposable Git worktree remains the recommended input for risky tasks until an automatic workspace lifecycle is implemented. Docker isolation applies to commands, while file tools are constrained to the selected workspace. Web Coding and PR repair default to Docker; host execution requires an explicit operator setting and per-request trust.
+General Coding now creates a worktree from committed HEAD by default and edits there; source-checkout changes are excluded. Worktrees persist until the user commits or reverts edits and explicitly removes the worktree. The branch remains after removal. Docker isolation applies to commands, while file tools are constrained to the selected workspace. Web Coding and PR repair default to Docker; host execution requires an explicit operator setting and per-request trust.

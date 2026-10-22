@@ -30,6 +30,7 @@ uv run python examples/coding_demo.py
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 通过真实 pytest 退出码判断；未运行测试的任务标记 `unverified` |
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、取消和会话续跑；后台任务仅在服务进程内保留 |
+| Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、检查、手动清理，原仓库不被 Agent 编辑 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 自动生成针对性测试 | Planned | 现阶段依赖仓库已有测试 |
 
@@ -45,7 +46,9 @@ docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
 uv run selfforge-agent code --repo ./your-project --task '修复失败的测试，并运行测试验证'
 ```
 
-`code` 默认通过 Docker 运行命令，容器禁用网络、限制 CPU/内存/进程数。工具把排除了 `.env`、本地密钥和会话目录的临时工作区副本送入容器 tmpfs；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时需要扩展镜像。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。Agent 的文件工具始终限制在 `--repo` 内；模型会收到读取的代码和工具输出。
+`code` 默认从 Git 仓库已提交的 HEAD 创建 `selfforge/SESSION_ID` 分支和独立 worktree。原仓库的未提交改动不会带入；Agent 的文件工具只修改新 worktree。工作区保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/worktrees/`，任务结束后保留供检查与提交。需要已有的首次 Git commit。确需直接修改原仓库时，显式传 `--workspace direct`。
+
+命令与测试默认通过 Docker 执行，容器禁用网络、限制 CPU/内存/进程数。工具把排除了 `.env`、本地密钥和会话目录的临时工作区副本送入容器 tmpfs；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时需要扩展镜像。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。模型会收到读取的代码和工具输出。
 
 DeepSeek 与 OpenRouter 默认 URL 和模型已配置；Web 工作台还支持本机保存密钥、URL 与模型列表自动同步。自定义 OpenAI-compatible 端点可用 `--model ID --base-url URL`，密钥从 `SELFFORGE_API_KEY` 或 `OPENAI_API_KEY` 读取。`--provider openrouter` 可指定供应商，默认自动路由并在调用失败时切换备用供应商。
 
@@ -56,7 +59,7 @@ uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000
 # 打开 http://127.0.0.1:8000，选择 Docker，启动 Coding Agent
 ```
 
-页面显示任务状态与最近的 JSONL 轨迹，可取消或用会话 ID 继续。Web 会话存放在被 Git 忽略的 `.workspaces/coding-sessions/`，服务重启后会话可续跑，但运行中任务的状态不会保留。Web 的本机执行需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次勾选信任。
+页面显示任务状态、独立工作区路径与最近的 JSONL 轨迹，可取消或用会话 ID 继续。工作区无未提交或未跟踪文件时可在页面清理；分支仍保留。新会话写入用户数据目录的 `selfforge-agent/sessions/`；旧版直写会话需选择“直接修改原仓库”后按 ID 续跑。服务重启后会话可续跑，但运行中任务的状态不会保留。选择直写需单次确认；Web 的本机命令执行还需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次勾选信任。
 
 ## CLI
 
@@ -65,9 +68,18 @@ uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000
 uv run selfforge-agent code --repo ./your-project --task '修复 add 的回归' \
   --max-steps 12 --time-budget 300
 
-# 继续一个已有会话；会话保存在项目的 .selfforge/sessions/
+# 继续一个已有会话；新会话保存在用户数据目录
 uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task '继续并验证'
 uv run selfforge-agent trace --repo ./your-project SESSION_ID
+
+# 检查工作区中的 Git diff；提交后清理 worktree，保留分支
+uv run selfforge-agent workspaces list --repo ./your-project
+git -C /path/from/workspaces/list diff
+uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project
+
+# 只有明确需要时才直接修改原仓库
+uv run selfforge-agent code --repo ./your-project --workspace direct --task '修复 add'
+# 续跑旧版直接修改仓库的会话也需 --workspace direct
 
 # 单独运行测试，默认使用 Docker
 uv run selfforge-agent test --repo ./your-project --path tests
@@ -88,14 +100,16 @@ uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task '修复回归' --sandbox host --trust-local-tests
 ```
 
-Agent 状态有 `completed`（最后修改后 pytest 成功）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。会话与轨迹写入项目内被 Git 忽略的 `.selfforge/`，不会自动提交。运行中可用 Ctrl-C 中断；当前取消检查发生在模型调用和工具调用之间，单个调用仍受自身超时限制。
+Agent 状态有 `completed`（最后修改后 pytest 成功）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。新会话与轨迹保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`，不会进入目标仓库；旧会话仍可通过 ID 恢复。`workspaces remove` 不使用强制删除；工作区有改动时会拒绝清理。运行中可用 Ctrl-C 中断；当前取消检查发生在模型调用和工具调用之间，单个调用仍受自身超时限制。
 
 ## 架构
 
 ```mermaid
 flowchart LR
   U[用户任务] --> I[CLI / Web 工作台]
+  I --> W[CodingWorkspaceManager / Git worktree]
   I --> A[CodingAgent]
+  W --> A
   A --> C[ContextManager]
   C --> M[OpenAIChatAdapter]
   M --> T[ToolRegistry]
@@ -132,4 +146,4 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-下一步优先完善自动 worktree 生命周期、针对性测试生成、PR 风险驱动测试及更广的客观评测。见[路线图](./docs/roadmap.md)。
+下一步优先实现针对性测试生成、PR 风险驱动测试、跨进程任务协调及更广的客观评测。见[路线图](./docs/roadmap.md)。

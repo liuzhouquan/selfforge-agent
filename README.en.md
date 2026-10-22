@@ -30,6 +30,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Uses actual pytest exit status; tasks without test evidence are `unverified` |
 | Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cancellation, and session resume; background jobs live only in the server process |
+| Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect, and explicitly clean up without editing the source checkout |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Planned | The current implementation uses existing tests |
 
@@ -45,7 +46,9 @@ docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
 uv run selfforge-agent code --repo ./your-project --task 'Fix the failing test and verify it'
 ```
 
-`code` runs commands in Docker by default. The container has no network and bounded CPU/memory/processes. A temporary workspace copy excluding `.env`, local keys, and sessions is transferred into container tmpfs. Container command edits do not propagate back; `edit_file` makes persistent edits. The sample image includes pytest only; extend it for project-specific dependencies. If Docker is unavailable, use `--sandbox host --trust-local` only for a trusted repository. File tools stay inside `--repo`; the model receives files it reads and tool output.
+`code` now creates a `selfforge/SESSION_ID` branch and separate worktree from the repository's committed HEAD by default. Uncommitted changes in the source checkout are excluded; file tools edit only the new worktree. Worktrees live under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/worktrees/` and remain for review and commit after the task. The repository needs an initial commit. Use `--workspace direct` only when you explicitly want source-checkout edits.
+
+Commands and tests run in Docker by default. The container has no network and bounded CPU/memory/processes. A temporary workspace copy excluding `.env`, local keys, and sessions is transferred into container tmpfs. Container command edits do not propagate back; `edit_file` makes persistent edits. The sample image includes pytest only; extend it for project-specific dependencies. If Docker is unavailable, use `--sandbox host --trust-local` only for a trusted repository. The model receives files it reads and tool output.
 
 DeepSeek and OpenRouter have default URLs and models. The web workbench can save a local key, URL, and automatically sync model lists. For another OpenAI-compatible endpoint, use `--model ID --base-url URL` and set `SELFFORGE_API_KEY` or `OPENAI_API_KEY`. `--provider openrouter` pins a provider; the default route falls back on request failure.
 
@@ -56,7 +59,7 @@ uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000
 # Open http://127.0.0.1:8000, select Docker, and start the Coding Agent
 ```
 
-The page shows job status and recent JSONL trace events, and can cancel or resume by session ID. Web sessions live under the ignored `.workspaces/coding-sessions/` directory. Sessions can resume after a server restart, but the state of an active background job is process-local. Web host execution requires `SELFFORGE_ENABLE_HOST_TESTS=1` and explicit trust on each request.
+The page shows job status, the worktree path, and recent JSONL trace events, and can cancel or resume by session ID. It can remove a worktree once there are no uncommitted or untracked files; the branch remains. New sessions live under `selfforge-agent/sessions/` in the user data directory. To resume an older direct-edit session, select direct mode and enter its ID. Sessions can resume after a server restart, but the state of an active background job is process-local. Direct source-checkout edits require per-request confirmation. Web host execution also requires `SELFFORGE_ENABLE_HOST_TESTS=1` and explicit trust on each request.
 
 ## CLI
 
@@ -65,9 +68,18 @@ The page shows job status and recent JSONL trace events, and can cancel or resum
 uv run selfforge-agent code --repo ./your-project --task 'Fix the add regression' \
   --max-steps 12 --time-budget 300
 
-# Resume and inspect an existing session in .selfforge/sessions/
+# Resume and inspect a session stored in the user data directory
 uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task 'Continue and verify'
 uv run selfforge-agent trace --repo ./your-project SESSION_ID
+
+# Review a worktree's Git diff; commit before cleanup (the branch stays)
+uv run selfforge-agent workspaces list --repo ./your-project
+git -C /path/from/workspaces/list diff
+uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project
+
+# Explicitly edit the source checkout when needed
+uv run selfforge-agent code --repo ./your-project --workspace direct --task 'Fix add'
+# Also use --workspace direct to resume an older direct-edit session
 
 # Run tests; Docker is the default
 uv run selfforge-agent test --repo ./your-project --path tests
@@ -88,14 +100,16 @@ uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task 'Repair the regression' --sandbox host --trust-local-tests
 ```
 
-Agent statuses are `completed` (pytest succeeded after the last edit), `unverified` (finished without test evidence), `failed`, `max_steps`, `timed_out`, and `cancelled`. Ignored `.selfforge/` stores local sessions and traces. Ctrl-C interrupts a run; cancellation is checked between model and tool calls, while each call has its own timeout.
+Agent statuses are `completed` (pytest succeeded after the last edit), `unverified` (finished without test evidence), `failed`, `max_steps`, `timed_out`, and `cancelled`. New sessions and traces live under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`, outside the target repository; older sessions remain resumable by ID. `workspaces remove` never forces deletion and refuses a dirty worktree. Ctrl-C interrupts a run; cancellation is checked between model and tool calls, while each call has its own timeout.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
   U[User task] --> I[CLI / Web workbench]
+  I --> W[CodingWorkspaceManager / Git worktree]
   I --> A[CodingAgent]
+  W --> A
   A --> C[ContextManager]
   C --> M[OpenAIChatAdapter]
   M --> T[ToolRegistry]
@@ -132,4 +146,4 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, improve automatic worktree lifecycle, targeted test generation, PR risk-driven tests, and broader objective evaluations. See the [roadmap](./docs/roadmap.md).
+Next, build targeted test generation, PR risk-driven tests, cross-process job coordination, and broader objective evaluations. See the [roadmap](./docs/roadmap.md).

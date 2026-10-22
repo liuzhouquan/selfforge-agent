@@ -31,7 +31,7 @@
         <section class="workflow coding-workflow" id="coding-task">
           <div class="section-kicker">GENERAL CODING AGENT</div>
           <h2>运行 Coding 任务</h2>
-          <p>输入本机 Git 仓库根目录和开发目标。文件编辑会直接写入该工作区；建议先选择可检查的 Git worktree。命令与测试默认在无网络的 Docker 容器中执行。</p>
+          <p>输入本机 Git 仓库根目录和开发目标。默认从 HEAD 创建独立分支与 worktree，保留改动供你检查和提交；原仓库未提交的改动不会带入。命令与测试默认在无网络的 Docker 容器中执行。</p>
           <form id="coding-form" class="coding-form">
             <label for="coding-repo">Git 仓库绝对路径</label>
             <input id="coding-repo" type="text" required placeholder="/home/user/projects/my-repo" autocomplete="off" />
@@ -39,11 +39,13 @@
             <textarea id="coding-task-text" rows="4" placeholder="例如：修复 add 函数的失败测试，完成后运行 pytest"></textarea>
             <div class="coding-options">
               <label>模型供应商<select id="coding-provider"><option value="auto">自动选择</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option></select></label>
+              <label>代码工作区<select id="coding-workspace"><option value="worktree">独立 Git worktree（默认）</option><option value="direct">直接修改原仓库</option></select></label>
               <label>执行环境<select id="coding-sandbox"><option value="docker">Docker 隔离（默认）</option><option value="host">本机执行（仅可信代码）</option></select></label>
               <label>最大步数<input id="coding-steps" type="number" min="1" max="100" value="12" /></label>
               <label>时间预算（秒）<input id="coding-time" type="number" min="1" max="1200" value="300" /></label>
             </div>
             <label class="provider-fallback"><input id="coding-fallback" type="checkbox" checked /> 供应商失败时切换备用模型</label>
+            <label class="trust-label" id="coding-direct-trust" hidden><input id="coding-confirm-direct" type="checkbox" /> 我确认允许 Agent 直接修改原仓库文件</label>
             <label class="trust-label" id="coding-host-trust" hidden><input id="coding-trust" type="checkbox" /> 我信任此仓库，允许在本机执行命令和测试</label>
             <label for="coding-resume">续跑会话 ID（可选）</label>
             <input id="coding-resume" type="text" placeholder="留空则开始新会话" autocomplete="off" />
@@ -51,8 +53,8 @@
           </form>
           <div id="coding-error" class="alert coding-error" hidden role="alert"></div>
           <div id="coding-job" class="coding-job" hidden>
-            <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>
-            <p id="coding-job-meta"></p><p id="coding-answer"></p><pre id="coding-trace"></pre>
+            <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-remove-workspace" type="button" hidden>清理已提交的工作区</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>
+            <p id="coding-job-meta"></p><p id="coding-workspace-info"></p><p id="coding-answer"></p><pre id="coding-trace"></pre>
           </div>
         </section>
         <section class="workflow" id="pr-workflow">

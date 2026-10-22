@@ -5,6 +5,8 @@ let verifiedPatch = "";
 let configuredProviders = [];
 let activeCodingJob = null;
 let currentCodingSession = null;
+let currentCodingRepo = null;
+let currentCodingBranch = "";
 let codingJobRunning = false;
 let codingPollTimer = null;
 
@@ -58,11 +60,15 @@ function showCodingError(message) {
 
 function refreshCodingAvailability() {
   const host = $("coding-sandbox").value === "host";
+  const direct = $("coding-workspace").value === "direct";
   $("coding-host-trust").hidden = !host;
+  $("coding-direct-trust").hidden = !direct;
   $("coding-start").disabled = codingJobRunning || !configuredProviders.length ||
-    (host && (!hostTestsEnabled || !$("coding-trust").checked));
+    (host && (!hostTestsEnabled || !$("coding-trust").checked)) ||
+    (direct && !$("coding-confirm-direct").checked);
   $("coding-availability").textContent = !configuredProviders.length
     ? "需先配置模型密钥"
+    : direct && !$("coding-confirm-direct").checked ? "直接修改原仓库需明确确认"
     : host ? (hostTestsEnabled ? "本机执行需明确勾选信任" : "本机执行需设置 SELFFORGE_ENABLE_HOST_TESTS=1")
       : "Docker 模式需先构建 selfforge-agent-sandbox:latest 镜像";
 }
@@ -70,6 +76,8 @@ function refreshCodingAvailability() {
 function renderCodingJob(job) {
   activeCodingJob = job.job_id;
   currentCodingSession = job.session_id;
+  currentCodingRepo = job.repository;
+  currentCodingBranch = job.branch;
   codingJobRunning = ["queued", "running"].includes(job.state);
   const labels = {
     queued: "等待运行", running: "正在执行", completed: "已验证完成",
@@ -79,10 +87,14 @@ function renderCodingJob(job) {
   $("coding-job").hidden = false;
   $("coding-state").textContent = labels[job.state] || job.state;
   $("coding-job-meta").textContent = `会话 ${job.session_id} · ${job.steps} 步 · ${job.tools_used} 次工具调用${job.cancel_requested ? " · 已请求取消" : ""}`;
+  $("coding-workspace-info").textContent = job.branch
+    ? `独立工作区：${job.workspace_path} · 分支 ${job.branch} · 基于 ${job.base_sha.slice(0, 12)}`
+    : `直接修改：${job.workspace_path}`;
   $("coding-answer").textContent = job.error || job.answer || "Agent 正在处理任务…";
   $("coding-cancel").hidden = !codingJobRunning;
   $("coding-cancel").disabled = job.cancel_requested;
   $("coding-resume-current").hidden = codingJobRunning;
+  $("coding-remove-workspace").hidden = codingJobRunning || !job.branch;
   $("coding-trace").textContent = job.trace.map((event) => {
     const detail = event.name || event.status || event.provider || event.error_type || "";
     const outcome = event.ok === undefined ? "" : event.ok ? " · 成功" : " · 失败";
@@ -126,11 +138,16 @@ $("coding-form").addEventListener("submit", async (event) => {
   try {
     const job = await postJson("/api/code/jobs", {
       repository: $("coding-repo").value.trim(), task, resume_session: resume || null,
+      workspace: $("coding-workspace").value,
+      confirm_direct: $("coding-workspace").value === "direct" && $("coding-confirm-direct").checked,
       sandbox: $("coding-sandbox").value, trust_local: host && $("coding-trust").checked,
       provider: $("coding-provider").value, fallback: $("coding-fallback").checked,
       max_steps: Number($("coding-steps").value), time_budget: Number($("coding-time").value),
     });
     renderCodingJob(job);
+    $("coding-confirm-direct").checked = false;
+    $("coding-trust").checked = false;
+    refreshCodingAvailability();
     if (codingJobRunning) codingPollTimer = setTimeout(() => pollCodingJob(job.job_id), 500);
   } catch (error) {
     showCodingError(error.message);
@@ -151,9 +168,30 @@ $("coding-cancel").addEventListener("click", async () => {
 $("coding-resume-current").addEventListener("click", () => {
   if (!currentCodingSession) return;
   $("coding-resume").value = currentCodingSession;
+  $("coding-repo").value = currentCodingRepo;
+  $("coding-workspace").value = currentCodingBranch ? "worktree" : "direct";
+  refreshCodingAvailability();
   $("coding-task-text").focus();
 });
 
+$("coding-remove-workspace").addEventListener("click", async () => {
+  if (!currentCodingSession || !currentCodingRepo || !currentCodingBranch) return;
+  showCodingError("");
+  try {
+    await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/remove`, {
+      repository: currentCodingRepo,
+    });
+    $("coding-workspace-info").textContent += " · 工作区已清理，分支仍保留";
+    $("coding-remove-workspace").hidden = true;
+    $("coding-resume-current").hidden = true;
+    currentCodingBranch = "";
+  } catch (error) {
+    showCodingError(`${error.message}。请先在工作区提交或还原改动，再清理。`);
+  }
+});
+
+$("coding-workspace").addEventListener("change", refreshCodingAvailability);
+$("coding-confirm-direct").addEventListener("change", refreshCodingAvailability);
 $("coding-sandbox").addEventListener("change", refreshCodingAvailability);
 $("coding-trust").addEventListener("change", refreshCodingAvailability);
 const savedCodingJob = sessionStorage.getItem("selfforge-coding-job");
