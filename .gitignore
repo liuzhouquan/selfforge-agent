@@ -3,6 +3,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
+.env.*
+.aws/
+.ssh/
+.npmrc
+.pypirc
+.netrc
 *.pyc
 .workspaces/
 .local/

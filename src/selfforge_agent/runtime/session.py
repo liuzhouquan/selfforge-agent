@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -54,7 +55,15 @@ class SessionStore:
                 status = event["status"]
         return messages, status
 
-    def trace_events(self) -> list[dict]:
+    def trace_events(self, limit: int | None = None) -> list[dict]:
+        if limit is not None and limit <= 0:
+            raise ValueError("Trace limit must be positive")
         if not self.trace_path.exists():
             return []
-        return [json.loads(line) for line in self.trace_path.read_text(encoding="utf-8").splitlines()]
+        events: deque[dict] = deque(maxlen=limit)
+        with self.trace_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.endswith("\n"):
+                    break  # A concurrent writer may still be finishing this event.
+                events.append(json.loads(line))
+        return list(events)

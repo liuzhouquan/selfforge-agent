@@ -67,6 +67,8 @@ def test_repair_records_metadata_trace(demo_repo: tuple[Path, str, str]) -> None
     events = session.trace_events()
     assert [event["stage"] for event in events if event["event"] == "repair_test"] == [
         "base", "head", "repaired"]
+    assert any(event.get("workflow") == "repair" and event.get("name") == "edit_file"
+               and event.get("ok") for event in events if event["event"] == "tool")
     assert not any("return a - b" in str(event) for event in events)
 
 
@@ -110,6 +112,21 @@ def test_retries_after_rejected_edit(demo_repo: tuple[Path, str, str]) -> None:
     assert report.status == "verified"
     assert len(report.attempts) == 2
     assert report.attempts[0].error is not None
+    assert report.attempts[1].test_result.status == "passed"
+
+
+def test_retries_after_oversized_edit(demo_repo: tuple[Path, str, str]) -> None:
+    class RetryModel:
+        def propose(self, observation: RepairObservation) -> CodeEdit:
+            return CodeEdit(path="calculator.py", old_text="return a - b",
+                            new_text="x" * 17_000 if observation.attempt == 1 else "return a + b",
+                            rationale="Fix addition")
+
+    repo, base, head = demo_repo
+    report = RepairAgent(RetryModel()).run(repo, base, head, "Fix add", trusted=True)
+    assert report.status == "verified"
+    assert "size limit" in report.attempts[0].error
+    assert report.attempts[0].test_result is None
     assert report.attempts[1].test_result.status == "passed"
 
 

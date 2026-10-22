@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from selfforge_agent.coding.model_client import CodingModel, ModelError
 from selfforge_agent.coding.models import (
-    CodeEdit,
     RepairAttempt,
     RepairObservation,
     RepairReport,
@@ -18,6 +17,7 @@ from selfforge_agent.core.git_context import build_context
 from selfforge_agent.models import PRContext, TestResult
 from selfforge_agent.review.baseline import BaselineReviewer
 from selfforge_agent.runtime.session import SessionStore
+from selfforge_agent.runtime.tools import EditPolicy, ToolRegistry
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
 _MAX_SOURCE_BYTES = 16_384
@@ -50,20 +50,6 @@ def _editable_files(context: PRContext, worktree: Path) -> list[SourceFile]:
         if len(files) == _MAX_FILES:
             break
     return files
-
-
-def _apply_edit(worktree: Path, edit: CodeEdit, allowed: set[str]) -> None:
-    if edit.path not in allowed:
-        raise EditRejected("Edit path is not an allowed changed source file")
-    path = worktree / edit.path
-    if path.is_symlink() or not path.resolve().is_relative_to(worktree.resolve()):
-        raise EditRejected("Edit path escapes the temporary worktree")
-    if len(edit.new_text.encode("utf-8")) > _MAX_SOURCE_BYTES:
-        raise EditRejected("Replacement text exceeds the source size limit")
-    original = path.read_text(encoding="utf-8")
-    if original.count(edit.old_text) != 1 or edit.old_text == edit.new_text:
-        raise EditRejected("Old text must occur exactly once and the edit must change it")
-    path.write_text(original.replace(edit.old_text, edit.new_text, 1), encoding="utf-8")
 
 
 def _safe_patch(worktree: Path, allowed: set[str]) -> str:
@@ -171,6 +157,14 @@ class RepairAgent:
                     if not allowed:
                         report.errors.append("No small changed Python source file is editable")
                         return report
+                    tools = ToolRegistry(
+                        repair_tree,
+                        edit_policy=EditPolicy(
+                            allowed_paths=frozenset(allowed),
+                            max_file_bytes=_MAX_SOURCE_BYTES,
+                            allow_create=False,
+                        ),
+                    )
                     failure_output = _test_output(report.head_test)
                     feedback = ""
                     report.status = "unresolved"
@@ -192,7 +186,17 @@ class RepairAgent:
                             attempt.edit = edit
                             if self.session:
                                 self.session.trace("repair_edit", number=number, path=edit.path)
-                            _apply_edit(repair_tree, edit, allowed)
+                            outcome = tools.execute("edit_file", {
+                                "path": edit.path,
+                                "old_text": edit.old_text,
+                                "new_text": edit.new_text,
+                            })
+                            if self.session:
+                                self.session.trace("tool", workflow="repair", name="edit_file",
+                                                   ok=outcome.ok,
+                                                   duration_seconds=round(outcome.elapsed_seconds, 3))
+                            if not outcome.ok:
+                                raise EditRejected(outcome.content.removeprefix("Tool error: "))
                             attempt.patch = _safe_patch(repair_tree, allowed)
                             attempt.test_result = self.runner.run(
                                 repair_tree, trusted=trusted, timeout=timeout, test_path=test_path
