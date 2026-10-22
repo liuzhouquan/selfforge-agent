@@ -8,6 +8,7 @@ from pathlib import Path
 
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel, OpenAICompatibleCodingModel
+from selfforge_agent.coding.test_generation import DifferentialTestGenerator
 from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError
 from selfforge_agent.providers import ProviderConfig, route_providers
@@ -153,6 +154,19 @@ def main() -> int:
     repair.add_argument("--base-url", default=os.environ.get("SELFFORGE_API_BASE_URL"))
     repair.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     repair.add_argument("--patch-output", type=Path, help="Write a verified patch to this file")
+    generate = subcommands.add_parser("generate-test", help="Generate and verify a Base/Head regression test")
+    generate.add_argument("--repo", type=Path, required=True)
+    generate.add_argument("--base", required=True)
+    generate.add_argument("--head", required=True)
+    generate.add_argument("--task", required=True)
+    generate.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    generate.add_argument("--no-fallback", action="store_true")
+    generate.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    generate.add_argument("--trust-local-tests", action="store_true")
+    generate.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    generate.add_argument("--timeout", type=float, default=60)
+    generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
+    generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
     if args.command == "code":
         return _run_code(args, parser)
@@ -197,6 +211,32 @@ def main() -> int:
             parser.error(str(exc))
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["successes"] == report["tasks"] else 1
+    if args.command == "generate-test":
+        try:
+            candidates = route_providers(args.provider, not args.no_fallback)
+            if not candidates:
+                parser.error("A configured model provider is required")
+            runner = TestRunner() if args.sandbox == "host" else DockerTestRunner(args.image)
+            session_root = CodingWorkspaceManager().session_root(args.repo.resolve())
+            result = DifferentialTestGenerator(
+                OpenAIChatAdapter(candidates), runner=runner,
+                session=SessionStore(session_root),
+            ).run(args.repo.resolve(), args.base, args.head, args.task,
+                  trusted=args.trust_local_tests if args.sandbox == "host" else False,
+                  timeout=args.timeout)
+        except (GitContextError, TrustRequiredError, WorktreeError, ValueError, OSError) as exc:
+            parser.error(str(exc))
+        if args.output:
+            args.output.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        if result.status == "differential" and args.test_output and result.generated_test:
+            args.test_output.write_text(result.generated_test.test_code, encoding="utf-8")
+        print(f"Run {result.run_id}: {result.status} ({result.provider}/{result.model})")
+        if result.base_test and result.head_test:
+            print(f"Base: {result.base_test.status} ({result.base_test.passed} passed); "
+                  f"Head: {result.head_test.status} ({result.head_test.failed} failed)")
+        for error in result.errors:
+            print(error, file=sys.stderr)
+        return 0 if result.status == "differential" else 1
     if args.command == "repair":
         try:
             candidates = route_providers(args.provider, not args.no_fallback)

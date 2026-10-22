@@ -11,6 +11,7 @@ from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.runtime.evaluation import CASES, OfflineFixtureModel
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager, WorkspaceError
+from selfforge_agent.runtime.workspace_diff import workspace_diff
 
 
 def _repo(path: Path) -> Path:
@@ -90,6 +91,36 @@ def test_worktree_requires_committed_repository_root(tmp_path: Path) -> None:
                     "-c", "user.email=test@example.com", "commit", "-qm", "Initial"], check=True)
     with pytest.raises(WorkspaceError, match="repository root"):
         manager.create(repo / "nested", "abc123")
+
+
+def test_workspace_diff_includes_commits_edits_and_safe_untracked_files(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "source")
+    workspace = CodingWorkspaceManager(tmp_path / "workspaces").create(repo, "abc123")
+    (workspace.path / "app.py").write_text("VALUE = 2\n")
+    subprocess.run(["git", "-C", str(workspace.path), "add", "app.py"], check=True)
+    subprocess.run(["git", "-C", str(workspace.path), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.com", "commit", "-qm", "First fix"], check=True)
+    (workspace.path / "app.py").write_text("VALUE = 3\n")
+    (workspace.path / "new_test.py").write_text("assert True\n")
+    (workspace.path / ".env").write_text("SECRET=hidden\n")
+    (workspace.path / "alias.py").symlink_to(".env")
+    result = workspace_diff(workspace)
+    files = {item["path"]: item for item in result["files"]}
+    assert set(files) == {"app.py", "new_test.py", "alias.py"}
+    assert "VALUE = 3" in files["app.py"]["patch"]
+    assert "VALUE = 1" in files["app.py"]["patch"]
+    assert "+assert True" in files["new_test.py"]["patch"]
+    assert "SECRET" not in str(result)
+    assert result["omitted_files"] == 1
+
+
+def test_workspace_diff_caps_large_patches(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "source")
+    workspace = CodingWorkspaceManager(tmp_path / "workspaces").create(repo, "abc123")
+    (workspace.path / "large.py").write_text("x = 1\n" * 5_000)
+    result = workspace_diff(workspace)
+    assert result["files"][0]["truncated"]
+    assert len(result["files"][0]["patch"]) < 25_000
 
 
 def test_new_sessions_live_outside_repo_and_legacy_sessions_resume(tmp_path: Path) -> None:

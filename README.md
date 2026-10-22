@@ -30,9 +30,9 @@ uv run python examples/coding_demo.py
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 通过真实 pytest 退出码判断；未运行测试的任务标记 `unverified` |
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、取消和会话续跑；后台任务仅在服务进程内保留 |
-| Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、检查、手动清理，原仓库不被 Agent 编辑 |
+| Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
-| 自动生成针对性测试 | Planned | 现阶段依赖仓库已有测试 |
+| 针对性测试生成 | Implemented（单候选） | 模型生成一个 pytest 文件，在 Base/Head 隔离运行；仅 Base 通过且 Head 断言失败时给出差异证据 |
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000
 # 打开 http://127.0.0.1:8000，选择 Docker，启动 Coding Agent
 ```
 
-页面显示任务状态、独立工作区路径与最近的 JSONL 轨迹，可取消或用会话 ID 继续。工作区无未提交或未跟踪文件时可在页面清理；分支仍保留。新会话写入用户数据目录的 `selfforge-agent/sessions/`；旧版直写会话需选择“直接修改原仓库”后按 ID 续跑。服务重启后会话可续跑，但运行中任务的状态不会保留。选择直写需单次确认；Web 的本机命令执行还需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次勾选信任。
+页面显示任务状态、独立工作区路径、相对基线 commit 的有界 Diff 与最近的 JSONL 轨迹，可取消或用会话 ID 继续。工作区无未提交或未跟踪文件时可在页面清理；分支仍保留。新会话写入用户数据目录的 `selfforge-agent/sessions/`；旧版直写会话需选择“直接修改原仓库”后按 ID 续跑。服务重启后会话可续跑，但运行中任务的状态不会保留。选择直写需单次确认；Web 的本机命令执行还需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次勾选信任。
 
 ## CLI
 
@@ -94,6 +94,10 @@ uv run selfforge-agent test --repo ./your-project --sandbox host --trust-local
 uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task '修复现有测试证明的回归' --patch-output repair.patch
+
+# 专项：生成单个候选回归测试并在 Base/Head 差异验证
+uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
+  --task 'add(2, 3) 应返回 5' --output test-evidence.json --test-output test_regression.py
 
 # 仅对可信 PR 显式选择主机执行
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
@@ -131,6 +135,8 @@ Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下�
 
 通用 Coding Agent 的完成判断以 `run_tests` 的实际退出码为证据；若最后一次编辑之后没有成功测试，则返回 `unverified`。`eval` 还会独立重新运行夹具测试，并检查源文件确实发生变化，不采信模型口头结论。PR Repair 则要求 Base 测试通过、Head 出现断言失败、Repaired 测试通过，才输出已验证补丁；这证明现有测试的回归已修复，尚不证明某条审查发现的因果关系。
 
+`generate-test` 生成一个 pytest 候选文件并分别在 Base/Head 执行；仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出该测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。差异结果也不能单独证明某条审查发现的因果关系。
+
 ```sh
 uv run selfforge-agent eval --offline       # 确定性工具协议回归，不代表模型能力
 uv run selfforge-agent eval --provider deepseek  # 真正调用模型，运行生成夹具
@@ -142,8 +148,8 @@ uv run ruff check .
 
 ## Specialized Workflows：PR Review
 
-Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支，并运行验证修复。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 修复默认在 Docker 中测试；选择主机执行时，仍需 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。工具不会自动推送、评论或合并 PR。修复轨迹保存在 checkout 的 `.selfforge/sessions/`，可用 `selfforge-agent trace --repo CHECKOUT RUN_ID` 查看。
+Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支、生成差异验证测试，并运行验证修复。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 测试生成与修复默认在 Docker 中执行；选择主机执行时，仍需 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。工具不会自动推送、评论或合并 PR。修复轨迹保存在 checkout 的 `.selfforge/sessions/`，可用 `selfforge-agent trace --repo CHECKOUT RUN_ID` 查看。
 
 ## Roadmap
 
-下一步优先实现针对性测试生成、PR 风险驱动测试、跨进程任务协调及更广的客观评测。见[路线图](./docs/roadmap.md)。
+下一步优先实现多候选且与具体风险关联的测试生成、PR 风险驱动测试、跨进程任务协调及更广的客观评测。见[路线图](./docs/roadmap.md)。

@@ -300,6 +300,42 @@ button {
   color:#d7f6d8;
   font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace
 }
+.coding-diff {
+  border-top:1px solid #dfeadf;
+  margin-top:18px;
+  padding-top:16px
+}
+.coding-diff-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px
+}
+.coding-diff-head strong {
+  font-size:13px
+}
+.coding-diff-head button,.coding-diff-file {
+  border:1px solid #d5e5d7;
+  border-radius:7px;
+  background:#f5faf5;
+  color:#285d40;
+  padding:7px 10px;
+  font-size:11px
+}
+.coding-diff-files {
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px
+}
+.coding-diff-file.active {
+  background:#245d3e;
+  color:#fff
+}
+.coding-job .coding-diff pre {
+  max-height:460px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere
+}
 .coding-workflow [hidden] {
   display:none
 }
