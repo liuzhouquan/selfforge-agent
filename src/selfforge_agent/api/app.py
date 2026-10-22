@@ -15,6 +15,7 @@ from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel
 from selfforge_agent.coding.models import RepairReport
+from selfforge_agent.coding.worktree import WorktreeError, git
 from selfforge_agent.core.git_context import GitContextError
 from selfforge_agent.integrations.github_pr import (
     CheckoutResult,
@@ -44,6 +45,7 @@ from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
+from selfforge_agent.runtime.workspace import CodingWorkspaceManager
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
@@ -51,6 +53,7 @@ app = FastAPI(title="selfForge Agent")
 _STATIC = Path(__file__).resolve().parent / "static"
 _WORKSPACES = Path(__file__).resolve().parents[3] / ".workspaces"
 _CODING_JOBS = CodingJobManager()
+_CODING_WORKSPACES = CodingWorkspaceManager()
 app.mount("/assets", StaticFiles(directory=_STATIC), name="assets")
 
 
@@ -102,6 +105,8 @@ class CodingTaskRequest(BaseModel):
     repository: str = Field(min_length=1)
     task: str = Field(default="", max_length=8_000)
     resume_session: str | None = None
+    workspace: Literal["worktree", "direct"] = "worktree"
+    confirm_direct: bool = False
     sandbox: Literal["docker", "host"] = "docker"
     trust_local: bool = False
     provider: Literal["auto", "deepseek", "openrouter"] = "auto"
@@ -119,7 +124,15 @@ class CodingJobResponse(BaseModel):
     tools_used: int
     error: str
     cancel_requested: bool
+    repository: str
+    workspace_path: str
+    branch: str
+    base_sha: str
     trace: list[dict]
+
+
+class CodingWorkspaceRequest(BaseModel):
+    repository: str = Field(min_length=1)
 
 
 class ProviderCheckRequest(BaseModel):
@@ -171,26 +184,66 @@ def start_coding_job(request: CodingTaskRequest, client: Request) -> dict:
         os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local
     ):
         raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this repository")
+    if request.workspace == "direct" and not request.confirm_direct:
+        raise HTTPException(status_code=403, detail="Explicitly confirm direct edits to this repository")
     if not request.task.strip() and not request.resume_session:
         raise HTTPException(status_code=400, detail="A task or session ID is required")
     candidates = route_providers(request.provider, request.fallback)
     if not candidates:
         raise HTTPException(status_code=503, detail="A configured model provider is required")
+    created_workspace = None
+    job_started = False
     try:
-        session = SessionStore(_coding_session_root(repository), request.resume_session)
+        session_root = _CODING_WORKSPACES.session_root(
+            repository, request.resume_session,
+            legacy_roots=(_coding_session_root(repository), repository))
+        session = SessionStore(session_root, request.resume_session)
         if request.resume_session:
             session.load()
-        executor = (HostExecutor(repository, trusted=True) if request.sandbox == "host"
-                    else DockerExecutor(repository))
+        model = OpenAIChatAdapter(candidates)
+        workspace = None
+        if request.workspace == "worktree":
+            workspace = (_CODING_WORKSPACES.get(repository, session.session_id)
+                         if request.resume_session else
+                         _CODING_WORKSPACES.create(repository, session.session_id))
+            if not request.resume_session:
+                created_workspace = workspace
+        working_root = workspace.path if workspace else repository
+        executor = (HostExecutor(working_root, trusted=True) if request.sandbox == "host"
+                    else DockerExecutor(working_root))
         cancel = Event()
-        agent = CodingAgent(OpenAIChatAdapter(candidates), ToolRegistry(repository, executor),
+        agent = CodingAgent(model, ToolRegistry(working_root, executor),
                             session, max_steps=request.max_steps,
                             time_budget=request.time_budget, cancel=cancel)
-        job = _CODING_JOBS.start(agent, request.task, resume=bool(request.resume_session))
+        job = _CODING_JOBS.start(agent, request.task, resume=bool(request.resume_session),
+                                 workspace_info=workspace)
+        job_started = True
         return _CODING_JOBS.get(job.job_id)
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, WorktreeError) as exc:
+        if created_workspace and not job_started:
+            try:
+                _CODING_WORKSPACES.remove(repository, created_workspace.session_id)
+                git(repository, "branch", "-D", created_workspace.branch)
+            except (ValueError, OSError, WorktreeError):
+                # Keep a recoverable worktree if cleanup itself fails.
+                pass
         raise HTTPException(status_code=409 if "already running" in str(exc) else 400,
                             detail=str(exc)) from exc
+
+
+@app.post("/api/code/workspaces/{session_id}/remove")
+def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
+                            client: Request) -> dict[str, str]:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    try:
+        workspace = _CODING_WORKSPACES.get(repository, session_id)
+        if _CODING_JOBS.active_workspace(workspace.path):
+            raise HTTPException(status_code=409, detail="Coding task is still running")
+        _CODING_WORKSPACES.remove(repository, session_id)
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"removed": str(workspace.path), "branch": workspace.branch}
 
 
 @app.get("/api/code/jobs/{job_id}", response_model=CodingJobResponse)

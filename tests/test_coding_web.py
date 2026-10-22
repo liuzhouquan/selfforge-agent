@@ -16,6 +16,7 @@ from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.runtime.agent import AgentResult
 from selfforge_agent.runtime.model import ModelTurn
 from selfforge_agent.runtime.session import SessionStore
+from selfforge_agent.runtime.workspace import CodingWorkspaceManager
 
 
 def _repo(root: Path) -> Path:
@@ -26,6 +27,9 @@ def _repo(root: Path) -> Path:
     (repo / "tests").mkdir()
     (repo / "tests" / "test_calculator.py").write_text(
         "from calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.com", "commit", "-qm", "Initial"], check=True)
     return repo
 
 
@@ -68,6 +72,8 @@ def test_web_coding_can_resume_and_verify_on_host(monkeypatch: pytest.MonkeyPatc
     repo = _repo(tmp_path)
     model = ScriptedModel()
     monkeypatch.setattr(api_module, "_WORKSPACES", tmp_path / "app-workspaces")
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
+                        CodingWorkspaceManager(tmp_path / "coding-worktrees"))
     monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager())
     monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: model)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
@@ -89,10 +95,25 @@ def test_web_coding_can_resume_and_verify_on_host(monkeypatch: pytest.MonkeyPatc
     assert done["tools_used"] == 3
     assert any(item["event"] == "tool" and item["name"] == "run_tests" and item["ok"]
                for item in done["trace"])
-    assert "return a + b" in (repo / "calculator.py").read_text()
+    workspace = Path(done["workspace_path"])
+    assert workspace != repo
+    assert done["branch"] == f"selfforge/{done['session_id']}"
+    assert "return a + b" in (workspace / "calculator.py").read_text()
+    assert "return a - b" in (repo / "calculator.py").read_text()
     assert not (repo / ".selfforge").exists()
-    assert api_module._coding_session_root(repo).joinpath(
+    assert api_module._CODING_WORKSPACES.session_root(repo).joinpath(
         ".selfforge", "sessions", f"{done['session_id']}.jsonl").exists()
+    assert client.post(f"/api/code/workspaces/{done['session_id']}/remove",
+                       json={"repository": str(repo)}).status_code == 409
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(workspace), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.com", "commit", "-qm", "Fix"], check=True)
+    removed = client.post(f"/api/code/workspaces/{done['session_id']}/remove",
+                          json={"repository": str(repo)})
+    assert removed.status_code == 200
+    assert not workspace.exists()
+    assert subprocess.run(["git", "-C", str(repo), "branch", "--list", done["branch"]],
+                          capture_output=True, text=True, check=True).stdout.strip()
 
 
 def test_web_coding_host_requires_operator_and_request_trust(monkeypatch: pytest.MonkeyPatch,
@@ -106,6 +127,8 @@ def test_web_coding_host_requires_operator_and_request_trust(monkeypatch: pytest
     monkeypatch.setenv("SELFFORGE_ENABLE_HOST_TESTS", "1")
     payload["trust_local"] = False
     assert client.post("/api/code/jobs", json=payload).status_code == 403
+    payload.update(sandbox="docker", workspace="direct")
+    assert client.post("/api/code/jobs", json=payload).status_code == 403
     assert client.get("/api/code/jobs/unknown").status_code == 404
     assert client.post("/api/code/jobs/unknown/cancel", json={}).status_code == 404
     remote = Request({"type": "http", "client": ("203.0.113.2", 1234),
@@ -114,6 +137,27 @@ def test_web_coding_host_requires_operator_and_request_trust(monkeypatch: pytest
         api_module.start_coding_job(api_module.CodingTaskRequest(
             repository=str(repo), task="Fix"), remote)
     assert rejected.value.status_code == 403
+
+
+def test_web_direct_mode_requires_confirmation_and_edits_source(monkeypatch: pytest.MonkeyPatch,
+                                                                tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(api_module, "_WORKSPACES", tmp_path / "app-workspaces")
+    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager())
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: ScriptedModel())
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("SELFFORGE_ENABLE_HOST_TESTS", "1")
+    client = TestClient(api_module.app)
+    payload = {"repository": str(repo), "task": "Fix addition", "workspace": "direct",
+               "sandbox": "host", "trust_local": True}
+    assert client.post("/api/code/jobs", json=payload).status_code == 403
+    started = client.post("/api/code/jobs", json={**payload, "confirm_direct": True})
+    assert started.status_code == 200
+    done = _finished(client, started.json()["job_id"])
+    assert done["state"] == "completed"
+    assert done["workspace_path"] == str(repo)
+    assert done["branch"] == ""
+    assert "return a + b" in (repo / "calculator.py").read_text()
 
 
 def test_web_coding_cancellation_and_workspace_lock(monkeypatch: pytest.MonkeyPatch,
@@ -146,6 +190,40 @@ def test_web_coding_cancellation_and_workspace_lock(monkeypatch: pytest.MonkeyPa
     assert done["state"] == "cancelled"
 
 
+def test_rejected_web_job_rolls_back_new_worktree(monkeypatch: pytest.MonkeyPatch,
+                                                 tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    manager = CodingJobManager(max_active=1)
+    workspaces = CodingWorkspaceManager(tmp_path / "coding-worktrees")
+    monkeypatch.setattr(api_module, "_CODING_JOBS", manager)
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES", workspaces)
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: ScriptedModel())
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    started = Event()
+
+    class WaitingAgent:
+        def __init__(self) -> None:
+            self.session = SessionStore(tmp_path / "held-session")
+            self.tools = SimpleNamespace(root=tmp_path / "other-workspace")
+            self.cancel = Event()
+
+        def run(self, _task: str, *, resume: bool = False) -> AgentResult:
+            started.set()
+            self.cancel.wait(2)
+            return AgentResult(self.session.session_id, "cancelled", "", 0, 0)
+
+    held = manager.start(WaitingAgent(), "Hold")
+    assert started.wait(1)
+    response = TestClient(api_module.app).post("/api/code/jobs", json={
+        "repository": str(repo), "task": "Fix addition",
+    })
+    assert response.status_code == 400
+    assert workspaces.list(repo) == []
+    assert not subprocess.run(["git", "-C", str(repo), "branch", "--list", "selfforge/*"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    manager.cancel(held.job_id)
+
+
 @pytest.mark.integration
 def test_web_coding_defaults_to_real_docker(monkeypatch: pytest.MonkeyPatch,
                                             tmp_path: Path) -> None:
@@ -159,6 +237,8 @@ def test_web_coding_defaults_to_real_docker(monkeypatch: pytest.MonkeyPatch,
             pytest.skip("Docker daemon or sandbox image unavailable")
     repo = _repo(tmp_path)
     monkeypatch.setattr(api_module, "_WORKSPACES", tmp_path / "app-workspaces")
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
+                        CodingWorkspaceManager(tmp_path / "coding-worktrees"))
     monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager())
     monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: ScriptedModel())
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
@@ -170,5 +250,6 @@ def test_web_coding_defaults_to_real_docker(monkeypatch: pytest.MonkeyPatch,
     assert started.status_code == 200
     done = _finished(client, started.json()["job_id"])
     assert done["state"] == "completed", done["error"]
-    assert "return a + b" in (repo / "calculator.py").read_text()
+    assert "return a + b" in (Path(done["workspace_path"]) / "calculator.py").read_text()
+    assert "return a - b" in (repo / "calculator.py").read_text()
     assert done["tools_used"] == 4

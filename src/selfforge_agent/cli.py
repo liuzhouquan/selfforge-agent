@@ -17,6 +17,7 @@ from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
+from selfforge_agent.runtime.workspace import CodingWorkspaceManager
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
@@ -28,8 +29,8 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not root.is_dir():
         parser.error("Repository directory does not exist")
     try:
-        executor = (HostExecutor(root, trusted=args.trust_local) if args.sandbox == "host"
-                    else DockerExecutor(root, image=args.image))
+        if args.sandbox == "host" and not args.trust_local:
+            parser.error("Host execution requires --trust-local")
         if args.model or args.base_url:
             if not args.model or not args.base_url:
                 parser.error("Custom model requires both --model and --base-url")
@@ -40,9 +41,23 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             )]
         else:
             candidates = route_providers(args.provider, not args.no_fallback)
-        agent = CodingAgent(OpenAIChatAdapter(candidates), ToolRegistry(root, executor),
-                            SessionStore(root, args.resume), max_steps=args.max_steps,
+        model = OpenAIChatAdapter(candidates)
+        manager = CodingWorkspaceManager()
+        session = SessionStore(manager.session_root(root, args.resume, legacy_roots=(root,)),
+                               args.resume)
+        workspace = None
+        if args.workspace == "worktree":
+            workspace = (manager.get(root, session.session_id) if args.resume
+                         else manager.create(root, session.session_id))
+        working_root = workspace.path if workspace else root
+        executor = (HostExecutor(working_root, trusted=True) if args.sandbox == "host"
+                    else DockerExecutor(working_root, image=args.image))
+        agent = CodingAgent(model, ToolRegistry(working_root, executor),
+                            session, max_steps=args.max_steps,
                             time_budget=args.time_budget, context_budget=args.context_tokens)
+        if workspace:
+            print(f"Workspace: {workspace.path} (branch {workspace.branch}, "
+                  f"base {workspace.base_sha[:12]})")
         result = agent.run(args.task or "", resume=bool(args.resume))
     except (ValueError, RuntimeError, OSError) as exc:
         parser.error(str(exc))
@@ -81,6 +96,8 @@ def main() -> int:
     code.add_argument("--repo", type=Path, default=Path.cwd())
     code.add_argument("--task", help="Natural-language development task")
     code.add_argument("--resume", help="Resume a prior session ID")
+    code.add_argument("--workspace", choices=["worktree", "direct"], default="worktree",
+                      help="Persistent isolated worktree (default) or explicit direct edits")
     code.add_argument("--sandbox", choices=["docker", "host"], default="docker")
     code.add_argument("--trust-local", action="store_true", help="Required for host execution")
     code.add_argument("--image", default="selfforge-agent-sandbox:latest")
@@ -101,6 +118,10 @@ def main() -> int:
     trace = subcommands.add_parser("trace", help="Show a session's structured trace")
     trace.add_argument("--repo", type=Path, default=Path.cwd())
     trace.add_argument("session_id")
+    workspaces = subcommands.add_parser("workspaces", help="Inspect or remove Coding worktrees")
+    workspaces.add_argument("action", choices=["list", "remove"])
+    workspaces.add_argument("session_id", nargs="?")
+    workspaces.add_argument("--repo", type=Path, default=Path.cwd())
     evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
     evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
     evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
@@ -139,11 +160,29 @@ def main() -> int:
         return _run_test(args, parser)
     if args.command == "trace":
         try:
-            events = SessionStore(args.repo, args.session_id).trace_events()
+            manager = CodingWorkspaceManager()
+            root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
+            events = SessionStore(root, args.session_id).trace_events()
         except ValueError as exc:
             parser.error(str(exc))
         for event in events:
             print(json.dumps(event, ensure_ascii=False))
+        return 0
+    if args.command == "workspaces":
+        manager = CodingWorkspaceManager()
+        try:
+            if args.action == "list":
+                if args.session_id:
+                    parser.error("workspaces list does not take a session ID")
+                for workspace in manager.list(args.repo):
+                    print(f"{workspace.session_id}  {workspace.branch}  {workspace.path}")
+            else:
+                if not args.session_id:
+                    parser.error("workspaces remove requires a session ID")
+                workspace = manager.remove(args.repo, args.session_id)
+                print(f"Removed worktree {workspace.path}; branch {workspace.branch} remains")
+        except (ValueError, RuntimeError, OSError) as exc:
+            parser.error(str(exc))
         return 0
     if args.command == "eval":
         try:

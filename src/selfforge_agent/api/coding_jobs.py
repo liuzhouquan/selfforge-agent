@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from selfforge_agent.runtime.agent import AgentResult, CodingAgent
 from selfforge_agent.runtime.session import SessionStore
+from selfforge_agent.runtime.workspace import CodingWorkspace
 
 
 @dataclass
@@ -15,6 +16,9 @@ class CodingJob:
     workspace: Path
     session: SessionStore
     cancel: Event
+    repository: Path
+    branch: str = ""
+    base_sha: str = ""
     state: str = "queued"
     result: AgentResult | None = None
     error: str = ""
@@ -29,7 +33,8 @@ class CodingJobManager:
         self._jobs: dict[str, CodingJob] = {}
         self._lock = Lock()
 
-    def start(self, agent: CodingAgent, task: str, *, resume: bool = False) -> CodingJob:
+    def start(self, agent: CodingAgent, task: str, *, resume: bool = False,
+              workspace_info: CodingWorkspace | None = None) -> CodingJob:
         with self._lock:
             active = [job for job in self._jobs.values() if job.state in {"queued", "running"}]
             if len(active) >= self.max_active:
@@ -40,7 +45,10 @@ class CodingJobManager:
                         if job.state not in {"queued", "running"}]
             for key in finished[:max(0, len(self._jobs) - self.max_history + 1)]:
                 del self._jobs[key]
-            job = CodingJob(uuid4().hex[:12], agent.tools.root, agent.session, agent.cancel)
+            job = CodingJob(uuid4().hex[:12], agent.tools.root, agent.session, agent.cancel,
+                            workspace_info.repository if workspace_info else agent.tools.root,
+                            workspace_info.branch if workspace_info else "",
+                            workspace_info.base_sha if workspace_info else "")
             self._jobs[job.job_id] = job
 
         def work() -> None:
@@ -87,8 +95,17 @@ class CodingJobManager:
             "tools_used": result.tools_used if result else 0,
             "error": result.error if result else error,
             "cancel_requested": cancelled,
+            "repository": str(job.repository),
+            "workspace_path": str(job.workspace),
+            "branch": job.branch,
+            "base_sha": job.base_sha,
             "trace": session.trace_events(limit=30),
         }
+
+    def active_workspace(self, path: Path) -> bool:
+        with self._lock:
+            return any(job.workspace == path and job.state in {"queued", "running"}
+                       for job in self._jobs.values())
 
     def cancel(self, job_id: str) -> dict:
         with self._lock:
