@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 let current = null;
 let hostTestsEnabled = false;
 let verifiedPatch = "";
+let differentialTest = "";
 let configuredProviders = [];
 let activeCodingJob = null;
 let currentCodingSession = null;
@@ -9,6 +10,7 @@ let currentCodingRepo = null;
 let currentCodingBranch = "";
 let codingJobRunning = false;
 let codingPollTimer = null;
+let codingDiffJobId = null;
 
 function providerLabel(name) {
   return name === "deepseek" ? "DeepSeek" : name === "openrouter" ? "OpenRouter" : name;
@@ -95,6 +97,11 @@ function renderCodingJob(job) {
   $("coding-cancel").disabled = job.cancel_requested;
   $("coding-resume-current").hidden = codingJobRunning;
   $("coding-remove-workspace").hidden = codingJobRunning || !job.branch;
+  $("coding-diff").hidden = !job.branch;
+  if (job.branch && !codingJobRunning && codingDiffJobId !== job.job_id) {
+    codingDiffJobId = job.job_id;
+    loadCodingDiff();
+  }
   $("coding-trace").textContent = job.trace.map((event) => {
     const detail = event.name || event.status || event.provider || event.error_type || "";
     const outcome = event.ok === undefined ? "" : event.ok ? " · 成功" : " · 失败";
@@ -155,6 +162,42 @@ $("coding-form").addEventListener("submit", async (event) => {
     refreshCodingAvailability();
   }
 });
+
+async function loadCodingDiff() {
+  if (!currentCodingSession || !currentCodingRepo || !currentCodingBranch) return;
+  $("coding-diff-state").textContent = "正在读取改动…";
+  try {
+    const params = new URLSearchParams({ repository: currentCodingRepo });
+    const response = await fetch(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/diff?${params}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `读取 Diff 失败 (${response.status})`);
+    $("coding-diff-state").textContent = `${data.files.length} 个文件${data.omitted_files ? ` · ${data.omitted_files} 个文件因数量或保护规则未展示` : ""} · 基于 ${data.base_sha.slice(0, 12)}`;
+    const list = $("coding-diff-files");
+    list.replaceChildren();
+    $("coding-diff-patch").hidden = true;
+    if (!data.files.length) {
+      $("coding-diff-patch").textContent = "当前没有可展示的改动。";
+      $("coding-diff-patch").hidden = false;
+      return;
+    }
+    data.files.forEach((file, index) => {
+      const button = element("button", "coding-diff-file", `${file.status === "untracked" ? "新文件" : "变更"} · ${file.path}`);
+      button.type = "button";
+      button.addEventListener("click", () => {
+        list.querySelectorAll("button").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        $("coding-diff-patch").textContent = file.patch || "此文件没有可展示的文本补丁。";
+        $("coding-diff-patch").hidden = false;
+      });
+      list.append(button);
+      if (index === 0) button.click();
+    });
+  } catch (error) {
+    $("coding-diff-state").textContent = error.message;
+  }
+}
+
+$("coding-diff-refresh").addEventListener("click", loadCodingDiff);
 
 $("coding-cancel").addEventListener("click", async () => {
   if (!activeCodingJob || !codingJobRunning) return;
@@ -254,7 +297,9 @@ function render(data) {
   $("results").hidden = false;
   $("checkout-result").hidden = true;
   $("repair-result").hidden = true;
+  $("testgen-result").hidden = true;
   verifiedPatch = "";
+  differentialTest = "";
   $("pr-number").textContent = `#${pr.number}`;
   $("pr-title").textContent = pr.title;
   $("pr-meta").textContent = `${pr.owner}/${pr.repo} · ${pr.author} · ${pr.state} · ${pr.base_branch} ← ${pr.head_branch}`;
@@ -362,6 +407,46 @@ $("download-patch").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 });
 
+$("testgen-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!current || $("testgen-button").disabled) return;
+  const host = $("testgen-sandbox").value === "host";
+  const button = $("testgen-button");
+  showAlert("");
+  button.disabled = true;
+  button.textContent = "正在生成与验证…";
+  try {
+    const response = await postJson("/api/github/generate-test", {
+      url: current.pr.url, task: $("testgen-task").value.trim(),
+      sandbox: $("testgen-sandbox").value,
+      trust_local_tests: host && $("testgen-trust").checked,
+      provider: $("testgen-provider").value,
+      fallback: $("testgen-fallback").checked,
+    });
+    const report = response.report;
+    differentialTest = report.status === "differential" ? report.generated_test?.test_code || "" : "";
+    $("testgen-status").textContent = `状态：${report.status}`;
+    $("testgen-detail").textContent = `Base ${report.base_test?.status ?? "未运行"} (${report.base_test?.passed ?? 0} 通过) · Head ${report.head_test?.status ?? "未运行"} (${report.head_test?.failed ?? 0} 失败) · ${providerLabel(report.provider || "未调用")} / ${report.model || ""} · 轨迹 ID：${report.run_id}${report.errors.length ? ` · ${report.errors.join("; ")}` : ""}`;
+    $("testgen-code").textContent = report.generated_test?.test_code || "没有生成可运行的测试。";
+    $("download-test").hidden = !differentialTest;
+    $("testgen-result").hidden = false;
+  } catch (error) {
+    showAlert(error.message);
+  } finally {
+    refreshTestgenAvailability();
+    button.textContent = "生成并差异验证";
+  }
+});
+
+$("download-test").addEventListener("click", () => {
+  if (!differentialTest) return;
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([differentialTest], { type: "text/x-python" }));
+  link.download = "test_selfforge_regression.py";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+});
+
 $("check-providers").addEventListener("click", async () => {
   const button = $("check-providers");
   button.disabled = true;
@@ -406,14 +491,26 @@ function applyConfig(config) {
     $(`${item.name}-model`).value = item.model;
     $(`${item.name}-key-state`).textContent = item.configured ? `已连接 · ${item.key_source === "local" ? "本地密钥" : "环境变量"}` : "未连接";
   }
-  for (const select of [$("review-provider"), $("repair-provider"), $("coding-provider")]) {
+  for (const select of [$("review-provider"), $("repair-provider"), $("coding-provider"), $("testgen-provider")]) {
     for (const option of select.options) {
       if (["deepseek", "openrouter"].includes(option.value)) option.disabled = !configuredProviders.some((item) => item.name === option.value);
     }
   }
   hostTestsEnabled = config.host_tests_enabled;
   refreshRepairAvailability();
+  refreshTestgenAvailability();
   refreshCodingAvailability();
+}
+
+function refreshTestgenAvailability() {
+  const host = $("testgen-sandbox").value === "host";
+  $("testgen-trust-label").hidden = !host;
+  $("testgen-button").disabled = !configuredProviders.length ||
+    (host && (!hostTestsEnabled || !$("testgen-trust").checked));
+  $("testgen-availability").textContent = !configuredProviders.length
+    ? "需先配置模型密钥"
+    : host ? (hostTestsEnabled ? "本机测试需明确勾选信任" : "本机测试需设置 SELFFORGE_ENABLE_HOST_TESTS=1")
+      : "Docker 模式需先构建 selfforge-agent-sandbox:latest 镜像";
 }
 
 function refreshRepairAvailability() {
@@ -428,6 +525,8 @@ function refreshRepairAvailability() {
 
 $("repair-sandbox").addEventListener("change", refreshRepairAvailability);
 $("trust-tests").addEventListener("change", refreshRepairAvailability);
+$("testgen-sandbox").addEventListener("change", refreshTestgenAvailability);
+$("testgen-trust").addEventListener("change", refreshTestgenAvailability);
 
 for (const form of document.querySelectorAll(".settings-card")) {
   form.addEventListener("submit", async (event) => {

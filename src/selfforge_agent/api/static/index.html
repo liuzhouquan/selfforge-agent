@@ -55,6 +55,12 @@
           <div id="coding-job" class="coding-job" hidden>
             <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-remove-workspace" type="button" hidden>清理已提交的工作区</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>
             <p id="coding-job-meta"></p><p id="coding-workspace-info"></p><p id="coding-answer"></p><pre id="coding-trace"></pre>
+            <div id="coding-diff" class="coding-diff" hidden>
+              <div class="coding-diff-head"><strong>工作区改动</strong><button id="coding-diff-refresh" type="button">刷新 Diff</button></div>
+              <p id="coding-diff-state">正在读取改动…</p>
+              <div id="coding-diff-files" class="coding-diff-files"></div>
+              <pre id="coding-diff-patch" hidden></pre>
+            </div>
           </div>
         </section>
         <section class="workflow" id="pr-workflow">
@@ -133,6 +139,22 @@
               <small id="repair-availability">需配置模型密钥和 Docker 镜像</small>
             </form>
             <div id="repair-result" class="repair-result" hidden><strong id="repair-status"></strong><p id="repair-detail"></p><button id="download-patch" type="button" hidden>下载已验证补丁</button><pre id="repair-patch"></pre></div>
+          </section>
+          <section class="repair-card">
+            <div><div class="section-kicker">SELF-TESTING</div><h3>生成回归测试</h3><p>让模型生成一个 pytest 候选测试，分别在 PR 的 Base 和 Head 运行。仅当 Base 通过、Head 出现断言失败时，提供差异证据；这仍不能单独证明某条审查发现的因果关系。默认使用无网络 Docker。</p></div>
+            <form id="testgen-form">
+              <label for="testgen-task">要检验的行为</label>
+              <input id="testgen-task" required placeholder="例如：add(2, 3) 应返回 5" />
+              <label for="testgen-provider">生成模型</label>
+              <select id="testgen-provider"><option value="auto">自动选择</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option></select>
+              <label class="provider-fallback"><input id="testgen-fallback" type="checkbox" checked /> 失败时切换备用供应商</label>
+              <label for="testgen-sandbox">测试执行环境</label>
+              <select id="testgen-sandbox"><option value="docker">Docker 隔离（默认）</option><option value="host">本机执行（仅可信 PR）</option></select>
+              <label class="trust-label" id="testgen-trust-label" hidden><input id="testgen-trust" type="checkbox" /> 我信任此 PR，允许在本机执行生成的测试</label>
+              <button id="testgen-button" type="submit" disabled>生成并差异验证</button>
+              <small id="testgen-availability">需先配置模型密钥和 Docker 镜像</small>
+            </form>
+            <div id="testgen-result" class="repair-result" hidden><strong id="testgen-status"></strong><p id="testgen-detail"></p><button id="download-test" type="button" hidden>下载差异测试</button><pre id="testgen-code"></pre></div>
           </section>
           <p class="evidence-note">审查发现是 suspected。仅凭模型或规则的判断，不会标记为 reproduced。</p>
         </section>

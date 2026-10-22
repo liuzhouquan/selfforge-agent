@@ -100,6 +100,13 @@ def test_web_coding_can_resume_and_verify_on_host(monkeypatch: pytest.MonkeyPatc
     assert done["branch"] == f"selfforge/{done['session_id']}"
     assert "return a + b" in (workspace / "calculator.py").read_text()
     assert "return a - b" in (repo / "calculator.py").read_text()
+    diff = client.get(f"/api/code/workspaces/{done['session_id']}/diff",
+                      params={"repository": str(repo)})
+    assert diff.status_code == 200
+    assert any(item["path"] == "calculator.py" and "+    return a + b" in item["patch"]
+               for item in diff.json()["files"])
+    assert client.get(f"/api/code/workspaces/{done['session_id']}/diff",
+                      params={"repository": str(tmp_path / "other")}).status_code == 404
     assert not (repo / ".selfforge").exists()
     assert api_module._CODING_WORKSPACES.session_root(repo).joinpath(
         ".selfforge", "sessions", f"{done['session_id']}.jsonl").exists()

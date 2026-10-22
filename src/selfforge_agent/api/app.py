@@ -15,6 +15,7 @@ from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel
 from selfforge_agent.coding.models import RepairReport
+from selfforge_agent.coding.test_generation import DifferentialTestGenerator, DifferentialTestReport
 from selfforge_agent.coding.worktree import WorktreeError, git
 from selfforge_agent.core.git_context import GitContextError
 from selfforge_agent.integrations.github_pr import (
@@ -46,6 +47,7 @@ from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
+from selfforge_agent.runtime.workspace_diff import workspace_diff
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
@@ -96,6 +98,16 @@ class GitHubRepairResponse(BaseModel):
     model_attempts: list[ModelAttempt] = Field(default_factory=list)
 
 
+class GitHubGenerateTestRequest(GitHubRepairRequest):
+    task: str = Field(min_length=1, max_length=8_000)
+    timeout: float = Field(default=60, gt=0, le=300)
+
+
+class GitHubGenerateTestResponse(BaseModel):
+    checkout: CheckoutResult
+    report: DifferentialTestReport
+
+
 class AppConfig(BaseModel):
     providers: list[ProviderInfo]
     host_tests_enabled: bool
@@ -133,6 +145,21 @@ class CodingJobResponse(BaseModel):
 
 class CodingWorkspaceRequest(BaseModel):
     repository: str = Field(min_length=1)
+
+
+class CodingDiffFile(BaseModel):
+    path: str
+    status: str
+    patch: str
+    truncated: bool
+
+
+class CodingDiffResponse(BaseModel):
+    session_id: str
+    branch: str
+    base_sha: str
+    files: list[CodingDiffFile]
+    omitted_files: int
 
 
 class ProviderCheckRequest(BaseModel):
@@ -244,6 +271,16 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"removed": str(workspace.path), "branch": workspace.branch}
+
+
+@app.get("/api/code/workspaces/{session_id}/diff", response_model=CodingDiffResponse)
+def coding_workspace_diff(session_id: str, repository: str, client: Request) -> dict:
+    _require_local(client)
+    try:
+        workspace = _CODING_WORKSPACES.get(Path(repository).expanduser().resolve(), session_id)
+        return workspace_diff(workspace)
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/code/jobs/{job_id}", response_model=CodingJobResponse)
@@ -371,6 +408,31 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
             model_provider=model.selected_provider, model_attempts=model.attempts,
         )
     except (GitHubPRError, GitContextError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/github/generate-test", response_model=GitHubGenerateTestResponse)
+def github_generate_test(request: GitHubGenerateTestRequest, client: Request) -> GitHubGenerateTestResponse:
+    _require_local(client)
+    if (request.sandbox == "host" and
+            (os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests)):
+        raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this PR")
+    candidates = route_providers(request.provider, request.fallback)
+    if not candidates:
+        raise HTTPException(status_code=503, detail="A configured model provider is required")
+    try:
+        pr = load_pr(request.url)
+        checkout = checkout_pr(pr.url, _WORKSPACES)
+        repository = Path(checkout.path)
+        runner = TestRunner() if request.sandbox == "host" else DockerTestRunner()
+        session = SessionStore(_CODING_WORKSPACES.session_root(repository))
+        report = DifferentialTestGenerator(
+            OpenAIChatAdapter(candidates), runner=runner, session=session,
+        ).run(repository, checkout.diff_base_sha, pr.context.head_sha, request.task,
+              trusted=request.trust_local_tests if request.sandbox == "host" else False,
+              timeout=request.timeout)
+        return GitHubGenerateTestResponse(checkout=checkout, report=report)
+    except (GitHubPRError, GitContextError, WorktreeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

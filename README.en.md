@@ -30,9 +30,9 @@ This demo checks the protocol and execution path; live model results are below. 
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Uses actual pytest exit status; tasks without test evidence are `unverified` |
 | Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cancellation, and session resume; background jobs live only in the server process |
-| Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect, and explicitly clean up without editing the source checkout |
+| Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
-| Targeted test generation | Planned | The current implementation uses existing tests |
+| Targeted test generation | Implemented (one candidate) | Generate one pytest file and run it in isolated Base/Head worktrees; differential evidence requires Base to pass and Head to fail an assertion |
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000
 # Open http://127.0.0.1:8000, select Docker, and start the Coding Agent
 ```
 
-The page shows job status, the worktree path, and recent JSONL trace events, and can cancel or resume by session ID. It can remove a worktree once there are no uncommitted or untracked files; the branch remains. New sessions live under `selfforge-agent/sessions/` in the user data directory. To resume an older direct-edit session, select direct mode and enter its ID. Sessions can resume after a server restart, but the state of an active background job is process-local. Direct source-checkout edits require per-request confirmation. Web host execution also requires `SELFFORGE_ENABLE_HOST_TESTS=1` and explicit trust on each request.
+The page shows job status, the worktree path, a bounded diff against the base commit, and recent JSONL trace events, and can cancel or resume by session ID. It can remove a worktree once there are no uncommitted or untracked files; the branch remains. New sessions live under `selfforge-agent/sessions/` in the user data directory. To resume an older direct-edit session, select direct mode and enter its ID. Sessions can resume after a server restart, but the state of an active background job is process-local. Direct source-checkout edits require per-request confirmation. Web host execution also requires `SELFFORGE_ENABLE_HOST_TESTS=1` and explicit trust on each request.
 
 ## CLI
 
@@ -94,6 +94,10 @@ uv run selfforge-agent test --repo ./your-project --sandbox host --trust-local
 uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task 'Repair the regression shown by existing tests' --patch-output repair.patch
+
+# Generate one candidate regression test and check its Base/Head behavior
+uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
+  --task 'add(2, 3) should return 5' --output test-evidence.json --test-output test_regression.py
 
 # Explicit host execution for a trusted PR only
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
@@ -131,6 +135,8 @@ The Runtime separates the loop, model adapter, tools, executor, context, and ses
 
 A general coding task is `completed` only when `run_tests` succeeded after the final edit. Otherwise it is `unverified`. `eval` independently reruns fixture tests and checks for a real source change; it does not trust the model's claim. PR Repair only emits a verified patch when Base tests pass, Head fails with an assertion, and Repaired passes. That establishes repair of an existing-suite regression, not causality for an individual review finding.
 
+`generate-test` creates one pytest candidate and executes it on Base and Head. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. The test runs only in temporary worktrees until explicitly exported. A differential result does not establish causality for an individual review finding.
+
 ```sh
 uv run selfforge-agent eval --offline       # Deterministic protocol check, not model skill
 uv run selfforge-agent eval --provider deepseek  # Live model on generated fixtures
@@ -142,8 +148,8 @@ On 2026-10-17, one local run produced **2/2** for the offline protocol fixtures 
 
 ## Specialized Workflows: PR Review
 
-The web workbench can also import your own or someone else's accessible GitHub PR, inspect diffs and heuristic/model findings, check out an editable branch, and optionally run verified repair. Findings remain `suspected`; import and review never execute PR code. Web repair tests run in Docker by default. Explicit host execution still requires `SELFFORGE_ENABLE_HOST_TESTS=1` and per-request trust. The app does not push, comment on, or merge PRs. Repair traces are stored in the checkout's `.selfforge/sessions/`; inspect them with `selfforge-agent trace --repo CHECKOUT RUN_ID`.
+The web workbench can also import your own or someone else's accessible GitHub PR, inspect diffs and heuristic/model findings, check out an editable branch, generate a differential test, and optionally run verified repair. Findings remain `suspected`; import and review never execute PR code. Web test generation and repair run in Docker by default. Explicit host execution still requires `SELFFORGE_ENABLE_HOST_TESTS=1` and per-request trust. The app does not push, comment on, or merge PRs. Repair traces are stored in the checkout's `.selfforge/sessions/`; inspect them with `selfforge-agent trace --repo CHECKOUT RUN_ID`.
 
 ## Roadmap
 
-Next, build targeted test generation, PR risk-driven tests, cross-process job coordination, and broader objective evaluations. See the [roadmap](./docs/roadmap.md).
+Next, build multiple test candidates linked to specific risks, PR risk-driven tests, cross-process job coordination, and broader objective evaluations. See the [roadmap](./docs/roadmap.md).
