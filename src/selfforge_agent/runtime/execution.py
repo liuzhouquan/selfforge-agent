@@ -96,7 +96,8 @@ class DockerExecutor:
             shutil.copytree(self.root, staged, symlinks=True,
                             ignore=shutil.ignore_patterns(
                                 ".git", ".venv", ".env", ".env.*", ".local", ".selfforge",
-                                ".aws", ".ssh", "__pycache__", "node_modules"
+                                ".aws", ".ssh", ".npmrc", ".pypirc", ".netrc",
+                                "__pycache__", "node_modules"
                             ))
             archive = Path(temp) / "workspace.tar"
             with tarfile.open(archive, "w") as bundle:

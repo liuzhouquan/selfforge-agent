@@ -12,7 +12,7 @@ from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import ModelTurn, OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
-from selfforge_agent.runtime.tools import ToolRegistry
+from selfforge_agent.runtime.tools import EditPolicy, ToolRegistry
 
 
 def _call(name: str, arguments: dict, number: int) -> ModelTurn:
@@ -86,6 +86,15 @@ def test_session_can_resume_after_step_limit(tmp_path: Path) -> None:
     assert second.session_id == first.session_id
 
 
+def test_trace_tail_ignores_incomplete_concurrent_event(tmp_path: Path) -> None:
+    session = SessionStore(tmp_path)
+    session.trace("first")
+    session.trace("second")
+    with session.trace_path.open("a", encoding="utf-8") as handle:
+        handle.write('{"event": "unfinished"')
+    assert [event["event"] for event in session.trace_events(limit=1)] == ["second"]
+
+
 def test_workspace_rejects_traversal_and_untrusted_host(tmp_path: Path) -> None:
     try:
         HostExecutor(tmp_path)
@@ -98,8 +107,43 @@ def test_workspace_rejects_traversal_and_untrusted_host(tmp_path: Path) -> None:
     assert not tools.execute("edit_file", {"path": "../outside", "old_text": "",
                                                 "new_text": "bad"}).ok
     (tmp_path / ".env").write_text("SECRET=test", encoding="utf-8")
+    (tmp_path / ".env.production").write_text("SECRET=test", encoding="utf-8")
+    (tmp_path / ".aws").mkdir()
+    (tmp_path / ".aws" / "credentials").write_text("SECRET=test", encoding="utf-8")
+    (tmp_path / "alias.py").symlink_to(".env")
     assert not tools.execute("read_file", {"path": ".env"}).ok
+    assert not tools.execute("read_file", {"path": ".env.production"}).ok
+    assert not tools.execute("read_file", {"path": ".aws/credentials"}).ok
+    assert not tools.execute("read_file", {"path": "alias.py"}).ok
+    assert "SECRET" not in tools.execute("search_code", {"pattern": "SECRET", "glob": "*"}).content
     assert not (tmp_path.parent / "outside").exists()
+
+
+def test_restricted_edit_policy_blocks_unapproved_and_unsafe_changes(tmp_path: Path) -> None:
+    (tmp_path / "calculator.py").write_text("return a - b\n", encoding="utf-8")
+    (tmp_path / "tests.py").write_text("assert True\n", encoding="utf-8")
+    (tmp_path / "alias.py").symlink_to("calculator.py")
+    tools = ToolRegistry(tmp_path, edit_policy=EditPolicy(
+        allowed_paths=frozenset({"calculator.py", "alias.py", "new.py"}),
+        max_file_bytes=64, allow_create=False))
+    names = {item["function"]["name"] for item in tools.schemas()}
+    assert names == {"read_file", "edit_file", "search_code"}
+    assert not tools.execute("bash", {"command": "true"}).ok
+    assert not tools.execute("edit_file", {"path": "tests.py", "old_text": "assert True",
+                                               "new_text": "assert False"}).ok
+    assert not tools.execute("edit_file", {"path": "new.py", "old_text": "",
+                                               "new_text": "new"}).ok
+    assert not tools.execute("edit_file", {"path": "alias.py", "old_text": "a - b",
+                                               "new_text": "a + b"}).ok
+    assert not tools.execute("edit_file", {"path": "calculator.py", "old_text": "a - b",
+                                               "new_text": "a - b"}).ok
+    assert not tools.execute("edit_file", {"path": "calculator.py", "old_text": "a - b",
+                                               "new_text": "x" * 65}).ok
+    assert tools.execute("edit_file", {"path": "calculator.py", "old_text": "a - b",
+                                       "new_text": "a + b"}).ok
+    assert (tmp_path / "calculator.py").read_text() == "return a + b\n"
+    assert (tmp_path / "tests.py").read_text() == "assert True\n"
+    assert not (tmp_path / "new.py").exists()
 
 
 def test_context_compaction_keeps_task_and_summarizes_tools() -> None:
@@ -124,6 +168,7 @@ def test_docker_executor_restricts_network_and_resources(tmp_path: Path, monkeyp
     (tmp_path / ".env.production").write_text("SECRET=test", encoding="utf-8")
     (tmp_path / ".aws").mkdir()
     (tmp_path / ".aws" / "credentials").write_text("SECRET=test", encoding="utf-8")
+    (tmp_path / ".npmrc").write_text("TOKEN=test", encoding="utf-8")
     (tmp_path / "app.py").write_text("print(1)", encoding="utf-8")
 
     def fake_run(argv, **kwargs):
@@ -134,6 +179,7 @@ def test_docker_executor_restricts_network_and_resources(tmp_path: Path, monkeyp
             assert "app.py" in names
             assert ".env" not in names
             assert ".env.production" not in names
+            assert ".npmrc" not in names
             assert not any(name.startswith(".aws") for name in names)
         return subprocess.CompletedProcess(argv, 0, "ok", "")
 

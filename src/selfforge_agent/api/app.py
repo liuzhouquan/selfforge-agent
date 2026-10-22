@@ -1,7 +1,9 @@
 """Local web workbench and constrained review API."""
 
+import hashlib
 import os
 from pathlib import Path
+from threading import Event
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -9,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel
 from selfforge_agent.coding.models import RepairReport
@@ -36,13 +39,18 @@ from selfforge_agent.providers import (
     save_provider_settings,
 )
 from selfforge_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
+from selfforge_agent.runtime.agent import CodingAgent
+from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
+from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
+from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
 app = FastAPI(title="selfForge Agent")
 _STATIC = Path(__file__).resolve().parent / "static"
 _WORKSPACES = Path(__file__).resolve().parents[3] / ".workspaces"
+_CODING_JOBS = CodingJobManager()
 app.mount("/assets", StaticFiles(directory=_STATIC), name="assets")
 
 
@@ -90,6 +98,30 @@ class AppConfig(BaseModel):
     host_tests_enabled: bool
 
 
+class CodingTaskRequest(BaseModel):
+    repository: str = Field(min_length=1)
+    task: str = Field(default="", max_length=8_000)
+    resume_session: str | None = None
+    sandbox: Literal["docker", "host"] = "docker"
+    trust_local: bool = False
+    provider: Literal["auto", "deepseek", "openrouter"] = "auto"
+    fallback: bool = True
+    max_steps: int = Field(default=12, ge=1, le=100)
+    time_budget: float = Field(default=300, gt=0, le=1_200)
+
+
+class CodingJobResponse(BaseModel):
+    job_id: str
+    session_id: str
+    state: str
+    answer: str
+    steps: int
+    tools_used: int
+    error: str
+    cancel_requested: bool
+    trace: list[dict]
+
+
 class ProviderCheckRequest(BaseModel):
     provider: Literal["all", "deepseek", "openrouter"] = "all"
 
@@ -103,7 +135,7 @@ class ProviderSettingsRequest(BaseModel):
 
 def _require_local(client: Request) -> None:
     if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
-        raise HTTPException(status_code=403, detail="Provider settings are available only from localhost")
+        raise HTTPException(status_code=403, detail="This operation is available only from localhost")
 
 
 @app.get("/", include_in_schema=False)
@@ -122,6 +154,61 @@ def config() -> AppConfig:
         providers=provider_info(),
         host_tests_enabled=os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") == "1",
     )
+
+
+def _coding_session_root(repository: Path) -> Path:
+    fingerprint = hashlib.sha256(str(repository).encode("utf-8")).hexdigest()[:20]
+    return _WORKSPACES / "coding-sessions" / fingerprint
+
+
+@app.post("/api/code/jobs", response_model=CodingJobResponse)
+def start_coding_job(request: CodingTaskRequest, client: Request) -> dict:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    if not repository.is_dir() or not (repository / ".git").exists():
+        raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
+    if request.sandbox == "host" and (
+        os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local
+    ):
+        raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this repository")
+    if not request.task.strip() and not request.resume_session:
+        raise HTTPException(status_code=400, detail="A task or session ID is required")
+    candidates = route_providers(request.provider, request.fallback)
+    if not candidates:
+        raise HTTPException(status_code=503, detail="A configured model provider is required")
+    try:
+        session = SessionStore(_coding_session_root(repository), request.resume_session)
+        if request.resume_session:
+            session.load()
+        executor = (HostExecutor(repository, trusted=True) if request.sandbox == "host"
+                    else DockerExecutor(repository))
+        cancel = Event()
+        agent = CodingAgent(OpenAIChatAdapter(candidates), ToolRegistry(repository, executor),
+                            session, max_steps=request.max_steps,
+                            time_budget=request.time_budget, cancel=cancel)
+        job = _CODING_JOBS.start(agent, request.task, resume=bool(request.resume_session))
+        return _CODING_JOBS.get(job.job_id)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=409 if "already running" in str(exc) else 400,
+                            detail=str(exc)) from exc
+
+
+@app.get("/api/code/jobs/{job_id}", response_model=CodingJobResponse)
+def coding_job(job_id: str, client: Request) -> dict:
+    _require_local(client)
+    try:
+        return _CODING_JOBS.get(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Coding job not found") from exc
+
+
+@app.post("/api/code/jobs/{job_id}/cancel", response_model=CodingJobResponse)
+def cancel_coding_job(job_id: str, client: Request) -> dict:
+    _require_local(client)
+    try:
+        return _CODING_JOBS.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Coding job not found") from exc
 
 
 @app.post("/api/providers/check", response_model=list[ProviderStatus])

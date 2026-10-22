@@ -14,7 +14,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from selfforge_agent.runtime.execution import Executor
 
 MAX_TOOL_OUTPUT = 6_000
-PROTECTED_NAMES = {".git", ".venv", ".env", ".local", ".selfforge"}
+PROTECTED_NAMES = {
+    ".git", ".venv", ".env", ".local", ".selfforge", ".aws", ".ssh",
+    ".npmrc", ".pypirc", ".netrc",
+}
+
+
+def _protected(name: str) -> bool:
+    return name in PROTECTED_NAMES or name.startswith(".env.")
 
 
 class ToolArgs(BaseModel):
@@ -55,6 +62,17 @@ class ToolOutcome:
 
 
 @dataclass(frozen=True)
+class EditPolicy:
+    allowed_paths: frozenset[str] | None = None
+    max_file_bytes: int = 1_000_000
+    allow_create: bool = True
+
+    def __post_init__(self) -> None:
+        if self.max_file_bytes <= 0:
+            raise ValueError("Edit size limit must be positive")
+
+
+@dataclass(frozen=True)
 class ToolDefinition:
     name: str
     description: str
@@ -69,19 +87,25 @@ class ToolDefinition:
 
 
 class ToolRegistry:
-    def __init__(self, root: Path, executor: Executor) -> None:
+    def __init__(self, root: Path, executor: Executor | None = None,
+                 *, edit_policy: EditPolicy | None = None) -> None:
         self.root = root.resolve()
         if not self.root.is_dir():
             raise ValueError("Workspace must exist")
         self.executor = executor
-        self.definitions = {
-            item.name: item for item in [
-                ToolDefinition("read_file", "Read a UTF-8 file in the workspace", ReadFile, self._read),
-                ToolDefinition("edit_file", "Replace exact text or create a new file", EditFile, self._edit),
-                ToolDefinition("search_code", "Search workspace source for a literal string", SearchCode, self._search),
+        self.edit_policy = edit_policy or EditPolicy()
+        definitions = [
+            ToolDefinition("read_file", "Read a UTF-8 file in the workspace", ReadFile, self._read),
+            ToolDefinition("edit_file", "Replace exact text or create a new file", EditFile, self._edit),
+            ToolDefinition("search_code", "Search workspace source for a literal string", SearchCode, self._search),
+        ]
+        if executor is not None:
+            definitions.extend([
                 ToolDefinition("bash", "Run a bounded command in the configured executor", Bash, self._bash),
                 ToolDefinition("run_tests", "Run pytest and report its actual exit status", RunTests, self._test),
-            ]
+            ])
+        self.definitions = {
+            item.name: item for item in definitions
         }
 
     def schemas(self) -> list[dict[str, Any]]:
@@ -89,11 +113,15 @@ class ToolRegistry:
 
     def _path(self, value: str) -> Path:
         relative = Path(value)
-        if relative.is_absolute() or ".." in relative.parts or PROTECTED_NAMES.intersection(relative.parts):
+        if relative.is_absolute() or ".." in relative.parts or any(
+            _protected(part) for part in relative.parts
+        ):
             raise ValueError("Path must stay inside the workspace")
         path = (self.root / relative).resolve()
         if not path.is_relative_to(self.root) or path == self.root:
             raise ValueError("Path must stay inside the workspace")
+        if any(_protected(part) for part in path.relative_to(self.root).parts):
+            raise ValueError("Path is protected")
         return path
 
     def execute(self, name: str, arguments: dict[str, Any]) -> ToolOutcome:
@@ -118,20 +146,32 @@ class ToolRegistry:
 
     def _edit(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, EditFile)
+        policy = self.edit_policy
+        if policy.allowed_paths is not None and args.path not in policy.allowed_paths:
+            raise ValueError("Edit path is not an allowed changed source file")
         path = self._path(args.path)
+        candidate = self.root
+        for part in Path(args.path).parts:
+            candidate /= part
+            if candidate.is_symlink():
+                raise ValueError("Edit path contains a symlink")
         if path.exists():
-            if not path.is_file() or path.stat().st_size > 1_000_000 or not args.old_text:
+            if not path.is_file() or path.stat().st_size > policy.max_file_bytes or not args.old_text:
                 raise ValueError("Existing files require a nonempty exact replacement")
             original = path.read_text(encoding="utf-8")
             if original.count(args.old_text) != 1:
                 raise ValueError("old_text must occur exactly once")
             updated = original.replace(args.old_text, args.new_text, 1)
+            if updated == original:
+                raise ValueError("Edit must change the file")
         else:
+            if not policy.allow_create:
+                raise ValueError("Creating files is disabled for this workflow")
             if args.old_text:
                 raise ValueError("New files require empty old_text")
             path.parent.mkdir(parents=True, exist_ok=True)
             updated = args.new_text
-        if len(updated.encode("utf-8")) > 1_000_000:
+        if len(updated.encode("utf-8")) > policy.max_file_bytes:
             raise ValueError("Edited file exceeds size limit")
         path.write_text(updated, encoding="utf-8")
         return ToolOutcome(f"Edited {path.relative_to(self.root)}", True)
@@ -146,9 +186,9 @@ class ToolRegistry:
         hits: list[str] = []
         visited = 0
         for directory, folders, files in os.walk(base):
-            folders[:] = [name for name in folders if name not in PROTECTED_NAMES]
+            folders[:] = [name for name in folders if not _protected(name)]
             for filename in files:
-                if filename in PROTECTED_NAMES:
+                if _protected(filename):
                     continue
                 if not fnmatch.fnmatch(filename, args.glob):
                     continue
@@ -156,7 +196,10 @@ class ToolRegistry:
                 if visited > 2_000 or len(hits) >= 80:
                     break
                 path = Path(directory) / filename
-                if not path.is_file() or not path.resolve().is_relative_to(self.root) or path.stat().st_size > 128_000:
+                resolved = path.resolve()
+                if (not path.is_file() or not resolved.is_relative_to(self.root)
+                        or any(_protected(part) for part in resolved.relative_to(self.root).parts)
+                        or path.stat().st_size > 128_000):
                     continue
                 try:
                     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -172,6 +215,7 @@ class ToolRegistry:
 
     def _bash(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, Bash)
+        assert self.executor is not None
         if not args.command.strip() or len(args.command) > 2_000:
             raise ValueError("Command is empty or too long")
         result = self.executor.run(args.command, args.timeout)
@@ -180,6 +224,7 @@ class ToolRegistry:
 
     def _test(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, RunTests)
+        assert self.executor is not None
         path = self._path(args.path)
         if not path.exists():
             raise ValueError("Test path does not exist")
