@@ -8,9 +8,9 @@ from pathlib import Path
 
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel, OpenAICompatibleCodingModel
-from selfforge_agent.coding.test_generation import DifferentialTestGenerator
+from selfforge_agent.coding.test_generation import DifferentialTestGenerator, RiskTarget
 from selfforge_agent.coding.worktree import WorktreeError
-from selfforge_agent.core.git_context import GitContextError
+from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
@@ -165,6 +165,12 @@ def main() -> int:
     generate.add_argument("--trust-local-tests", action="store_true")
     generate.add_argument("--image", default="selfforge-agent-sandbox:latest")
     generate.add_argument("--timeout", type=float, default=60)
+    generate.add_argument("--time-budget", type=float, default=300,
+                          help="Overall budget for multi-candidate generation (max 600 seconds)")
+    generate.add_argument("--max-candidates", type=int, default=1, choices=[1, 2, 3],
+                          help="Try up to this many distinct tests; stop at the first differential result")
+    generate.add_argument("--finding-index", type=int,
+                          help="Zero-based index from local rule review of this Base/Head diff")
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
@@ -218,19 +224,55 @@ def main() -> int:
                 parser.error("A configured model provider is required")
             runner = TestRunner() if args.sandbox == "host" else DockerTestRunner(args.image)
             session_root = CodingWorkspaceManager().session_root(args.repo.resolve())
-            result = DifferentialTestGenerator(
+            generator = DifferentialTestGenerator(
                 OpenAIChatAdapter(candidates), runner=runner,
                 session=SessionStore(session_root),
-            ).run(args.repo.resolve(), args.base, args.head, args.task,
-                  trusted=args.trust_local_tests if args.sandbox == "host" else False,
-                  timeout=args.timeout)
+            )
+            target = None
+            if args.finding_index is not None:
+                findings = ReviewService().review_context(
+                    build_context(args.repo, args.base, args.head)).findings
+                if not findings:
+                    parser.error("No rule findings exist for this Base/Head diff")
+                if not 0 <= args.finding_index < len(findings):
+                    parser.error(f"finding index must be in 0..{len(findings) - 1}")
+                finding = findings[args.finding_index]
+                target = {
+                    "file_path": finding.file_path, "line_number": finding.line_number,
+                    "description": finding.description, "evidence": finding.evidence,
+                    "category": finding.category,
+                }
+            if args.max_candidates > 1 or target is not None:
+                batch = generator.run_many(
+                    args.repo.resolve(), args.base, args.head, args.task,
+                    max_candidates=args.max_candidates,
+                    target=RiskTarget.model_validate(target) if target else None,
+                    trusted=args.trust_local_tests if args.sandbox == "host" else False,
+                    timeout=args.timeout, time_budget=args.time_budget,
+                )
+                result = next((item for item in batch.candidates
+                               if item.candidate_index == batch.selected_candidate),
+                              batch.candidates[-1])
+            else:
+                batch = None
+                result = generator.run(
+                    args.repo.resolve(), args.base, args.head, args.task,
+                    trusted=args.trust_local_tests if args.sandbox == "host" else False,
+                    timeout=args.timeout,
+                )
         except (GitContextError, TrustRequiredError, WorktreeError, ValueError, OSError) as exc:
             parser.error(str(exc))
         if args.output:
-            args.output.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            args.output.write_text((batch or result).model_dump_json(indent=2) + "\n",
+                                   encoding="utf-8")
         if result.status == "differential" and args.test_output and result.generated_test:
             args.test_output.write_text(result.generated_test.test_code, encoding="utf-8")
-        print(f"Run {result.run_id}: {result.status} ({result.provider}/{result.model})")
+        print(f"Run {result.run_id}: {batch.status if batch else result.status} "
+              f"({len(batch.candidates) if batch else 1} candidate(s))")
+        if batch:
+            for item in batch.candidates:
+                print(f"  Candidate {item.candidate_index}: {item.status} "
+                      f"({item.provider}/{item.model})")
         if result.base_test and result.head_test:
             print(f"Base: {result.base_test.status} ({result.base_test.passed} passed); "
                   f"Head: {result.head_test.status} ({result.head_test.failed} failed)")
@@ -292,8 +334,9 @@ def main() -> int:
     print(f"Run {report.run_id}: {report.execution_status}")
     print(f"{report.base_sha[:12]}..{report.head_sha[:12]} | {len(report.context.files)} files")
     print(f"Findings: {len(report.findings)} heuristic suspected")
-    for finding in report.findings:
-        print(f"  {finding.file_path}:{finding.line_number} [{finding.severity}] {finding.description}")
+    for index, finding in enumerate(report.findings):
+        print(f"  [{index}] {finding.file_path}:{finding.line_number} "
+              f"[{finding.severity}] {finding.description}")
     for result in report.test_results:
         print(
             f"Tests: {result.status} (exit={result.exit_code}, "

@@ -863,7 +863,7 @@ button {
   border-radius:12px;
   padding:20px;
   display:grid;
-  grid-template-columns:1fr 1fr;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
   gap:25px
 }
 .repair-card h3 {
@@ -879,7 +879,8 @@ button {
 .repair-card form {
   display:flex;
   flex-direction:column;
-  gap:9px
+  gap:9px;
+  min-width:0
 }
 .repair-card form>label:first-child {
   font-size:11px;
@@ -955,7 +956,9 @@ button {
   border-radius:8px;
   background:#fff;
   color:#274b37;
-  font:inherit
+  font:inherit;
+  min-width:0;
+  max-width:100%
 }
 .provider-fallback {
   display:inline-flex;

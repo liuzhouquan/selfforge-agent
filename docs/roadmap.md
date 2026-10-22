@@ -12,8 +12,8 @@
 | 2 | Implemented | General Coding defaults to persistent reviewable Git worktrees, resumes in place, and provides safe cleanup; direct edits require explicit selection |
 | 2 | Implemented | Web Coding displays a bounded, read-only diff against the worktree base commit |
 | 2 | In Progress | Durable Web job recovery and cross-process workspace coordination |
-| 3 | Implemented (single candidate) | Targeted pytest generation with objective Base-pass/Head-assertion-fail differential evidence; CLI and Web entry points |
-| 3 | Planned | Multiple candidate tests tied to individual PR risks, risk-driven test selection, broader multi-repository evaluation, repeated-run success rates and cost/latency tracking |
+| 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
+| 3 | Planned | Automatic risk prioritization and risk-to-test causal investigation, broader multi-repository evaluation, repeated-run success rates and cost/latency tracking |
 | 4 | Planned | More precise tokenization, richer compaction, interactive approval, and richer Coding UI controls |
 
 General Coding now creates a worktree from committed HEAD by default and edits there; source-checkout changes are excluded. Worktrees persist until the user commits or reverts edits and explicitly removes the worktree. The branch remains after removal. Docker isolation applies to commands, while file tools are constrained to the selected workspace. Web Coding and PR repair default to Docker; host execution requires an explicit operator setting and per-request trust.
