@@ -32,7 +32,7 @@ uv run python examples/coding_demo.py
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、取消和会话续跑；后台任务仅在服务进程内保留 |
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
-| 针对性测试生成 | Implemented（单候选） | 模型生成一个 pytest 文件，在 Base/Head 隔离运行；仅 Base 通过且 Head 断言失败时给出差异证据 |
+| 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
 
 ## Quick Start
 
@@ -95,9 +95,15 @@ uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task '修复现有测试证明的回归' --patch-output repair.patch
 
-# 专项：生成单个候选回归测试并在 Base/Head 差异验证
+# 专项：生成回归测试并在 Base/Head 差异验证；默认只尝试 1 个
 uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
   --task 'add(2, 3) 应返回 5' --output test-evidence.json --test-output test_regression.py
+
+# 先查看规则审查输出的 0 起始风险编号，再关联风险并最多尝试 3 个候选
+uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
+uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
+  --task '验证这个风险关联的行为回归' --finding-index 0 --max-candidates 3 \
+  --output test-batch.json --test-output test_regression.py
 
 # 仅对可信 PR 显式选择主机执行
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
@@ -135,7 +141,7 @@ Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下�
 
 通用 Coding Agent 的完成判断以 `run_tests` 的实际退出码为证据；若最后一次编辑之后没有成功测试，则返回 `unverified`。`eval` 还会独立重新运行夹具测试，并检查源文件确实发生变化，不采信模型口头结论。PR Repair 则要求 Base 测试通过、Head 出现断言失败、Repaired 测试通过，才输出已验证补丁；这证明现有测试的回归已修复，尚不证明某条审查发现的因果关系。
 
-`generate-test` 生成一个 pytest 候选文件并分别在 Base/Head 执行；仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出该测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。差异结果也不能单独证明某条审查发现的因果关系。
+`generate-test` 默认生成一个 pytest 候选；`--max-candidates 2/3` 可根据上次 Base/Head 结果继续尝试，发现差异后提前停止，并跳过重复代码。多候选流程默认总时间预算为 300 秒，可用 `--time-budget` 调整，最高 600 秒。`--finding-index` 选取本地规则审查中的风险；Web 页面可选择已显示的规则或模型风险。服务端要求风险位置与实际 diff 的新增行一致。仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出被选中的测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。风险描述仍是假设，差异结果不能单独证明该风险的因果关系。
 
 ```sh
 uv run selfforge-agent eval --offline       # 确定性工具协议回归，不代表模型能力
@@ -152,4 +158,4 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-下一步优先实现多候选且与具体风险关联的测试生成、PR 风险驱动测试、跨进程任务协调及更广的客观评测。见[路线图](./docs/roadmap.md)。
+下一步优先实现自动风险排序、风险与测试的因果调查、跨进程任务协调及更广的客观评测。见[路线图](./docs/roadmap.md)。

@@ -316,6 +316,16 @@ function render(data) {
   $("model-summary").textContent = data.model_attempts.map(attemptText).join(" → ");
   $("model-summary").hidden = !data.model_attempts.length;
 
+  const risks = $("testgen-risk");
+  risks.replaceChildren(element("option", "", "不关联，手动描述行为"));
+  risks.firstChild.value = "";
+  report.findings.forEach((finding, index) => {
+    const option = element("option", "", `${finding.file_path}:${finding.line_number} · ${finding.category} · ${finding.description}`);
+    option.value = String(index);
+    risks.append(option);
+  });
+  $("testgen-task").value = "";
+
   const files = $("file-list");
   files.replaceChildren();
   pr.context.files.forEach((file, index) => {
@@ -416,18 +426,40 @@ $("testgen-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   button.textContent = "正在生成与验证…";
   try {
-    const response = await postJson("/api/github/generate-test", {
+    const riskIndex = $("testgen-risk").value;
+    const finding = riskIndex === "" ? null : current.report.findings[Number(riskIndex)];
+    const target = finding ? {
+      file_path: finding.file_path, line_number: finding.line_number,
+      description: finding.description, evidence: finding.evidence,
+      category: finding.category,
+    } : null;
+    const response = await postJson("/api/github/generate-tests", {
       url: current.pr.url, task: $("testgen-task").value.trim(),
       sandbox: $("testgen-sandbox").value,
       trust_local_tests: host && $("testgen-trust").checked,
       provider: $("testgen-provider").value,
       fallback: $("testgen-fallback").checked,
+      max_candidates: Number($("testgen-count").value), target,
     });
-    const report = response.report;
-    differentialTest = report.status === "differential" ? report.generated_test?.test_code || "" : "";
-    $("testgen-status").textContent = `状态：${report.status}`;
-    $("testgen-detail").textContent = `Base ${report.base_test?.status ?? "未运行"} (${report.base_test?.passed ?? 0} 通过) · Head ${report.head_test?.status ?? "未运行"} (${report.head_test?.failed ?? 0} 失败) · ${providerLabel(report.provider || "未调用")} / ${report.model || ""} · 轨迹 ID：${report.run_id}${report.errors.length ? ` · ${report.errors.join("; ")}` : ""}`;
-    $("testgen-code").textContent = report.generated_test?.test_code || "没有生成可运行的测试。";
+    const batch = response.batch;
+    const selected = batch.candidates.find((item) => item.candidate_index === batch.selected_candidate);
+    differentialTest = selected?.generated_test?.test_code || "";
+    $("testgen-status").textContent = `状态：${batch.status}`;
+    $("testgen-detail").textContent = `${batch.candidates.length} 次尝试 · 停止原因：${batch.stop_reason} · ${batch.target ? `关联 ${batch.target.file_path}:${batch.target.line_number}（待验证假设）` : "未关联审查风险"} · 轨迹 ID：${batch.run_id}`;
+    const list = $("testgen-candidates");
+    list.replaceChildren();
+    batch.candidates.forEach((candidate) => {
+      const item = element("button", "coding-diff-file", `候选 ${candidate.candidate_index} · ${candidate.status} · Base ${candidate.base_test?.status ?? "未运行"} · Head ${candidate.head_test?.status ?? "未运行"}`);
+      item.type = "button";
+      item.addEventListener("click", () => {
+        list.querySelectorAll("button").forEach((button) => button.classList.remove("active"));
+        item.classList.add("active");
+        $("testgen-candidate-detail").textContent = `${providerLabel(candidate.provider || "未调用")} / ${candidate.model || ""} · Base ${candidate.base_test?.passed ?? 0} 通过 · Head ${candidate.head_test?.failed ?? 0} 失败${candidate.errors.length ? ` · ${candidate.errors.join("; ")}` : ""}`;
+        $("testgen-code").textContent = candidate.generated_test?.test_code || "没有生成可运行的测试。";
+      });
+      list.append(item);
+      if (candidate === (selected || batch.candidates[batch.candidates.length - 1])) item.click();
+    });
     $("download-test").hidden = !differentialTest;
     $("testgen-result").hidden = false;
   } catch (error) {
@@ -435,6 +467,13 @@ $("testgen-form").addEventListener("submit", async (event) => {
   } finally {
     refreshTestgenAvailability();
     button.textContent = "生成并差异验证";
+  }
+});
+
+$("testgen-risk").addEventListener("change", () => {
+  const value = $("testgen-risk").value;
+  if (value !== "" && current) {
+    $("testgen-task").value = current.report.findings[Number(value)].description;
   }
 });
 

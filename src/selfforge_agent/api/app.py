@@ -15,7 +15,13 @@ from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel
 from selfforge_agent.coding.models import RepairReport
-from selfforge_agent.coding.test_generation import DifferentialTestGenerator, DifferentialTestReport
+from selfforge_agent.coding.test_generation import (
+    DifferentialTestGenerator,
+    DifferentialTestReport,
+    RiskTarget,
+    TestGenerationBatchReport,
+    validate_risk_target,
+)
 from selfforge_agent.coding.worktree import WorktreeError, git
 from selfforge_agent.core.git_context import GitContextError
 from selfforge_agent.integrations.github_pr import (
@@ -106,6 +112,17 @@ class GitHubGenerateTestRequest(GitHubRepairRequest):
 class GitHubGenerateTestResponse(BaseModel):
     checkout: CheckoutResult
     report: DifferentialTestReport
+
+
+class GitHubGenerateTestsRequest(GitHubGenerateTestRequest):
+    max_candidates: int = Field(default=2, ge=1, le=3)
+    time_budget: float = Field(default=300, gt=0, le=600)
+    target: RiskTarget | None = None
+
+
+class GitHubGenerateTestsResponse(BaseModel):
+    checkout: CheckoutResult
+    batch: TestGenerationBatchReport
 
 
 class AppConfig(BaseModel):
@@ -413,6 +430,19 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
 
 @app.post("/api/github/generate-test", response_model=GitHubGenerateTestResponse)
 def github_generate_test(request: GitHubGenerateTestRequest, client: Request) -> GitHubGenerateTestResponse:
+    pr, checkout, generator = _prepare_test_generation(request, client)
+    try:
+        report = generator.run(Path(checkout.path), checkout.diff_base_sha,
+                               pr.context.head_sha, request.task,
+                               trusted=request.trust_local_tests if request.sandbox == "host" else False,
+                               timeout=request.timeout)
+        return GitHubGenerateTestResponse(checkout=checkout, report=report)
+    except (GitContextError, WorktreeError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _prepare_test_generation(request: GitHubGenerateTestRequest, client: Request
+                             ) -> tuple[GitHubPR, CheckoutResult, DifferentialTestGenerator]:
     _require_local(client)
     if (request.sandbox == "host" and
             (os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests)):
@@ -422,17 +452,33 @@ def github_generate_test(request: GitHubGenerateTestRequest, client: Request) ->
         raise HTTPException(status_code=503, detail="A configured model provider is required")
     try:
         pr = load_pr(request.url)
+        if isinstance(request, GitHubGenerateTestsRequest):
+            validate_risk_target(pr.context, request.target)
         checkout = checkout_pr(pr.url, _WORKSPACES)
         repository = Path(checkout.path)
         runner = TestRunner() if request.sandbox == "host" else DockerTestRunner()
         session = SessionStore(_CODING_WORKSPACES.session_root(repository))
-        report = DifferentialTestGenerator(
+        generator = DifferentialTestGenerator(
             OpenAIChatAdapter(candidates), runner=runner, session=session,
-        ).run(repository, checkout.diff_base_sha, pr.context.head_sha, request.task,
-              trusted=request.trust_local_tests if request.sandbox == "host" else False,
-              timeout=request.timeout)
-        return GitHubGenerateTestResponse(checkout=checkout, report=report)
+        )
+        return pr, checkout, generator
     except (GitHubPRError, GitContextError, WorktreeError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/github/generate-tests", response_model=GitHubGenerateTestsResponse)
+def github_generate_tests(request: GitHubGenerateTestsRequest, client: Request
+                          ) -> GitHubGenerateTestsResponse:
+    pr, checkout, generator = _prepare_test_generation(request, client)
+    try:
+        batch = generator.run_many(
+            Path(checkout.path), checkout.diff_base_sha, pr.context.head_sha, request.task,
+            max_candidates=request.max_candidates, target=request.target,
+            trusted=request.trust_local_tests if request.sandbox == "host" else False,
+            timeout=request.timeout, time_budget=request.time_budget,
+        )
+        return GitHubGenerateTestsResponse(checkout=checkout, batch=batch)
+    except (GitContextError, WorktreeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

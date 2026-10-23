@@ -32,7 +32,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cancellation, and session resume; background jobs live only in the server process |
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
-| Targeted test generation | Implemented (one candidate) | Generate one pytest file and run it in isolated Base/Head worktrees; differential evidence requires Base to pass and Head to fail an assertion |
+| Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
 
 ## Quick Start
 
@@ -95,9 +95,15 @@ uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task 'Repair the regression shown by existing tests' --patch-output repair.patch
 
-# Generate one candidate regression test and check its Base/Head behavior
+# Generate a regression test and check its Base/Head behavior; one attempt by default
 uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
   --task 'add(2, 3) should return 5' --output test-evidence.json --test-output test_regression.py
+
+# Inspect zero-based rule finding numbers, then target one with up to three attempts
+uv run selfforge-agent review --repo ./your-project --base BASE --head HEAD
+uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
+  --task 'Check the behavior related to this risk' --finding-index 0 --max-candidates 3 \
+  --output test-batch.json --test-output test_regression.py
 
 # Explicit host execution for a trusted PR only
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
@@ -135,7 +141,7 @@ The Runtime separates the loop, model adapter, tools, executor, context, and ses
 
 A general coding task is `completed` only when `run_tests` succeeded after the final edit. Otherwise it is `unverified`. `eval` independently reruns fixture tests and checks for a real source change; it does not trust the model's claim. PR Repair only emits a verified patch when Base tests pass, Head fails with an assertion, and Repaired passes. That establishes repair of an existing-suite regression, not causality for an individual review finding.
 
-`generate-test` creates one pytest candidate and executes it on Base and Head. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. The test runs only in temporary worktrees until explicitly exported. A differential result does not establish causality for an individual review finding.
+`generate-test` creates one pytest candidate by default. `--max-candidates 2/3` lets it use prior Base/Head results for further attempts, stops early on a differential result, and skips duplicate code. Multi-candidate generation has a 300-second total budget by default; `--time-budget` can raise it to at most 600 seconds. `--finding-index` selects a local rule finding; the Web page can select a displayed rule or model finding. The server checks that the risk points to an actual added diff line. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. Tests run only in temporary worktrees until explicitly exported. The risk description remains a hypothesis; a differential result does not establish its cause.
 
 ```sh
 uv run selfforge-agent eval --offline       # Deterministic protocol check, not model skill
@@ -152,4 +158,4 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, build multiple test candidates linked to specific risks, PR risk-driven tests, cross-process job coordination, and broader objective evaluations. See the [roadmap](./docs/roadmap.md).
+Next, add automatic risk ordering, investigate risk-to-test causality, coordinate jobs across processes, and broaden objective evaluations. See the [roadmap](./docs/roadmap.md).
