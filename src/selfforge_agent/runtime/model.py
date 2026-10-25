@@ -44,16 +44,28 @@ class OpenAIChatAdapter:
         for index in range(self.active_index, len(self.providers)):
             provider = self.providers[index]
             try:
+                # DeepSeek thinking-mode tool turns require their original reasoning_content.
+                # Other OpenAI-compatible providers may reject this extension.
+                history = (messages if provider.name == "deepseek" else [
+                    {key: value for key, value in message.items() if key != "reasoning_content"}
+                    for message in messages
+                ])
+                payload = {"model": provider.model, "messages": history}
+                if tools:
+                    payload.update({"tools": tools, "tool_choice": "auto"})
                 response = request_json(provider.base_url.rstrip("/") + "/chat/completions",
-                                        provider.key, payload={"model": provider.model,
-                                                               "messages": messages, "tools": tools,
-                                                               "tool_choice": "auto"}, timeout=timeout,
+                                        provider.key, payload=payload, timeout=timeout,
                                         max_bytes=2_000_000)
                 choice = response["choices"][0]
                 raw = choice["message"]
                 if not isinstance(raw, dict):
                     raise TypeError("Invalid assistant message")
                 message = {"role": "assistant", "content": raw.get("content") or ""}
+                if "reasoning_content" in raw:
+                    reasoning = raw["reasoning_content"]
+                    if reasoning is not None and not isinstance(reasoning, str):
+                        raise TypeError("Invalid reasoning_content")
+                    message["reasoning_content"] = reasoning
                 if raw.get("tool_calls"):
                     message["tool_calls"] = raw["tool_calls"]
                 self.active_index = index

@@ -37,6 +37,19 @@ class SessionStore:
         self._append(self.path, {"type": "status", "status": status, "detail": detail})
         self.trace("status", status=status, detail=detail[:300])
 
+    def record_verification(self, passed: bool) -> None:
+        self._append(self.path, {"type": "verification", "passed": passed})
+
+    def verification_passed(self) -> bool:
+        if not self.path.is_file():
+            return False
+        passed = False
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            event = json.loads(line)
+            if event.get("type") == "verification":
+                passed = event["passed"] is True
+        return passed
+
     def trace(self, event: str, **fields: object) -> None:
         self._append(self.trace_path, {"event": event, **fields})
 

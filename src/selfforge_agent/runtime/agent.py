@@ -18,6 +18,8 @@ Inspect the workspace with search_code and read_file, then make small exact edit
 Run run_tests after your final edit and use its exit status as evidence. Do not claim tests passed
 unless the tool reported exit=0. Commands execute in a configured sandbox or explicitly trusted host.
 Do not access paths outside the workspace. When finished, explain edits and verification briefly.
+After a successful test run following the final edit, return the final answer when requirements
+are satisfied; avoid further tool calls without a concrete reason.
 If a tool fails, inspect its result and recover or report the failure. Never invent tool results."""
 
 
@@ -68,11 +70,15 @@ class CodingAgent:
                                         "content": "Previous run was interrupted before this tool completed"})
 
     def run(self, task: str = "", *, resume: bool = False) -> AgentResult:
+        tests_passed = False
         if resume:
             messages, _ = self.session.load()
             self._resume_pending(messages)
             if task.strip():
                 self._append(messages, {"role": "user", "content": task.strip()})
+                self.session.record_verification(False)
+            else:
+                tests_passed = self.session.verification_passed()
         else:
             if not task.strip() or self.session.path.exists():
                 raise ValueError("New sessions need a task and unused session ID")
@@ -82,7 +88,6 @@ class CodingAgent:
         self.session.record_status("running")
         deadline = time.monotonic() + self.time_budget
         tools_used = 0
-        tests_passed = False
         try:
             for step in range(1, self.max_steps + 1):
                 if self.cancel.is_set():
@@ -94,20 +99,30 @@ class CodingAgent:
                 if compacted:
                     self.session.record_compaction(messages)
                 started = time.monotonic()
-                turn = self.model.complete(messages, self.tools.schemas(), min(45, remaining))
+                final_only = step == self.max_steps and tests_passed
+                turn = self.model.complete(messages, [] if final_only else self.tools.schemas(),
+                                           min(45, remaining))
                 self.session.trace("model_call", provider=turn.provider, model=turn.model,
                                    duration_seconds=round(time.monotonic() - started, 3),
                                    usage=turn.usage.model_dump() if turn.usage else None,
                                    finish_reason=turn.finish_reason)
                 self._append(messages, turn.message)
                 calls = turn.message.get("tool_calls") or []
+                if final_only and calls:
+                    for call in calls:
+                        self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),
+                                                "content": "Tool budget exhausted; no tool was run"})
+                    return self._finish("max_steps", "", step, tools_used)
                 if not calls:
                     if turn.finish_reason not in {"stop", "end_turn"}:
                         return self._finish("failed", "", step, tools_used,
                                             f"Model stopped with {turn.finish_reason}")
+                    answer = str(turn.message.get("content") or "").strip()
+                    if not answer:
+                        return self._finish("failed", "", step, tools_used,
+                                            "Model returned an empty final answer")
                     status: Status = "completed" if tests_passed else "unverified"
-                    return self._finish(status, str(turn.message.get("content") or ""),
-                                        step, tools_used)
+                    return self._finish(status, answer, step, tools_used)
                 for call in calls:
                     if self.cancel.is_set():
                         return self._finish("cancelled", "", step, tools_used)
@@ -129,8 +144,10 @@ class CodingAgent:
                     tools_used += 1
                     if name == "edit_file" and outcome.ok:
                         tests_passed = False
-                    elif name == "run_tests" and outcome.ok:
-                        tests_passed = True
+                        self.session.record_verification(False)
+                    elif name == "run_tests":
+                        tests_passed = outcome.ok
+                        self.session.record_verification(tests_passed)
                     self.session.trace("tool", name=name, ok=outcome.ok,
                                        duration_seconds=round(outcome.elapsed_seconds, 3))
                     self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),

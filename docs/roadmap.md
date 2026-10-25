@@ -14,7 +14,7 @@
 | 2 | Implemented | Web Coding displays a bounded, read-only diff against the worktree base commit |
 | 2 | Implemented | Durable Web job records and history, explicit resume after server interruption, cross-process workspace locks and cancellation markers; active-job limit remains per process |
 | 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
-| 3 | In Progress | One fixed PocketFlow real-repository pilot scored 1/3 across three runs; investigate excess tool turns after passing tests and a DeepSeek HTTP 400, then expand to multiple repositories and dependency-ready images |
+| 3 | In Progress | DeepSeek thinking-mode message replay and last-step finalization implemented; the fixed PocketFlow pilot scored 3/3 in a later DeepSeek-only three-repeat run, after an earlier 1/3 run with fallback configured. Expand to multiple repositories and dependency-ready images; verify reliability beyond one task |
 | 3 | Planned | Automatic PR risk prioritization and risk-to-test causal investigation; calibrated monetary cost reporting when model prices are available |
 | 4 | Planned | More precise tokenization, richer compaction, interactive approval, and richer Coding UI controls |
 

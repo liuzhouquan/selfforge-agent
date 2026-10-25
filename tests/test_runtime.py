@@ -86,6 +86,144 @@ def test_session_can_resume_after_step_limit(tmp_path: Path) -> None:
     assert second.session_id == first.session_id
 
 
+def test_resume_preserves_successful_test_evidence(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    class Model:
+        def __init__(self):
+            self.turns = [_call("edit_file", {"path": "calculator.py",
+                                             "old_text": "return a - b",
+                                             "new_text": "return a + b"}, 1),
+                          _call("run_tests", {"path": "tests"}, 2),
+                          ModelTurn({"role": "assistant", "content": "Fixed and verified."},
+                                    "stop", "fixture", "scripted", None)]
+            self.tools_seen = []
+
+        def complete(self, _messages, tools, _timeout):
+            self.tools_seen.append(tools)
+            return self.turns.pop(0)
+
+    model = Model()
+    session = SessionStore(tmp_path)
+    registry = ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True))
+    first = CodingAgent(model, registry, session, max_steps=2).run("Fix add")
+    assert first.status == "max_steps"
+    resumed = CodingAgent(model, registry, SessionStore(tmp_path, first.session_id),
+                          max_steps=1).run(resume=True)
+    assert resumed.status == "completed"
+    assert model.tools_seen[-1] == []
+
+
+def test_new_task_on_resume_needs_fresh_test_evidence(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    (tmp_path / "calculator.py").write_text("def add(a, b):\n    return a + b\n")
+
+    class Model:
+        def __init__(self):
+            self.turns = [_call("run_tests", {"path": "tests"}, 1),
+                          ModelTurn({"role": "assistant", "content": "New task answered."},
+                                    "stop", "fixture", "scripted", None)]
+
+        def complete(self, _messages, _tools, _timeout):
+            return self.turns.pop(0)
+
+    model = Model()
+    session = SessionStore(tmp_path)
+    registry = ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True))
+    first = CodingAgent(model, registry, session, max_steps=1).run("Check add")
+    assert first.status == "max_steps" and session.verification_passed()
+    second = CodingAgent(model, registry, SessionStore(tmp_path, first.session_id),
+                         max_steps=1).run("Also do another task", resume=True)
+    assert second.status == "unverified"
+    assert not session.verification_passed()
+
+
+def test_last_step_after_success_requests_final_answer_without_tools(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    class Model:
+        def __init__(self):
+            self.turns = [_call("run_tests", {"path": "tests"}, 1),
+                          ModelTurn({"role": "assistant", "content": "Verified."},
+                                    "stop", "fixture", "scripted", None)]
+            self.tools_seen = []
+
+        def complete(self, _messages, tools, _timeout):
+            self.tools_seen.append(tools)
+            return self.turns.pop(0)
+
+    (tmp_path / "calculator.py").write_text("def add(a, b):\n    return a + b\n")
+    model = Model()
+    result = CodingAgent(model, ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True)),
+                         SessionStore(tmp_path), max_steps=2).run("Check add")
+    assert result.status == "completed"
+    assert len(model.tools_seen[0]) > 0
+    assert model.tools_seen[1] == []
+
+
+def test_last_step_rejects_unrequested_tool_call(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    class Model:
+        def __init__(self):
+            self.turns = [_call("run_tests", {"path": "tests"}, 1),
+                          _call("edit_file", {"path": "calculator.py",
+                                              "old_text": "return a + b",
+                                              "new_text": "return a - b"}, 2)]
+            self.tools_seen = []
+
+        def complete(self, _messages, tools, _timeout):
+            self.tools_seen.append(tools)
+            return self.turns.pop(0)
+
+    (tmp_path / "calculator.py").write_text("def add(a, b):\n    return a + b\n")
+    model = Model()
+    session = SessionStore(tmp_path)
+    result = CodingAgent(model, ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True)),
+                         session, max_steps=2).run("Check add")
+    assert result.status == "max_steps"
+    assert result.tools_used == 1
+    assert model.tools_seen[1] == []
+    assert "return a + b" in (tmp_path / "calculator.py").read_text()
+    assert session.load()[0][-1]["content"].startswith("Tool budget exhausted")
+
+
+def test_empty_final_answer_cannot_complete_verified_run(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    (tmp_path / "calculator.py").write_text("def add(a, b):\n    return a + b\n")
+
+    class Model:
+        def __init__(self):
+            self.turns = [_call("run_tests", {"path": "tests"}, 1),
+                          ModelTurn({"role": "assistant", "content": " "},
+                                    "stop", "fixture", "scripted", None)]
+
+        def complete(self, _messages, _tools, _timeout):
+            return self.turns.pop(0)
+
+    result = CodingAgent(Model(), ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True)),
+                         SessionStore(tmp_path), max_steps=2).run("Check add")
+    assert result.status == "failed"
+    assert "empty final answer" in result.error
+
+
+def test_failed_test_revokes_prior_success(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    class Model:
+        def __init__(self):
+            self.turns = [_call("run_tests", {"path": "tests"}, 1),
+                          _call("run_tests", {"path": "missing"}, 2),
+                          ModelTurn({"role": "assistant", "content": "Done."},
+                                    "stop", "fixture", "scripted", None)]
+
+        def complete(self, _messages, _tools, _timeout):
+            return self.turns.pop(0)
+
+    (tmp_path / "calculator.py").write_text("def add(a, b):\n    return a + b\n")
+    session = SessionStore(tmp_path)
+    result = CodingAgent(Model(), ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True)),
+                         session, max_steps=3).run("Check add")
+    assert result.status == "unverified"
+    assert not session.verification_passed()
+
+
 def test_trace_tail_ignores_incomplete_concurrent_event(tmp_path: Path) -> None:
     session = SessionStore(tmp_path)
     session.trace("first")
@@ -157,9 +295,17 @@ def test_context_compaction_keeps_task_and_summarizes_tools() -> None:
     compacted, changed = manager.compact(messages)
     assert changed
     assert compacted[0]["content"] == "Keep tests unchanged"
-    assert compacted[1]["content"] == "Fix calculator"
-    assert "read_file" in compacted[2]["content"]
+    assert compacted[1]["role"] == "system"
+    assert "read_file" in compacted[1]["content"]
+    assert compacted[2]["content"] == "Fix calculator"
     assert manager.estimate(compacted) < 500
+    compacted.extend([{"role": "assistant", "content": "More work"},
+                      {"role": "tool", "content": "y" * 4_000}])
+    again, changed = manager.compact(compacted)
+    assert changed
+    assert again[1]["role"] == "system"
+    assert again[1]["content"].startswith("Earlier steps (compressed")
+    assert again[2]["content"] == "Fix calculator"
 
 
 def test_docker_executor_restricts_network_and_resources(tmp_path: Path, monkeypatch) -> None:
@@ -233,7 +379,7 @@ def test_native_model_adapter_falls_back_and_keeps_tool_call(monkeypatch) -> Non
     seen = []
 
     def fake_request(url, key, **kwargs):
-        seen.append((url, key, kwargs["payload"]["tools"]))
+        seen.append((url, key, kwargs["payload"]))
         if key == "test-a":
             raise ProviderHTTPError("unavailable", status_code=503)
         return {"choices": [{"finish_reason": "tool_calls", "message": {
@@ -241,11 +387,46 @@ def test_native_model_adapter_falls_back_and_keeps_tool_call(monkeypatch) -> Non
                 "name": "read_file", "arguments": '{"path":"app.py"}'}}]}}]}
 
     monkeypatch.setattr("selfforge_agent.runtime.model.request_json", fake_request)
-    turn = OpenAIChatAdapter(providers).complete([{"role": "user", "content": "task"}],
+    turn = OpenAIChatAdapter(providers).complete([{"role": "assistant", "content": "",
+                                                   "reasoning_content": "private reasoning"},
+                                                  {"role": "user", "content": "task"}],
                                                   [{"type": "function"}], 5)
     assert turn.provider == "openrouter"
     assert turn.message["tool_calls"][0]["function"]["name"] == "read_file"
     assert len(seen) == 2
+    assert seen[0][2]["messages"][0]["reasoning_content"] == "private reasoning"
+    assert "reasoning_content" not in seen[1][2]["messages"][0]
+
+
+def test_deepseek_reasoning_survives_tool_round_trip_and_session_resume(
+    tmp_path: Path, monkeypatch
+) -> None:
+    provider = ProviderConfig(name="deepseek", label="DeepSeek", key="test", model="a",
+                              base_url="https://example.com/a", status_url="")
+    seen = []
+
+    def fake_request(_url, _key, **kwargs):
+        seen.append(kwargs["payload"])
+        if len(seen) == 1:
+            return {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": "", "reasoning_content": "think privately",
+                "tool_calls": [{"id": "1", "type": "function", "function": {
+                    "name": "read_file", "arguments": '{"path":"app.py"}'}}]}}]}
+        return {"choices": [{"finish_reason": "stop", "message": {
+            "content": "Done", "reasoning_content": "conclude privately"}}]}
+
+    monkeypatch.setattr("selfforge_agent.runtime.model.request_json", fake_request)
+    adapter = OpenAIChatAdapter([provider])
+    first = adapter.complete([{"role": "user", "content": "task"}], [{"type": "function"}], 5)
+    session = SessionStore(tmp_path)
+    session.record_message(first.message)
+    session.record_message({"role": "tool", "tool_call_id": "1", "content": "source"})
+    history, _ = SessionStore(tmp_path, session.session_id).load()
+    second = adapter.complete(history, [], 5)
+    assert first.message["reasoning_content"] == "think privately"
+    assert seen[1]["messages"][0]["reasoning_content"] == "think privately"
+    assert "tools" not in seen[1] and "tool_choice" not in seen[1]
+    assert second.message["content"] == "Done"
 
 
 def test_docker_timeout_forces_container_cleanup(tmp_path: Path, monkeypatch) -> None:
