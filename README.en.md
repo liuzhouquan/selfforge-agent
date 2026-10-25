@@ -33,7 +33,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
-| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, unseen tests, failing-baseline check, repeated runs and failure categories; no real multi-repository task set yet |
+| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, unseen tests, per-case pinned Docker images, repeated runs and failure categories; one real-repository pilot exists, but no multi-repository acceptance set yet |
 
 ## Quick Start
 
@@ -155,9 +155,9 @@ uv run pytest
 uv run ruff check .
 ```
 
-`eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed source files change, the Agent verifies its edits, and an unseen test passes independently. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) for the manifest, safety boundary, and reproduction steps.
+`eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed files change, the Agent verifies its edits, and an unseen test passes independently. Cases can select their own Docker image; its ID is pinned before evaluation. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) and [PocketFlow real-repository pilot](./benchmark/real-pilot/README.md) for reproduction steps.
 
-On 2026-10-17, one local run produced **2/2** for the offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. The fixtures cover addition and name normalization; success requires a changed source file and an independent pytest exit code of zero. This tiny sample is not a general coding-agent benchmark. See [evaluation notes](./docs/evaluation.md) for reproduction and limits. There are no repeated live results on real repositories yet.
+On 2026-10-17, one local run produced **2/2** for the offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. The fixtures cover addition and name normalization. A fixed-manifest, three-repeat PocketFlow pilot on 2026-10-25 scored **1/3**: all three runs passed 6/6 unseen checks, but two reached the Agent's 12-step cap and failed the complete-run gate. See [evaluation notes](./docs/evaluation.md) for the exploratory runs and limits. There are no repeated live results across multiple real repositories yet.
 
 ## Specialized Workflows: PR Review
 
@@ -165,4 +165,4 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, build a task set from real repositories, then use its failures to improve project dependency handling, test strategy, and cross-process job coordination. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).
+Next, investigate extra tool turns after passing tests and the observed model HTTP 400, then expand the real-repository task set and dependency-ready environments. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).

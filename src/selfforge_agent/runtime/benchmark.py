@@ -1,6 +1,7 @@
 """Repeatable Coding Agent evaluation against pinned local Git repositories."""
 
 import hashlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,7 @@ class BenchmarkCase(BaseModel):
     allowed_changes: list[str] = Field(min_length=1)
     holdout_test: str = Field(min_length=1)
     agent_test_path: str = "tests"
+    image: str | None = None
 
 
 class BenchmarkSuite(BaseModel):
@@ -67,6 +69,7 @@ class BenchmarkOutcome:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    agent_error_code: str = ""
 
 
 def _git(*args: str, cwd: Path | None = None, timeout: float = 120) -> str:
@@ -111,6 +114,8 @@ def load_suite(manifest: Path) -> tuple[BenchmarkSuite, list[PreparedCase]]:
         if revision != case.revision:
             raise ValueError(f"Case {case.id} revision is not a commit")
         _safe_relative(case.agent_test_path)
+        if case.image is not None and (not case.image or any(char.isspace() for char in case.image)):
+            raise ValueError(f"Case {case.id} has an invalid Docker image reference")
         for changed in case.allowed_changes:
             _safe_relative(changed)
         if len(set(case.allowed_changes)) != len(case.allowed_changes):
@@ -163,6 +168,18 @@ def _reason(agent_status: str, changed: list[str], allowed: set[str],
     if holdout_status != "passed" or passed == 0:
         return "holdout_environment_error"
     return "passed"
+
+
+def _agent_error_code(error: str) -> str:
+    """Keep provider/runtime failure categories without publishing response bodies."""
+    if not error:
+        return "unknown"
+    if error.startswith("All providers failed:"):
+        statuses = re.findall(r"Provider returned HTTP (\d{3})", error)
+        return f"provider_http_{statuses[-1]}" if statuses else "provider_unavailable"
+    if error.startswith("Model stopped with "):
+        return "model_finish_reason"
+    return "runtime_error"
 
 
 def _checkout(case: PreparedCase, workspace: Path) -> None:
@@ -229,6 +246,7 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     prompt = completion = total = passed = failed = errors = 0
     exit_code = None
     reason = "harness_error"
+    agent_error_code = ""
     try:
         with tempfile.TemporaryDirectory(prefix="selfforge-benchmark-") as temp:
             root = Path(temp)
@@ -243,6 +261,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                     + case.spec.agent_test_path + " after the final edit.")
             result = agent.run(task)
             agent_status = result.status
+            if result.status == "failed":
+                agent_error_code = _agent_error_code(result.error)
             provider, model, prompt, completion, total = _usage(session)
             if _git("rev-parse", "HEAD", cwd=workspace).strip() != case.spec.revision:
                 reason = "revision_changed"
@@ -263,7 +283,7 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
-                            prompt, completion, total)
+                            prompt, completion, total, agent_error_code)
 
 
 def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], ChatModel], *,
@@ -279,16 +299,28 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
     if sandbox == "host" and not trusted_host:
         raise ValueError("Host benchmark execution requires explicit trust")
     suite, cases = load_suite(manifest)
-    image_id = _image_id(image) if sandbox == "docker" else None
+    images = {}
+    if sandbox == "docker":
+        resolved_images = {}
+        for case in cases:
+            reference = case.spec.image or image
+            if reference not in resolved_images:
+                resolved_images[reference] = _image_id(reference)
+            images[case.spec.id] = {"reference": reference, "id": resolved_images[reference]}
     baselines = {case.spec.id: _baseline(case, sandbox=sandbox, trusted_host=trusted_host,
-                                         image=image, test_timeout=test_timeout)
+                                         image=images[case.spec.id]["id"] if images else image,
+                                         test_timeout=test_timeout)
                  for case in cases}
     outcomes = [_run_once(case, repeat, model_factory, sandbox=sandbox,
-                          trusted_host=trusted_host, image=image, max_steps=max_steps,
+                          trusted_host=trusted_host,
+                          image=images[case.spec.id]["id"] if images else image,
+                          max_steps=max_steps,
                           time_budget=time_budget, test_timeout=test_timeout)
                 for case in cases for repeat in range(1, repeats + 1)]
     successes = sum(item.success for item in outcomes)
     counts = Counter(item.reason for item in outcomes if not item.success)
+    agent_errors = Counter(item.agent_error_code for item in outcomes if item.agent_error_code)
+    image_ids = {item["id"] for item in images.values()}
     by_case = {case.spec.id: {
         "successes": sum(item.success for item in outcomes if item.case == case.spec.id),
         "runs": repeats,
@@ -299,9 +331,11 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
         "cases": len(suite.cases), "repeats": repeats, "runs": len(outcomes),
         "successes": successes, "success_rate": successes / len(outcomes),
         "sandbox": sandbox, "image": image if sandbox == "docker" else None,
-        "image_id": image_id,
+        "image_id": next(iter(image_ids)) if len(image_ids) == 1 else None,
+        "images": images,
         "baselines": baselines,
-        "failure_reasons": dict(sorted(counts.items())), "by_case": by_case,
+        "failure_reasons": dict(sorted(counts.items())),
+        "agent_error_codes": dict(sorted(agent_errors.items())), "by_case": by_case,
         "total_duration_seconds": round(sum(item.duration_seconds for item in outcomes), 3),
         "prompt_tokens": sum(item.prompt_tokens for item in outcomes),
         "completion_tokens": sum(item.completion_tokens for item in outcomes),

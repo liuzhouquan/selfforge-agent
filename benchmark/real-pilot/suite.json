@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "pocketflow_invalid_retries",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, Node(max_retries=0) and AsyncNode(max_retries=0) silently skip execution. Reject zero or negative max_retries at construction with a ValueError mentioning max_retries. Preserve behavior for positive values. Add a regression test in tests/test_max_retries_validation.py and run the repository tests.",
+      "allowed_changes": ["pocketflow/__init__.py", "tests/test_max_retries_validation.py"],
+      "holdout_test": "holdouts/test_pocketflow_invalid_retries.py",
+      "agent_test_path": "tests"
+    }
+  ]
+}

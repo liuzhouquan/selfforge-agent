@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from selfforge_agent.providers import TokenUsage
-from selfforge_agent.runtime.benchmark import BenchmarkCase, evaluate_suite, load_suite
+from selfforge_agent.runtime import benchmark
+from selfforge_agent.runtime.benchmark import (
+    BenchmarkCase,
+    BenchmarkOutcome,
+    evaluate_suite,
+    load_suite,
+)
 from selfforge_agent.runtime.model import ModelTurn
 
 
@@ -130,6 +136,14 @@ def test_claims_and_visible_test_edits_cannot_pass_holdout(tmp_path: Path) -> No
     unavailable = evaluate_suite(manifest, lambda _case: BrokenProvider(),
                                  sandbox="host", trusted_host=True)
     assert unavailable["failure_reasons"] == {"agent_failed": 1}
+    assert unavailable["agent_error_codes"] == {"runtime_error": 1}
+
+
+def test_provider_failure_code_omits_raw_error_text() -> None:
+    assert benchmark._agent_error_code(
+        "All providers failed: deepseek: Provider returned HTTP 429; token=secret"
+    ) == "provider_http_429"
+    assert benchmark._agent_error_code("Model stopped with length") == "model_finish_reason"
 
 
 def test_manifest_requires_pinned_commit_and_external_holdout(tmp_path: Path) -> None:
@@ -160,6 +174,56 @@ def test_suite_rejects_holdout_that_already_passes_baseline(tmp_path: Path) -> N
     )
     with pytest.raises(ValueError, match="failing assertion on its pinned baseline"):
         evaluate_suite(manifest, ScriptedModel, sandbox="host", trusted_host=True)
+
+
+def test_per_case_docker_images_are_pinned_before_all_runs(tmp_path: Path,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest, _ = _manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["cases"][1]["image"] = "custom-project:one"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    resolved = {"default-project:one": "sha256:default", "custom-project:one": "sha256:custom"}
+    inspected = []
+    used = []
+
+    def image_id(reference: str) -> str:
+        inspected.append(reference)
+        return resolved[reference]
+
+    def baseline(case, *, image, **_kwargs):
+        used.append((case.spec.id, image, "baseline"))
+        return {"status": "failed"}
+
+    def run_once(case, repeat, _factory, *, image, **_kwargs):
+        used.append((case.spec.id, image, repeat))
+        return BenchmarkOutcome(case.spec.id, repeat, True, "passed", "completed", ["app.py"],
+                                "passed", 1, 0, 0, 0, 0.1, "fixture", "scripted", 0, 0, 0)
+
+    monkeypatch.setattr(benchmark, "_image_id", image_id)
+    monkeypatch.setattr(benchmark, "_baseline", baseline)
+    monkeypatch.setattr(benchmark, "_run_once", run_once)
+    report = evaluate_suite(manifest, ScriptedModel, repeats=2, image="default-project:one")
+    assert inspected == ["default-project:one", "custom-project:one"]
+    assert used == [
+        ("addition", "sha256:default", "baseline"),
+        ("normalization", "sha256:custom", "baseline"),
+        ("addition", "sha256:default", 1),
+        ("addition", "sha256:default", 2),
+        ("normalization", "sha256:custom", 1),
+        ("normalization", "sha256:custom", 2),
+    ]
+    assert report["image_id"] is None
+    assert report["images"]["normalization"] == {
+        "reference": "custom-project:one", "id": "sha256:custom"}
+
+
+def test_manifest_rejects_invalid_case_image(tmp_path: Path) -> None:
+    manifest, _ = _manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["cases"][0]["image"] = "example image"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid Docker image"):
+        load_suite(manifest)
 
 
 @pytest.mark.integration
