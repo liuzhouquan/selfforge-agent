@@ -4,7 +4,7 @@
 
 具备完整基础 Harness、以自主编程与测试验证为特色的 Python Coding Agent。
 
-[简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [路线图](./docs/roadmap.md)
+[简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [产品边界](./docs/product-scope.md) · [路线图](./docs/roadmap.md)
 
 ```text
 用户任务 → 原生 Tool Calling → 搜索与阅读代码 → 精确修改 → 运行 pytest → 检查退出码与轨迹
@@ -33,6 +33,7 @@ uv run python examples/coding_demo.py
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
+| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立隐藏测试、基线失败检查、多次运行与失败分类；真实多仓库任务集尚未建立 |
 
 ## Quick Start
 
@@ -146,11 +147,17 @@ Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下�
 ```sh
 uv run selfforge-agent eval --offline       # 确定性工具协议回归，不代表模型能力
 uv run selfforge-agent eval --provider deepseek  # 真正调用模型，运行生成夹具
+uv run python examples/benchmark_demo.py    # 重复评测协议演示；合成夹具
+# 在固定真实仓库任务集上重复运行；具体 manifest 格式见评测文档
+uv run selfforge-agent eval-suite --manifest ./benchmark/suite.json \
+  --repeats 3 --provider deepseek --output ./benchmark-report.json
 uv run pytest
 uv run ruff check .
 ```
 
-2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。两道夹具分别修复加法和姓名规范化，成功条件是文件已修改且独立 pytest 退出码为 0。样本很小，不构成通用 Coding Agent 基准；详情和复现限制见[评测记录](./docs/evaluation.md)。
+`eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的代码文件发生修改、Agent 测试成功且独立隐藏测试通过才计成功。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界和复现方法见[重复评测说明](./docs/benchmark.md)。
+
+2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。两道夹具分别修复加法和姓名规范化，成功条件是文件已修改且独立 pytest 退出码为 0。样本很小，不构成通用 Coding Agent 基准；详情和复现限制见[评测记录](./docs/evaluation.md)。目前尚无真实多仓库重复评测成绩。
 
 ## Specialized Workflows：PR Review
 
@@ -158,4 +165,4 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-下一步优先实现自动风险排序、风险与测试的因果调查、跨进程任务协调及更广的客观评测。见[路线图](./docs/roadmap.md)。
+下一步优先建立真实多仓库任务集，针对评测失败补项目依赖环境、测试策略与跨进程任务协调。见[产品边界与验收](./docs/product-scope.md)和[路线图](./docs/roadmap.md)。

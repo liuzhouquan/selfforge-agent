@@ -13,6 +13,7 @@ from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
+from selfforge_agent.runtime.benchmark import evaluate_suite
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
@@ -128,6 +129,20 @@ def main() -> int:
     evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
     evaluation.add_argument("--max-steps", type=int, default=10)
     evaluation.add_argument("--time-budget", type=float, default=180)
+    suite = subcommands.add_parser("eval-suite", help="Repeat pinned Git tasks with unseen tests")
+    suite.add_argument("--manifest", type=Path, required=True)
+    suite.add_argument("--repeats", type=int, default=1)
+    suite.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    suite.add_argument("--no-fallback", action="store_true")
+    suite.add_argument("--model")
+    suite.add_argument("--base-url")
+    suite.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    suite.add_argument("--trust-local", action="store_true", help="Required for host execution")
+    suite.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    suite.add_argument("--max-steps", type=int, default=12)
+    suite.add_argument("--time-budget", type=float, default=300)
+    suite.add_argument("--test-timeout", type=float, default=60)
+    suite.add_argument("--output", type=Path, help="Write aggregate JSON report")
     review = subcommands.add_parser("review", help="Review a local Git comparison")
     review.add_argument("--repo", type=Path, required=True)
     review.add_argument("--base", required=True)
@@ -217,6 +232,31 @@ def main() -> int:
             parser.error(str(exc))
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["successes"] == report["tasks"] else 1
+    if args.command == "eval-suite":
+        try:
+            if args.model or args.base_url:
+                if not args.model or not args.base_url:
+                    parser.error("Custom model requires both --model and --base-url")
+                providers = [ProviderConfig(
+                    name="custom", label="Custom", model=args.model, base_url=args.base_url,
+                    key=os.environ.get("SELFFORGE_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
+                    status_url="",
+                )]
+            else:
+                providers = route_providers(args.provider, not args.no_fallback)
+            report = evaluate_suite(
+                args.manifest, lambda _case: OpenAIChatAdapter(providers),
+                repeats=args.repeats, sandbox=args.sandbox, trusted_host=args.trust_local,
+                image=args.image, max_steps=args.max_steps, time_budget=args.time_budget,
+                test_timeout=args.test_timeout,
+            )
+        except (ValueError, RuntimeError, OSError) as exc:
+            parser.error(str(exc))
+        rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        if args.output:
+            args.output.write_text(rendered, encoding="utf-8")
+        print(rendered, end="")
+        return 0 if report["successes"] == report["runs"] else 1
     if args.command == "generate-test":
         try:
             candidates = route_providers(args.provider, not args.no_fallback)

@@ -4,7 +4,7 @@
 
 A Python coding agent with a complete foundational harness, focused on autonomous coding and test-backed verification.
 
-[简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Roadmap](./docs/roadmap.md)
+[简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Product scope](./docs/product-scope.en.md) · [Roadmap](./docs/roadmap.md)
 
 ```text
 User task → native tool calling → search/read code → exact edits → pytest → exit-code evidence and trace
@@ -33,6 +33,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
+| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, unseen tests, failing-baseline check, repeated runs and failure categories; no real multi-repository task set yet |
 
 ## Quick Start
 
@@ -146,11 +147,17 @@ A general coding task is `completed` only when `run_tests` succeeded after the f
 ```sh
 uv run selfforge-agent eval --offline       # Deterministic protocol check, not model skill
 uv run selfforge-agent eval --provider deepseek  # Live model on generated fixtures
+uv run python examples/benchmark_demo.py    # Repeated-evaluation protocol, synthetic fixture
+# Run repeated live evaluations on a pinned task suite; see the benchmark document for the manifest
+uv run selfforge-agent eval-suite --manifest ./benchmark/suite.json \
+  --repeats 3 --provider deepseek --output ./benchmark-report.json
 uv run pytest
 uv run ruff check .
 ```
 
-On 2026-10-17, one local run produced **2/2** for the offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. The fixtures cover addition and name normalization; success requires a changed source file and an independent pytest exit code of zero. This tiny sample is not a general coding-agent benchmark. See [evaluation notes](./docs/evaluation.md) for reproduction and limits.
+`eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed source files change, the Agent verifies its edits, and an unseen test passes independently. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) for the manifest, safety boundary, and reproduction steps.
+
+On 2026-10-17, one local run produced **2/2** for the offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. The fixtures cover addition and name normalization; success requires a changed source file and an independent pytest exit code of zero. This tiny sample is not a general coding-agent benchmark. See [evaluation notes](./docs/evaluation.md) for reproduction and limits. There are no repeated live results on real repositories yet.
 
 ## Specialized Workflows: PR Review
 
@@ -158,4 +165,4 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, add automatic risk ordering, investigate risk-to-test causality, coordinate jobs across processes, and broaden objective evaluations. See the [roadmap](./docs/roadmap.md).
+Next, build a task set from real repositories, then use its failures to improve project dependency handling, test strategy, and cross-process job coordination. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).
