@@ -12,7 +12,7 @@
 | 2 | Implemented | Local Web Coding tasks use the common Runtime with status, recent traces, cancellation, and session resume |
 | 2 | Implemented | General Coding defaults to persistent reviewable Git worktrees, resumes in place, and provides safe cleanup; direct edits require explicit selection |
 | 2 | Implemented | Web Coding displays a bounded, read-only diff against the worktree base commit |
-| 2 | In Progress | Durable Web job recovery and cross-process workspace coordination |
+| 2 | Implemented | Durable Web job records and history, explicit resume after server interruption, cross-process workspace locks and cancellation markers; active-job limit remains per process |
 | 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
 | 3 | In Progress | Build a real multi-repository task set and publish repeated live success/failure results; improve dependency-ready Docker images and test selection based on observed failures |
 | 3 | Planned | Automatic PR risk prioritization and risk-to-test causal investigation; calibrated monetary cost reporting when model prices are available |

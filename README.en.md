@@ -29,7 +29,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Context management | Implemented | Truncated tool output, approximate token budget, deterministic summary retaining task constraints |
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Uses actual pytest exit status; tasks without test evidence are `unverified` |
-| Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cancellation, and session resume; background jobs live only in the server process |
+| Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cross-process cancellation, job history, and session resume; interrupted work needs an explicit resume |
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
@@ -60,7 +60,7 @@ uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000
 # Open http://127.0.0.1:8000, select Docker, and start the Coding Agent
 ```
 
-The page shows job status, the worktree path, a bounded diff against the base commit, and recent JSONL trace events, and can cancel or resume by session ID. It can remove a worktree once there are no uncommitted or untracked files; the branch remains. New sessions live under `selfforge-agent/sessions/` in the user data directory. To resume an older direct-edit session, select direct mode and enter its ID. Sessions can resume after a server restart, but the state of an active background job is process-local. Direct source-checkout edits require per-request confirmation. Web host execution also requires `SELFFORGE_ENABLE_HOST_TESTS=1` and explicit trust on each request.
+The page shows job status, the worktree path, a bounded diff against the base commit, and recent JSONL trace events. “Load history” restores jobs by repository; jobs can be cancelled or resumed by session ID. It can remove a worktree once there are no uncommitted or untracked files; the branch remains. New sessions live under `selfforge-agent/sessions/` and job metadata under `selfforge-agent/jobs/` in the user data directory, outside the target repository. To resume an older direct-edit session, select direct mode and enter its ID. After a server crash, a saved session is marked `interrupted` and can be resumed manually; a task that never saved a session must be started again. Cross-process file locks prevent concurrent Web edits or cleanup of one workspace. Cancellation takes effect between model and tool calls. Direct source-checkout edits require per-request confirmation. Web host execution also requires `SELFFORGE_ENABLE_HOST_TESTS=1` and explicit trust on each request.
 
 ## CLI
 

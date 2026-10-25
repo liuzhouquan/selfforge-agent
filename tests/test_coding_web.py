@@ -74,7 +74,7 @@ def test_web_coding_can_resume_and_verify_on_host(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(api_module, "_WORKSPACES", tmp_path / "app-workspaces")
     monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
                         CodingWorkspaceManager(tmp_path / "coding-worktrees"))
-    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager())
+    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager(root=tmp_path / "jobs"))
     monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: model)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("SELFFORGE_ENABLE_HOST_TESTS", "1")
@@ -150,7 +150,7 @@ def test_web_direct_mode_requires_confirmation_and_edits_source(monkeypatch: pyt
                                                                 tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     monkeypatch.setattr(api_module, "_WORKSPACES", tmp_path / "app-workspaces")
-    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager())
+    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager(root=tmp_path / "jobs"))
     monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: ScriptedModel())
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("SELFFORGE_ENABLE_HOST_TESTS", "1")
@@ -170,7 +170,7 @@ def test_web_direct_mode_requires_confirmation_and_edits_source(monkeypatch: pyt
 def test_web_coding_cancellation_and_workspace_lock(monkeypatch: pytest.MonkeyPatch,
                                                     tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    manager = CodingJobManager()
+    manager = CodingJobManager(root=tmp_path / "jobs")
     monkeypatch.setattr(api_module, "_CODING_JOBS", manager)
     started = Event()
 
@@ -200,7 +200,7 @@ def test_web_coding_cancellation_and_workspace_lock(monkeypatch: pytest.MonkeyPa
 def test_rejected_web_job_rolls_back_new_worktree(monkeypatch: pytest.MonkeyPatch,
                                                  tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    manager = CodingJobManager(max_active=1)
+    manager = CodingJobManager(max_active=1, root=tmp_path / "jobs")
     workspaces = CodingWorkspaceManager(tmp_path / "coding-worktrees")
     monkeypatch.setattr(api_module, "_CODING_JOBS", manager)
     monkeypatch.setattr(api_module, "_CODING_WORKSPACES", workspaces)
@@ -211,7 +211,9 @@ def test_rejected_web_job_rolls_back_new_worktree(monkeypatch: pytest.MonkeyPatc
     class WaitingAgent:
         def __init__(self) -> None:
             self.session = SessionStore(tmp_path / "held-session")
-            self.tools = SimpleNamespace(root=tmp_path / "other-workspace")
+            workspace = tmp_path / "other-workspace"
+            workspace.mkdir()
+            self.tools = SimpleNamespace(root=workspace)
             self.cancel = Event()
 
         def run(self, _task: str, *, resume: bool = False) -> AgentResult:
@@ -246,7 +248,7 @@ def test_web_coding_defaults_to_real_docker(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(api_module, "_WORKSPACES", tmp_path / "app-workspaces")
     monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
                         CodingWorkspaceManager(tmp_path / "coding-worktrees"))
-    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager())
+    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager(root=tmp_path / "jobs"))
     monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: ScriptedModel())
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.delenv("SELFFORGE_ENABLE_HOST_TESTS", raising=False)

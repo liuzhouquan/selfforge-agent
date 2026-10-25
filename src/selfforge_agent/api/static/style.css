@@ -270,6 +270,37 @@ button {
   font-size:11px;
   color:#667e6d
 }
+.coding-history {
+  max-width:860px;
+  margin-top:12px;
+  display:flex;
+  align-items:center;
+  gap:9px;
+  flex-wrap:wrap
+}
+.coding-history label {
+  font-size:11px;
+  font-weight:750;
+  color:#334f3f
+}
+.coding-history select {
+  flex:1;
+  min-width:210px;
+  padding:10px 12px;
+  border:1px solid #d8e4d9;
+  border-radius:8px;
+  background:#fff;
+  color:#213e30
+}
+.coding-history button {
+  border:1px solid #c8dccb;
+  border-radius:8px;
+  background:#fff;
+  color:#245d3e;
+  padding:10px 13px;
+  font-size:12px;
+  font-weight:750
+}
 .coding-error {
   max-width:860px;
   margin:12px 0 0

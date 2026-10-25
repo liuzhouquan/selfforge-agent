@@ -85,6 +85,7 @@ function renderCodingJob(job) {
     queued: "等待运行", running: "正在执行", completed: "已验证完成",
     unverified: "完成但未通过测试验证", failed: "执行失败",
     max_steps: "达到最大步数", timed_out: "超出时间预算", cancelled: "已取消",
+    interrupted: "服务中断，可续跑",
   };
   $("coding-job").hidden = false;
   $("coding-state").textContent = labels[job.state] || job.state;
@@ -95,7 +96,7 @@ function renderCodingJob(job) {
   $("coding-answer").textContent = job.error || job.answer || "Agent 正在处理任务…";
   $("coding-cancel").hidden = !codingJobRunning;
   $("coding-cancel").disabled = job.cancel_requested;
-  $("coding-resume-current").hidden = codingJobRunning;
+  $("coding-resume-current").hidden = codingJobRunning || !job.can_resume;
   $("coding-remove-workspace").hidden = codingJobRunning || !job.branch;
   $("coding-diff").hidden = !job.branch;
   if (job.branch && !codingJobRunning && codingDiffJobId !== job.job_id) {
@@ -107,6 +108,8 @@ function renderCodingJob(job) {
     const outcome = event.ok === undefined ? "" : event.ok ? " · 成功" : " · 失败";
     return `${(event.at || "").slice(11, 19)} · ${event.event}${detail ? ` · ${detail}` : ""}${outcome}`;
   }).join("\n") || "等待执行轨迹…";
+  localStorage.setItem("selfforge-coding-job", job.job_id);
+  localStorage.setItem("selfforge-coding-repo", job.repository);
   if (codingJobRunning) sessionStorage.setItem("selfforge-coding-job", job.job_id);
   else sessionStorage.removeItem("selfforge-coding-job");
   refreshCodingAvailability();
@@ -125,10 +128,44 @@ async function pollCodingJob(jobId) {
   } catch (error) {
     showCodingError(error.message);
     sessionStorage.removeItem("selfforge-coding-job");
+    localStorage.removeItem("selfforge-coding-job");
     codingJobRunning = false;
     refreshCodingAvailability();
   }
 }
+
+async function loadCodingHistory() {
+  const repository = $("coding-repo").value.trim();
+  if (!repository) {
+    showCodingError("请先输入 Git 仓库路径，再读取历史任务。");
+    return;
+  }
+  showCodingError("");
+  try {
+    const response = await fetch(`/api/code/jobs?repository=${encodeURIComponent(repository)}`);
+    const jobs = await response.json();
+    if (!response.ok) throw new Error(jobs.detail || `读取历史失败 (${response.status})`);
+    const select = $("coding-recent");
+    select.replaceChildren();
+    const prompt = document.createElement("option");
+    prompt.value = "";
+    prompt.textContent = jobs.length ? `选择历史任务（${jobs.length} 条）` : "这个仓库还没有历史任务";
+    select.append(prompt);
+    for (const job of jobs) {
+      const option = document.createElement("option");
+      option.value = job.job_id;
+      option.textContent = `${job.state} · 会话 ${job.session_id} · ${job.branch || "直接修改"}`;
+      select.append(option);
+    }
+  } catch (error) {
+    showCodingError(error.message);
+  }
+}
+
+$("coding-history-refresh").addEventListener("click", loadCodingHistory);
+$("coding-recent").addEventListener("change", (event) => {
+  if (event.target.value) pollCodingJob(event.target.value);
+});
 
 $("coding-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -237,7 +274,10 @@ $("coding-workspace").addEventListener("change", refreshCodingAvailability);
 $("coding-confirm-direct").addEventListener("change", refreshCodingAvailability);
 $("coding-sandbox").addEventListener("change", refreshCodingAvailability);
 $("coding-trust").addEventListener("change", refreshCodingAvailability);
-const savedCodingJob = sessionStorage.getItem("selfforge-coding-job");
+const savedCodingRepo = localStorage.getItem("selfforge-coding-repo");
+if (savedCodingRepo) $("coding-repo").value = savedCodingRepo;
+const savedCodingJob = localStorage.getItem("selfforge-coding-job") ||
+  sessionStorage.getItem("selfforge-coding-job");
 if (savedCodingJob) pollCodingJob(savedCodingJob);
 
 function element(tag, className, text) {

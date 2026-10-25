@@ -51,6 +51,11 @@
             <input id="coding-resume" type="text" placeholder="留空则开始新会话" autocomplete="off" />
             <div class="coding-actions"><button id="coding-start" type="submit" disabled>启动 Coding Agent</button><small id="coding-availability">需先配置模型密钥和 Docker 镜像</small></div>
           </form>
+          <div class="coding-history">
+            <label for="coding-recent">最近任务</label>
+            <select id="coding-recent"><option value="">输入仓库路径后读取历史任务</option></select>
+            <button id="coding-history-refresh" type="button">读取历史</button>
+          </div>
           <div id="coding-error" class="alert coding-error" hidden role="alert"></div>
           <div id="coding-job" class="coding-job" hidden>
             <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-remove-workspace" type="button" hidden>清理已提交的工作区</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>

@@ -29,7 +29,7 @@ uv run python examples/coding_demo.py
 | Context 管理 | Implemented | 工具输出截断、近似 token 预算、保留任务约束的确定性摘要压缩 |
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 通过真实 pytest 退出码判断；未运行测试的任务标记 `unverified` |
-| Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、取消和会话续跑；后台任务仅在服务进程内保留 |
+| Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、跨进程取消、历史任务查询和会话续跑；服务中断的任务需手动续跑 |
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
@@ -60,7 +60,7 @@ uv run uvicorn selfforge_agent.api.app:app --host 127.0.0.1 --port 8000
 # 打开 http://127.0.0.1:8000，选择 Docker，启动 Coding Agent
 ```
 
-页面显示任务状态、独立工作区路径、相对基线 commit 的有界 Diff 与最近的 JSONL 轨迹，可取消或用会话 ID 继续。工作区无未提交或未跟踪文件时可在页面清理；分支仍保留。新会话写入用户数据目录的 `selfforge-agent/sessions/`；旧版直写会话需选择“直接修改原仓库”后按 ID 续跑。服务重启后会话可续跑，但运行中任务的状态不会保留。选择直写需单次确认；Web 的本机命令执行还需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次勾选信任。
+页面显示任务状态、独立工作区路径、相对基线 commit 的有界 Diff 与最近的 JSONL 轨迹，可取消或用会话 ID 继续。“读取历史”可按仓库找回旧任务。工作区无未提交或未跟踪文件时可在页面清理；分支仍保留。新会话写入用户数据目录的 `selfforge-agent/sessions/`；任务元数据写入 `selfforge-agent/jobs/`，均不进入目标仓库。旧版直写会话需选择“直接修改原仓库”后按 ID 续跑。服务异常退出后，历史任务会标为 `interrupted`；已有会话可手动续跑，退出前尚未保存会话的任务需重新开始。跨进程文件锁阻止多个 Web 进程同时编辑或清理同一工作区；取消在模型和工具调用之间生效。选择直写需单次确认；Web 的本机命令执行还需要 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次勾选信任。
 
 ## CLI
 

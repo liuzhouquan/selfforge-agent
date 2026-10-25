@@ -157,6 +157,7 @@ class CodingJobResponse(BaseModel):
     workspace_path: str
     branch: str
     base_sha: str
+    can_resume: bool
     trace: list[dict]
 
 
@@ -282,9 +283,8 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
     repository = Path(request.repository).expanduser().resolve()
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
-        if _CODING_JOBS.active_workspace(workspace.path):
-            raise HTTPException(status_code=409, detail="Coding task is still running")
-        _CODING_WORKSPACES.remove(repository, session_id)
+        with _CODING_JOBS.workspace_guard(workspace.path):
+            _CODING_WORKSPACES.remove(repository, session_id)
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"removed": str(workspace.path), "branch": workspace.branch}
@@ -298,6 +298,12 @@ def coding_workspace_diff(session_id: str, repository: str, client: Request) -> 
         return workspace_diff(workspace)
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/code/jobs", response_model=list[CodingJobResponse])
+def coding_jobs(repository: str, client: Request) -> list[dict]:
+    _require_local(client)
+    return _CODING_JOBS.list_jobs(Path(repository).expanduser().resolve())
 
 
 @app.get("/api/code/jobs/{job_id}", response_model=CodingJobResponse)
