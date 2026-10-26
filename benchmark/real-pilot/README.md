@@ -36,3 +36,17 @@ uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-two-repo
 One local DeepSeek-only run of this frozen manifest scored **6/6** complete Agent successes: PocketFlow **3/3** with six holdout checks each, and boltons **3/3** with five holdout checks each. The manifest SHA-256 was `fe93f742e9e8cc15a112942e854da693055f81049fbe57179c7ab105105af09a` and both cases used Docker image ID `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`. The report totals 211.380 seconds and 420,283 provider-reported tokens. Individual outcomes and step/tool counts are recorded in the [evaluation notes](../../docs/evaluation.md).
 
 This is an exploratory pilot. Both tasks and holdouts were authored by this project, and the 18-step budget was selected after a 12-step boltons attempt hit the limit. It is not the planned three-repository, twenty-task acceptance set or an unbiased measure of general model ability.
+
+## Three-repository run, 2026-10-27
+
+The third public repository is [more-itertools](./more-itertools.md), pinned to `4aeb4338ae1407d8da9723e86da99efeb446f719`. Clone it as described there, then run the frozen [three-repository manifest](./suite-three-repos.json):
+
+```sh
+uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-three-repos.json \
+  --repeats 3 --max-steps 18 --provider deepseek --no-fallback \
+  --output .local/benchmark/three-repos-repeat3.json
+```
+
+One local DeepSeek-only run scored **8/9** complete successes: PocketFlow **2/3**, boltons **3/3**, and more-itertools **3/3**. PocketFlow's third attempt changed only allowed files and passed all six independent holdout checks, but reached the 18-step cap, so its result is `agent_max_steps`. All other attempts reached `completed` and passed their holdouts. The manifest SHA-256 was `2a0e193b3d990793bb79d30de0e6df9e6174e01c73a2207dfb150f0e8e9ae62d`; all cases used Docker image ID `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`. The report totals 321.037 seconds and 594,856 provider-reported tokens. Individual outcomes are in the [evaluation record](../../docs/evaluation.md).
+
+This is still an exploratory pilot with three project-authored tasks and holdouts. It reaches the repository count but remains 17 tasks short of the planned acceptance set. The step budget was chosen after earlier trials, and the more-itertools case had a successful exploratory run before this combined run. Do not read 8/9 as a general Coding Agent success rate.

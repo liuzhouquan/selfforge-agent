@@ -6,6 +6,7 @@ import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from selfforge_agent.runtime.execution import Executor
 
 MAX_TOOL_OUTPUT = 6_000
+MAX_WHOLE_FILE_BYTES = 128_000
+MAX_RANGED_FILE_BYTES = 2_000_000
+MAX_READ_LINES = 200
+MAX_SEARCH_BYTES = 8_000_000
 PROTECTED_NAMES = {
     ".git", ".venv", ".env", ".local", ".selfforge", ".workspaces", ".aws", ".ssh",
     ".npmrc", ".pypirc", ".netrc",
@@ -30,6 +35,8 @@ class ToolArgs(BaseModel):
 
 class ReadFile(ToolArgs):
     path: str
+    start_line: int | None = Field(default=None, ge=1, description="First line, inclusive")
+    end_line: int | None = Field(default=None, ge=1, description="Last line, inclusive")
 
 
 class EditFile(ToolArgs):
@@ -95,7 +102,8 @@ class ToolRegistry:
         self.executor = executor
         self.edit_policy = edit_policy or EditPolicy()
         definitions = [
-            ToolDefinition("read_file", "Read a UTF-8 file in the workspace", ReadFile, self._read),
+            ToolDefinition("read_file", "Read a UTF-8 file or up to 200 selected lines in the workspace",
+                           ReadFile, self._read),
             ToolDefinition("edit_file", "Replace exact text or create a new file", EditFile, self._edit),
             ToolDefinition("search_code", "Search workspace source for a literal string", SearchCode, self._search),
         ]
@@ -140,9 +148,22 @@ class ToolRegistry:
     def _read(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, ReadFile)
         path = self._path(args.path)
-        if path.stat().st_size > 128_000:
-            raise ValueError("File exceeds read limit")
-        return ToolOutcome(path.read_text(encoding="utf-8"), True)
+        size = path.stat().st_size
+        if args.start_line is None and args.end_line is None:
+            if size > MAX_WHOLE_FILE_BYTES:
+                raise ValueError("File exceeds whole-file read limit; use start_line and end_line")
+            return ToolOutcome(path.read_text(encoding="utf-8"), True)
+        if args.start_line is None or args.end_line is None:
+            raise ValueError("Specify both start_line and end_line")
+        if args.end_line < args.start_line or args.end_line - args.start_line + 1 > MAX_READ_LINES:
+            raise ValueError("Read range must contain 1-200 ordered lines")
+        if size > MAX_RANGED_FILE_BYTES:
+            raise ValueError("File exceeds ranged read limit")
+        with path.open(encoding="utf-8") as handle:
+            content = "".join(islice(handle, args.start_line - 1, args.end_line))
+        if not content:
+            raise ValueError("Read range begins beyond end of file")
+        return ToolOutcome(content, True)
 
     def _edit(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, EditFile)
@@ -185,6 +206,7 @@ class ToolRegistry:
             raise ValueError("Search path must be a directory")
         hits: list[str] = []
         visited = 0
+        scanned_bytes = 0
         for directory, folders, files in os.walk(base):
             folders[:] = [name for name in folders if not _protected(name)]
             for filename in files:
@@ -199,14 +221,19 @@ class ToolRegistry:
                 resolved = path.resolve()
                 if (not path.is_file() or not resolved.is_relative_to(self.root)
                         or any(_protected(part) for part in resolved.relative_to(self.root).parts)
-                        or path.stat().st_size > 128_000):
+                        or path.stat().st_size > MAX_RANGED_FILE_BYTES):
                     continue
+                size = path.stat().st_size
+                if scanned_bytes + size > MAX_SEARCH_BYTES:
+                    continue
+                scanned_bytes += size
                 try:
-                    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                        if args.pattern in line:
-                            hits.append(f"{path.relative_to(self.root)}:{number}: {line[:200]}")
-                            if len(hits) >= 80:
-                                break
+                    with path.open(encoding="utf-8") as handle:
+                        for number, line in enumerate(handle, 1):
+                            if args.pattern in line:
+                                hits.append(f"{path.relative_to(self.root)}:{number}: {line[:200]}")
+                                if len(hits) >= 80:
+                                    break
                 except UnicodeError:
                     continue
             if visited > 2_000 or len(hits) >= 80:

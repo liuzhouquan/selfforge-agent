@@ -1,5 +1,6 @@
 """Objective repeated evaluation over pinned disposable Git checkouts."""
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -233,6 +234,26 @@ def test_per_case_docker_images_are_pinned_before_all_runs(tmp_path: Path,
     assert report["image_id"] is None
     assert report["images"]["normalization"] == {
         "reference": "custom-project:one", "id": "sha256:custom"}
+
+
+def test_report_hashes_the_manifest_snapshot_used_for_cases(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest, _ = _manifest(tmp_path)
+    original = manifest.read_bytes()
+
+    def baseline(_case, **_kwargs):
+        manifest.write_text('{"version": 1, "cases": []}', encoding="utf-8")
+        return {"status": "failed"}
+
+    def run_once(case, repeat, _factory, **_kwargs):
+        return BenchmarkOutcome(case.spec.id, repeat, True, "passed", "completed", ["app.py"],
+                                "passed", 1, 0, 0, 0, 0.1, "fixture", "scripted", 0, 0, 0)
+
+    monkeypatch.setattr(benchmark, "_baseline", baseline)
+    monkeypatch.setattr(benchmark, "_run_once", run_once)
+    report = evaluate_suite(manifest, ScriptedModel, sandbox="host", trusted_host=True)
+    assert report["cases"] == 2
+    assert report["manifest_sha256"] == hashlib.sha256(original).hexdigest()
 
 
 def test_manifest_rejects_invalid_case_image(tmp_path: Path) -> None:

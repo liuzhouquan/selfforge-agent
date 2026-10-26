@@ -62,3 +62,17 @@ The frozen [two-repository manifest](../benchmark/real-pilot/suite-two-repos.jso
 The two tasks and holdouts are project-authored. The 18-step setting was chosen after observing the boltons failure at 12 steps, so this pilot is exploratory and tuned. It does not satisfy the planned three-repository, twenty-task acceptance set or establish a general success rate. Next, freeze a larger task set and provider/step policy before running it, and report failures as well as successes.
 
 The first [GitHub Actions CI run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798) on this milestone passed locked dependency installation, Ruff, 90 unit tests, a Docker image build, and 5 Docker integration tests. This checks the hosted workflow separately from local verification; it does not run the live-model pilot or require API keys.
+
+## Three-repository exploratory pilot, 2026-10-27
+
+The [more-itertools case](../benchmark/real-pilot/more-itertools.md) adds a third public Python repository at `4aeb4338ae1407d8da9723e86da99efeb446f719`. Its project-authored holdout has six assertion failures on the pinned baseline and one passing positive-size control. The repository's full `tests/test_recipes.py` file passed in the default offline Docker image (145 tests, 9,876 subtests). A first exploratory DeepSeek-only run under an 18-step cap scored **1/1** complete success in 35.295 seconds, 10 model steps, and 54,591 provider-reported tokens. That run is separate from the combined result.
+
+The frozen [three-repository manifest](../benchmark/real-pilot/suite-three-repos.json), SHA-256 `2a0e193b3d990793bb79d30de0e6df9e6174e01c73a2207dfb150f0e8e9ae62d`, was run once with three fresh attempts per case, DeepSeek `deepseek-flash` only, 18 model steps, and Docker image ID `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`. It scored **8/9**: PocketFlow **2/3**, boltons **3/3**, more-itertools **3/3**. The only failure category was `agent_max_steps` (one PocketFlow attempt). That attempt changed the two allowed files and passed all six external checks, but its final `run_tests` succeeded at step 18, leaving no model turn to provide the required final answer. It is correctly a failure under the complete Agent gate. All successful attempts changed only allowed source/test files, reached `completed`, and passed their independent holdouts (six, five, and seven checks per case respectively).
+
+| Case | Result | Agent steps by repeat | Duration by repeat (seconds) |
+| --- | ---: | --- | --- |
+| PocketFlow | 2/3 | 8, 10, 18 | 19.519, 27.491, 36.165 |
+| boltons | 3/3 | 18, 13, 11 | 50.983, 31.672, 31.996 |
+| more-itertools | 3/3 | 9, 14, 9 | 33.552, 43.563, 46.096 |
+
+The report totals 321.037 seconds and 594,856 provider-reported tokens. Its ignored local path is `.local/benchmark/three-repos-repeat3.json`. The manifest and each external holdout were frozen before this combined run. The 18-step setting was chosen from earlier exploratory trials, and the more-itertools case was tried once before inclusion; these tasks and holdouts are project-authored. The result reaches three repositories but only three of the planned twenty tasks, so it is not a general model success-rate estimate. The next work is a larger fixed task set, dependency-ready Docker images, and test selection for unrelated suite failures; record every failure in the first acceptance run without adjusting the task wording or budget afterward.

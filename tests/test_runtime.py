@@ -257,6 +257,26 @@ def test_workspace_rejects_traversal_and_untrusted_host(tmp_path: Path) -> None:
     assert not (tmp_path.parent / "outside").exists()
 
 
+def test_large_source_can_be_searched_and_read_by_bounded_line_range(tmp_path: Path) -> None:
+    source = tmp_path / "large.py"
+    source.write_text("x = 0\n" * 22_000 + "def target():\n    return 42\n", encoding="utf-8")
+    tools = ToolRegistry(tmp_path)
+
+    whole = tools.execute("read_file", {"path": "large.py"})
+    assert not whole.ok and "start_line and end_line" in whole.content
+    search = tools.execute("search_code", {"pattern": "def target", "glob": "*.py"})
+    assert search.ok and "large.py:22001: def target():" in search.content
+
+    selected = tools.execute("read_file", {"path": "large.py",
+                                           "start_line": 22_001, "end_line": 22_002})
+    assert selected.ok and selected.content == "def target():\n    return 42\n"
+    assert not tools.execute("read_file", {"path": "large.py", "start_line": 1}).ok
+    assert not tools.execute("read_file", {"path": "large.py",
+                                                "start_line": 1, "end_line": 201}).ok
+    assert not tools.execute("read_file", {"path": "large.py",
+                                                "start_line": 22_100, "end_line": 22_101}).ok
+
+
 def test_restricted_edit_policy_blocks_unapproved_and_unsafe_changes(tmp_path: Path) -> None:
     (tmp_path / "calculator.py").write_text("return a - b\n", encoding="utf-8")
     (tmp_path / "tests.py").write_text("assert True\n", encoding="utf-8")

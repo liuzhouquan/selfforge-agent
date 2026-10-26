@@ -95,9 +95,11 @@ def _safe_relative(value: str) -> str:
     return path.as_posix()
 
 
-def load_suite(manifest: Path) -> tuple[BenchmarkSuite, list[PreparedCase]]:
+def load_suite(manifest: Path, *, _contents: bytes | None = None
+               ) -> tuple[BenchmarkSuite, list[PreparedCase]]:
     manifest = manifest.expanduser().resolve()
-    suite = BenchmarkSuite.model_validate_json(manifest.read_text(encoding="utf-8"))
+    suite = BenchmarkSuite.model_validate_json(
+        manifest.read_bytes() if _contents is None else _contents)
     ids: set[str] = set()
     prepared = []
     for case in suite.cases:
@@ -315,7 +317,9 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
         raise ValueError("Benchmark sandbox must be docker or host")
     if sandbox == "host" and not trusted_host:
         raise ValueError("Host benchmark execution requires explicit trust")
-    suite, cases = load_suite(manifest)
+    manifest = manifest.expanduser().resolve()
+    manifest_bytes = manifest.read_bytes()
+    suite, cases = load_suite(manifest, _contents=manifest_bytes)
     images = {}
     if sandbox == "docker":
         resolved_images = {}
@@ -344,7 +348,7 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
     } for case in cases}
     return {
         "version": 1,
-        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "cases": len(suite.cases), "repeats": repeats, "runs": len(outcomes),
         "successes": successes, "success_rate": successes / len(outcomes),
         "sandbox": sandbox, "image": image if sandbox == "docker" else None,
