@@ -15,6 +15,7 @@ from selfforge_agent.runtime.benchmark import (
     load_suite,
 )
 from selfforge_agent.runtime.model import ModelTurn
+from selfforge_agent.runtime.session import SessionStore
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -100,6 +101,13 @@ def test_repeated_suite_uses_fresh_repos_and_hidden_tests(tmp_path: Path) -> Non
     assert report["failure_reasons"] == {}
     assert all(item["holdout_passed"] == 1 and item["changed_files"] == ["app.py"]
                for item in report["results"])
+    assert all(item["agent_steps"] == 4 and item["tools_used"] == 3
+               and item["tool_trace"] == [
+                   {"name": "read_file", "ok": True},
+                   {"name": "edit_file", "ok": True},
+                   {"name": "run_tests", "ok": True},
+               ] for item in report["results"])
+    assert "return a - b" not in json.dumps(report)
     assert "return a - b" in (repositories[0] / "app.py").read_text()
     assert not any(repo.joinpath("tests", "test_selfforge_holdout_addition.py").exists()
                    for repo in repositories)
@@ -144,6 +152,16 @@ def test_provider_failure_code_omits_raw_error_text() -> None:
         "All providers failed: deepseek: Provider returned HTTP 429; token=secret"
     ) == "provider_http_429"
     assert benchmark._agent_error_code("Model stopped with length") == "model_finish_reason"
+
+
+def test_tool_diagnostics_sanitize_unknown_names(tmp_path: Path) -> None:
+    session = SessionStore(tmp_path)
+    session.trace("tool", name="secret embedded in tool name", ok=False)
+    session.trace("tool", name={"secret": "nested"}, ok=False)
+    session.trace("tool", name="run_tests", ok=True)
+    assert benchmark._tool_trace(session) == [
+        {"name": "unknown", "ok": False}, {"name": "unknown", "ok": False},
+        {"name": "run_tests", "ok": True}]
 
 
 def test_manifest_requires_pinned_commit_and_external_holdout(tmp_path: Path) -> None:

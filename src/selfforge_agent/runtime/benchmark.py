@@ -8,7 +8,7 @@ import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -70,6 +70,9 @@ class BenchmarkOutcome:
     completion_tokens: int
     total_tokens: int
     agent_error_code: str = ""
+    agent_steps: int = 0
+    tools_used: int = 0
+    tool_trace: list[dict[str, str | bool]] = field(default_factory=list)
 
 
 def _git(*args: str, cwd: Path | None = None, timeout: float = 120) -> str:
@@ -147,6 +150,15 @@ def _usage(session: SessionStore) -> tuple[str, str, int, int, int]:
         completion += int(usage.get("completion_tokens") or 0)
         total += int(usage.get("total_tokens") or 0)
     return provider, model, prompt, completion, total
+
+
+def _tool_trace(session: SessionStore) -> list[dict[str, str | bool]]:
+    """Keep actionable tool metadata without model messages or tool output."""
+    known = {"read_file", "edit_file", "search_code", "bash", "run_tests"}
+    events = [event for event in session.trace_events() if event.get("event") == "tool"]
+    return [{"name": event["name"] if isinstance(event.get("name"), str)
+             and event["name"] in known else "unknown",
+             "ok": event.get("ok") is True} for event in events[-100:]]
 
 
 def _reason(agent_status: str, changed: list[str], allowed: set[str],
@@ -247,6 +259,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     exit_code = None
     reason = "harness_error"
     agent_error_code = ""
+    agent_steps = tools_used = 0
+    tool_trace: list[dict[str, str | bool]] = []
     try:
         with tempfile.TemporaryDirectory(prefix="selfforge-benchmark-") as temp:
             root = Path(temp)
@@ -261,9 +275,11 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                     + case.spec.agent_test_path + " after the final edit.")
             result = agent.run(task)
             agent_status = result.status
+            agent_steps, tools_used = result.steps, result.tools_used
             if result.status == "failed":
                 agent_error_code = _agent_error_code(result.error)
             provider, model, prompt, completion, total = _usage(session)
+            tool_trace = _tool_trace(session)
             if _git("rev-parse", "HEAD", cwd=workspace).strip() != case.spec.revision:
                 reason = "revision_changed"
             else:
@@ -283,7 +299,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
-                            prompt, completion, total, agent_error_code)
+                            prompt, completion, total, agent_error_code,
+                            agent_steps, tools_used, tool_trace)
 
 
 def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], ChatModel], *,

@@ -33,7 +33,7 @@ uv run python examples/coding_demo.py
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
-| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立隐藏测试、按案例锁定 Docker 镜像、多次运行与失败分类；已有 1 个真实仓库试点，正式多仓库任务集尚未建立 |
+| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立隐藏测试、按案例锁定 Docker 镜像、多次运行与失败分类；已有 2 仓库探索性试点，正式 3 仓库/20 任务集尚未建立 |
 
 ## Quick Start
 
@@ -148,16 +148,19 @@ Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下�
 uv run selfforge-agent eval --offline       # 确定性工具协议回归，不代表模型能力
 uv run selfforge-agent eval --provider deepseek  # 真正调用模型，运行生成夹具
 uv run python examples/benchmark_demo.py    # 重复评测协议演示；合成夹具
-# 在固定真实仓库任务集上重复运行；具体 manifest 格式见评测文档
-uv run selfforge-agent eval-suite --manifest ./benchmark/suite.json \
-  --repeats 3 --provider deepseek --output ./benchmark-report.json
+# 按双仓库试点说明准备两个本地 checkout 后运行
+uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-two-repos.json \
+  --repeats 3 --max-steps 18 --provider deepseek --no-fallback \
+  --output .local/benchmark/two-repos-report.json
 uv run pytest
 uv run ruff check .
 ```
 
-`eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的文件发生修改、Agent 测试成功且独立隐藏测试通过才计成功。任务可指定自己的 Docker 镜像，评测开始时会锁定镜像 ID。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界、[PocketFlow 真实仓库试点](./benchmark/real-pilot/README.md)和复现方法见[重复评测说明](./docs/benchmark.md)。
+`eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的文件发生修改、Agent 测试成功且独立隐藏测试通过才计成功。任务可指定自己的 Docker 镜像，评测开始时会锁定镜像 ID。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界、[双仓库试点](./benchmark/real-pilot/README.md)和复现方法见[重复评测说明](./docs/benchmark.md)。
 
-2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。两道夹具分别修复加法和姓名规范化。PocketFlow 固定清单的单题试点在 2026-10-25 使用 DeepSeek/OpenRouter 配置得到 **1/3**；修复会话协议和最终答复控制后，2026-10-26 仅用 DeepSeek 重复 3 次得到 **3/3**，每次独立隐藏测试均为 6/6。两组运行配置不同，不构成对照实验，也不能代表多仓库成功率。详情见[评测记录](./docs/evaluation.md)。目前尚无真实多仓库重复评测成绩。
+GitHub Actions 已配置为在推送 `main` 和提交 PR 时运行 Ruff、单元测试及 Docker 集成测试；首次远端运行结果仍需核对。
+
+2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 在 PocketFlow 与 boltons 两个真实仓库的两道项目自编任务上，以固定清单、统一 18 步预算、仅 DeepSeek 运行各 3 次，得到 **6/6** 完整成功，独立隐藏测试均通过。18 步预算是根据先前 boltons 试跑调整的，因此这属于探索性试点，不是通用成功率；距离 3 仓库/20 任务的正式验收还有明显差距。复现条件、早期失败和逐次结果见[评测记录](./docs/evaluation.md)。
 
 ## Specialized Workflows：PR Review
 

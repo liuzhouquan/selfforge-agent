@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "boltons_unicode_punctuation",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons.strutils, split_punct_ws and slugify split on ASCII punctuation and whitespace but leave Unicode punctuation attached to words. Treat Unicode punctuation (category P*) as a separator too, while preserving Unicode letters and the existing ASCII and whitespace behavior. Add regression tests to tests/test_strutils.py and run that test file.",
+      "allowed_changes": ["boltons/strutils.py", "tests/test_strutils.py"],
+      "holdout_test": "holdouts/test_boltons_unicode_punctuation.py",
+      "agent_test_path": "tests/test_strutils.py"
+    }
+  ]
+}
