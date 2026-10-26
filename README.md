@@ -158,7 +158,7 @@ uv run ruff check .
 
 `eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的文件发生修改、Agent 测试成功且独立隐藏测试通过才计成功。任务可指定自己的 Docker 镜像，评测开始时会锁定镜像 ID。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界、[双仓库试点](./benchmark/real-pilot/README.md)和复现方法见[重复评测说明](./docs/benchmark.md)。
 
-GitHub Actions 已配置为在推送 `main` 和提交 PR 时运行 Ruff、单元测试及 Docker 集成测试；首次远端运行结果仍需核对。
+GitHub Actions 在推送 `main` 和提交 PR 时运行 Ruff、单元测试及 Docker 集成测试；[首次远端运行](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798)已通过（90 项单元测试、5 项 Docker 集成测试）。
 
 2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 在 PocketFlow 与 boltons 两个真实仓库的两道项目自编任务上，以固定清单、统一 18 步预算、仅 DeepSeek 运行各 3 次，得到 **6/6** 完整成功，独立隐藏测试均通过。18 步预算是根据先前 boltons 试跑调整的，因此这属于探索性试点，不是通用成功率；距离 3 仓库/20 任务的正式验收还有明显差距。复现条件、早期失败和逐次结果见[评测记录](./docs/evaluation.md)。
 

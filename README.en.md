@@ -158,7 +158,7 @@ uv run ruff check .
 
 `eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed files change, the Agent verifies its edits, and an unseen test passes independently. Cases can select their own Docker image; its ID is pinned before evaluation. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) and [two-repository pilot](./benchmark/real-pilot/README.md) for reproduction steps.
 
-GitHub Actions is configured to run Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests; its first hosted result still needs verification.
+GitHub Actions runs Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests. Its [first hosted run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798) passed (90 unit tests and 5 Docker integration tests).
 
 On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. On 2026-10-27, two project-authored tasks in the real PocketFlow and boltons repositories were each run three times under one fixed manifest, an 18-step limit, and DeepSeek only: **6/6** complete successes with all independent holdouts passing. The 18-step limit was chosen after an exploratory boltons trial, so this is a tuned pilot rather than a general success rate. The planned 3-repository/20-task acceptance set remains open. See [evaluation notes](./docs/evaluation.md) for reproduction conditions, earlier failures, and per-run results.
 
