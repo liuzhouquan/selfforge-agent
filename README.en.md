@@ -25,7 +25,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Capability | Status | Current boundary |
 | --- | --- | --- |
 | Coding Agent Runtime | Implemented | OpenAI-compatible native tool calling, multiple turns, step/time limits, provider fallback |
-| Tools and sessions | Implemented | read/edit/search/bash/run_tests; bounded line-range reads of large files, workspace path checks, resumable JSONL sessions and traces |
+| Tools and sessions | Implemented | read/edit/search/bash/run_tests; bounded line-range reads of large files, pytest `-k` selection, workspace path checks, resumable JSONL sessions and traces |
 | Context management | Implemented | Truncated tool output, approximate token budget, deterministic summary retaining task constraints |
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Uses actual pytest exit status; tasks without test evidence are `unverified` |
@@ -33,7 +33,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
-| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, unseen tests, per-case pinned Docker images, repeated runs and failure categories; a three-repository/three-task exploratory pilot exists, but the 20-task acceptance set remains open |
+| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent reruns of specified visible and unseen tests, per-case pinned Docker images, and failure categories; a three-repository/four-task exploratory pilot exists, but the 20-task acceptance set remains open |
 
 ## Quick Start
 
@@ -149,18 +149,18 @@ uv run selfforge-agent eval --offline       # Deterministic protocol check, not 
 uv run selfforge-agent eval --provider deepseek  # Live model on generated fixtures
 uv run python examples/benchmark_demo.py    # Repeated-evaluation protocol, synthetic fixture
 # Prepare three local checkouts using the pilot guide, then run
-uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-three-repos.json \
-  --repeats 3 --max-steps 18 --provider deepseek --no-fallback \
-  --output .local/benchmark/three-repos-report.json
+uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-four-tasks.json \
+  --repeats 1 --max-steps 18 --provider deepseek --no-fallback \
+  --output .local/benchmark/four-tasks-report.json
 uv run pytest
 uv run ruff check .
 ```
 
-`eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed files change, the Agent verifies its edits, and an unseen test passes independently. Cases can select their own Docker image; its ID is pinned before evaluation. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) and [three-repository pilot](./benchmark/real-pilot/README.md) for reproduction steps.
+`eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed files change, the Agent verifies its edits, the evaluator independently reruns the specified visible tests, and an unseen test passes. `agent_test_keyword` can select relevant pytest tests explicitly. Cases can select their own Docker image; its ID is pinned before evaluation. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) and [three-repository pilot](./benchmark/real-pilot/README.md) for reproduction steps.
 
 GitHub Actions runs Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests. Its [first hosted run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798) passed (90 unit tests and 5 Docker integration tests).
 
-On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. On 2026-10-27, three project-authored tasks in the real PocketFlow, boltons, and more-itertools repositories were each run three times under one fixed manifest, an 18-step limit, and DeepSeek only: **8/9** complete successes. The one failure reached the step cap despite passing its independent holdout. The 18-step limit came from earlier exploratory trials, so this is a tuned pilot rather than a general success rate. The planned 20-task acceptance set remains open. See [evaluation notes](./docs/evaluation.md) for reproduction conditions, earlier failures, and per-run results.
+On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. On 2026-10-27, three project-authored tasks across PocketFlow, boltons, and more-itertools scored **8/9** with three repeats each under the earlier gate; one attempt hit the step cap despite passing its holdout. After adding independent visible-test reruns and a large-file chunking task, four tasks scored **4/4** in one run each, with selected visible and unseen tests passing. The gates and repeat counts differ, so these results cannot be combined into a success rate. The 18-step limit came from earlier trials, and the planned 20-task acceptance set remains open. See [evaluation notes](./docs/evaluation.md).
 
 ## Specialized Workflows: PR Review
 
@@ -168,4 +168,4 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, grow the fixed task set to 20 cases, add dependency-ready environments and better test selection, then rerun under a policy chosen in advance. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).
+Next, grow the fixed task set to 20 cases, add dependency-ready images, and freeze each test selection and execution policy before rerunning. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).

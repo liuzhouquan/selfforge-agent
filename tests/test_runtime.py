@@ -277,6 +277,20 @@ def test_large_source_can_be_searched_and_read_by_bounded_line_range(tmp_path: P
                                                 "start_line": 22_100, "end_line": 22_101}).ok
 
 
+def test_run_tests_keyword_selects_relevant_tests(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_selection.py").write_text(
+        "def test_relevant():\n    assert True\n\n"
+        "def test_unrelated():\n    assert False\n", encoding="utf-8")
+    tools = ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True))
+
+    assert not tools.execute("run_tests", {"path": "tests"}).ok
+    selected = tools.execute("run_tests", {"path": "tests", "keyword": "relevant"})
+    assert selected.ok and "1 passed" in selected.content
+    assert not tools.execute("run_tests", {"path": "tests", "keyword": " "}).ok
+
+
 def test_restricted_edit_policy_blocks_unapproved_and_unsafe_changes(tmp_path: Path) -> None:
     (tmp_path / "calculator.py").write_text("return a - b\n", encoding="utf-8")
     (tmp_path / "tests.py").write_text("assert True\n", encoding="utf-8")

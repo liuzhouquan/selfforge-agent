@@ -25,7 +25,7 @@ uv run python examples/coding_demo.py
 | 能力 | 状态 | 当前边界 |
 | --- | --- | --- |
 | Coding Agent Runtime | Implemented | OpenAI-compatible 原生工具调用，多轮执行，步数/时间限制，供应商回退 |
-| 工具与会话 | Implemented | read/edit/search/bash/run_tests；大文件有界分段读取、工作区路径校验、JSONL 恢复与轨迹 |
+| 工具与会话 | Implemented | read/edit/search/bash/run_tests；大文件有界分段读取、pytest `-k` 选择、工作区路径校验、JSONL 恢复与轨迹 |
 | Context 管理 | Implemented | 工具输出截断、近似 token 预算、保留任务约束的确定性摘要压缩 |
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 通过真实 pytest 退出码判断；未运行测试的任务标记 `unverified` |
@@ -33,7 +33,7 @@ uv run python examples/coding_demo.py
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
-| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立隐藏测试、按案例锁定 Docker 镜像、多次运行与失败分类；已有 3 仓库/3 任务探索性试点，正式 20 任务集尚未建立 |
+| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立重跑指定可见测试与隐藏测试、按案例锁定 Docker 镜像、失败分类；已有 3 仓库/4 任务探索性试点，正式 20 任务集尚未建立 |
 
 ## Quick Start
 
@@ -149,18 +149,18 @@ uv run selfforge-agent eval --offline       # 确定性工具协议回归，不�
 uv run selfforge-agent eval --provider deepseek  # 真正调用模型，运行生成夹具
 uv run python examples/benchmark_demo.py    # 重复评测协议演示；合成夹具
 # 按真实仓库试点说明准备三个本地 checkout 后运行
-uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-three-repos.json \
-  --repeats 3 --max-steps 18 --provider deepseek --no-fallback \
-  --output .local/benchmark/three-repos-report.json
+uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-four-tasks.json \
+  --repeats 1 --max-steps 18 --provider deepseek --no-fallback \
+  --output .local/benchmark/four-tasks-report.json
 uv run pytest
 uv run ruff check .
 ```
 
-`eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的文件发生修改、Agent 测试成功且独立隐藏测试通过才计成功。任务可指定自己的 Docker 镜像，评测开始时会锁定镜像 ID。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界、[三仓库试点](./benchmark/real-pilot/README.md)和复现方法见[重复评测说明](./docs/benchmark.md)。
+`eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的文件发生修改、Agent 自身测试成功、评测器独立重跑清单指定的可见测试成功，且隐藏测试通过才计成功。可用清单中的 `agent_test_keyword` 明确选择相关 pytest 测试。任务可指定 Docker 镜像，评测开始时锁定镜像 ID。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界和[三仓库试点](./benchmark/real-pilot/README.md)见[重复评测说明](./docs/benchmark.md)。
 
 GitHub Actions 在推送 `main` 和提交 PR 时运行 Ruff、单元测试及 Docker 集成测试；[首次远端运行](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798)已通过（90 项单元测试、5 项 Docker 集成测试）。
 
-2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 在 PocketFlow、boltons、more-itertools 三个真实仓库的三道项目自编任务上，以固定清单、统一 18 步预算、仅 DeepSeek 各运行 3 次，得到 **8/9** 完整成功；唯一失败达到步数上限，虽然其隐藏测试通过。18 步预算来自先前的探索性试跑，这不是通用成功率；正式 20 任务验收集尚未建立。复现条件、早期失败和逐次结果见[评测记录](./docs/evaluation.md)。
+2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 旧门槛下三仓库三题各重复 3 次得到 **8/9**；唯一失败达到步数上限，虽然隐藏测试通过。加入独立可见测试门槛与大文件分块任务后，四题各运行 1 次得到 **4/4**，指定可见测试与隐藏测试均通过。两次运行的门槛和重复次数不同，不能合并成成功率；18 步预算也来自先前试跑。正式 20 任务验收集尚未建立，复现条件见[评测记录](./docs/evaluation.md)。
 
 ## Specialized Workflows：PR Review
 
@@ -168,4 +168,4 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-下一步优先把固定任务集扩至 20 题，补项目依赖环境和测试选择，再按预先确定的策略复测完成率与失败原因。见[产品边界与验收](./docs/product-scope.md)和[路线图](./docs/roadmap.md)。
+下一步优先把固定任务集扩至 20 题，补项目依赖镜像，并预先固定各题测试范围与运行策略，再复测完成率和失败原因。见[产品边界与验收](./docs/product-scope.md)和[路线图](./docs/roadmap.md)。

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "more_itertools_zero_chunk_size",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "In more_itertools.more, chunked(iterable, 0) and sliced(seq, 0) silently return empty iterators. Reject zero with ValueError when either function is called, in both strict and non-strict modes. Preserve positive sizes and chunked(iterable, None). Add regression tests to tests/test_more.py and run its ChunkedTests and SlicedTests; the full test_more.py contains an unrelated 100-thread test that exceeds the current sandbox process limit.",
+      "allowed_changes": ["more_itertools/more.py", "tests/test_more.py"],
+      "holdout_test": "holdouts/test_more_itertools_zero_chunk_size.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "ChunkedTests or SlicedTests"
+    }
+  ]
+}

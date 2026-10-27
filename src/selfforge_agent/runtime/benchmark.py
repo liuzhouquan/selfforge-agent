@@ -32,6 +32,7 @@ class BenchmarkCase(BaseModel):
     allowed_changes: list[str] = Field(min_length=1)
     holdout_test: str = Field(min_length=1)
     agent_test_path: str = "tests"
+    agent_test_keyword: str | None = Field(default=None, min_length=1, max_length=200)
     image: str | None = None
 
 
@@ -73,6 +74,11 @@ class BenchmarkOutcome:
     agent_steps: int = 0
     tools_used: int = 0
     tool_trace: list[dict[str, str | bool]] = field(default_factory=list)
+    visible_status: str = ""
+    visible_passed: int = 0
+    visible_failed: int = 0
+    visible_errors: int = 0
+    visible_exit_code: int | None = None
 
 
 def _git(*args: str, cwd: Path | None = None, timeout: float = 120) -> str:
@@ -119,6 +125,8 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None
         if revision != case.revision:
             raise ValueError(f"Case {case.id} revision is not a commit")
         _safe_relative(case.agent_test_path)
+        if case.agent_test_keyword is not None and not case.agent_test_keyword.strip():
+            raise ValueError(f"Case {case.id} has a blank test keyword")
         if case.image is not None and (not case.image or any(char.isspace() for char in case.image)):
             raise ValueError(f"Case {case.id} has an invalid Docker image reference")
         for changed in case.allowed_changes:
@@ -164,7 +172,9 @@ def _tool_trace(session: SessionStore) -> list[dict[str, str | bool]]:
 
 
 def _reason(agent_status: str, changed: list[str], allowed: set[str],
-            holdout_status: str, passed: int, failed: int, errors: int) -> str:
+            visible_status: str, visible_passed: int, visible_failed: int,
+            visible_errors: int, holdout_status: str, passed: int, failed: int,
+            errors: int) -> str:
     if agent_status in {"failed", "timed_out", "cancelled", "max_steps"}:
         return f"agent_{agent_status}"
     if not changed:
@@ -173,6 +183,16 @@ def _reason(agent_status: str, changed: list[str], allowed: set[str],
         return "unexpected_file_changes"
     if agent_status != "completed":
         return f"agent_{agent_status}"
+    if visible_status == "missing":
+        return "visible_test_missing"
+    if visible_status == "timeout":
+        return "visible_test_timeout"
+    if visible_errors:
+        return "visible_test_collection_error"
+    if visible_failed:
+        return "visible_test_assertion_failed"
+    if visible_status != "passed" or visible_passed == 0:
+        return "visible_test_environment_error"
     if holdout_status == "timeout":
         return "holdout_timeout"
     if errors:
@@ -216,12 +236,15 @@ def _image_id(image: str) -> str:
     return result.stdout.strip()
 
 
-def _verification_copy(workspace: Path, destination: Path, case: PreparedCase) -> str:
+def _verification_copy(workspace: Path, destination: Path) -> None:
     shutil.copytree(workspace, destination, symlinks=True,
                     ignore=shutil.ignore_patterns(
                         ".git", ".venv", ".env", ".env.*", ".local", ".selfforge",
                         ".workspaces", ".aws", ".ssh", ".npmrc", ".pypirc",
                         ".netrc", "__pycache__", ".pytest_cache"))
+
+
+def _install_holdout(destination: Path, case: PreparedCase) -> str:
     holdout_path = Path("tests") / f"test_selfforge_holdout_{case.spec.id}.py"
     target = destination / holdout_path
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -241,7 +264,8 @@ def _baseline(case: PreparedCase, *, sandbox: Literal["docker", "host"],
         root = Path(temp)
         workspace = root / "source"
         _checkout(case, workspace)
-        path = _verification_copy(workspace, root / "verification", case)
+        _verification_copy(workspace, root / "verification")
+        path = _install_holdout(root / "verification", case)
         result = _runner(sandbox, image).run(root / "verification", trusted=trusted_host,
                                               timeout=test_timeout, test_path=path)
     if result.status != "failed" or result.failed == 0 or result.errors:
@@ -255,10 +279,12 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
               *, sandbox: Literal["docker", "host"], trusted_host: bool, image: str,
               max_steps: int, time_budget: float, test_timeout: float) -> BenchmarkOutcome:
     started = time.monotonic()
-    agent_status = holdout_status = provider = model = ""
+    agent_status = visible_status = holdout_status = provider = model = ""
     changed: list[str] = []
     prompt = completion = total = passed = failed = errors = 0
     exit_code = None
+    visible_passed = visible_failed = visible_errors = 0
+    visible_exit_code = None
     reason = "harness_error"
     agent_error_code = ""
     agent_steps = tools_used = 0
@@ -273,8 +299,11 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                         else HostExecutor(workspace, trusted=trusted_host))
             agent = CodingAgent(model_factory(case.spec), ToolRegistry(workspace, executor),
                                 session, max_steps=max_steps, time_budget=time_budget)
-            task = (case.spec.task + "\n\nRun run_tests on "
-                    + case.spec.agent_test_path + " after the final edit.")
+            task = (case.spec.task + "\n\nAfter the final edit, call run_tests with path="
+                    + repr(case.spec.agent_test_path))
+            if case.spec.agent_test_keyword is not None:
+                task += ", keyword=" + repr(case.spec.agent_test_keyword)
+            task += "."
             result = agent.run(task)
             agent_status = result.status
             agent_steps, tools_used = result.steps, result.tools_used
@@ -287,7 +316,19 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
             else:
                 changed = _changed_files(workspace)
                 verification = root / "verification"
-                holdout_path = _verification_copy(workspace, verification, case)
+                _verification_copy(workspace, verification)
+                visible_path = (verification / case.spec.agent_test_path).resolve()
+                if not visible_path.is_relative_to(verification) or not visible_path.exists():
+                    visible_status = "missing"
+                else:
+                    visible = _runner(sandbox, image).run(
+                        verification, trusted=trusted_host, timeout=test_timeout,
+                        test_path=case.spec.agent_test_path,
+                        keyword=case.spec.agent_test_keyword)
+                    visible_status = visible.status
+                    visible_passed, visible_failed, visible_errors, visible_exit_code = (
+                        visible.passed, visible.failed, visible.errors, visible.exit_code)
+                holdout_path = _install_holdout(verification, case)
                 evidence = _runner(sandbox, image).run(
                     verification, trusted=trusted_host,
                     timeout=test_timeout, test_path=holdout_path)
@@ -295,6 +336,7 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                 passed, failed, errors, exit_code = (evidence.passed, evidence.failed,
                                                      evidence.errors, evidence.exit_code)
                 reason = _reason(agent_status, changed, set(case.spec.allowed_changes),
+                                 visible_status, visible_passed, visible_failed, visible_errors,
                                  holdout_status, passed, failed, errors)
     except (OSError, RuntimeError, ValueError) as exc:
         reason = f"harness_error:{type(exc).__name__}"
@@ -302,7 +344,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
                             prompt, completion, total, agent_error_code,
-                            agent_steps, tools_used, tool_trace)
+                            agent_steps, tools_used, tool_trace, visible_status,
+                            visible_passed, visible_failed, visible_errors, visible_exit_code)
 
 
 def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], ChatModel], *,

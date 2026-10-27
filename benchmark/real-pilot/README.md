@@ -50,3 +50,15 @@ uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-three-re
 One local DeepSeek-only run scored **8/9** complete successes: PocketFlow **2/3**, boltons **3/3**, and more-itertools **3/3**. PocketFlow's third attempt changed only allowed files and passed all six independent holdout checks, but reached the 18-step cap, so its result is `agent_max_steps`. All other attempts reached `completed` and passed their holdouts. The manifest SHA-256 was `2a0e193b3d990793bb79d30de0e6df9e6174e01c73a2207dfb150f0e8e9ae62d`; all cases used Docker image ID `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`. The report totals 321.037 seconds and 594,856 provider-reported tokens. Individual outcomes are in the [evaluation record](../../docs/evaluation.md).
 
 This is still an exploratory pilot with three project-authored tasks and holdouts. It reaches the repository count but remains 17 tasks short of the planned acceptance set. The step budget was chosen after earlier trials, and the more-itertools case had a successful exploratory run before this combined run. Do not read 8/9 as a general Coding Agent success rate.
+
+## Four-task run with independent visible tests, 2026-10-27
+
+A second [more-itertools task](./more-itertools-chunks.md) exercises the larger `more_itertools/more.py` file. The evaluator now independently reruns each case's specified visible tests before installing its unseen holdout. The fourth task uses `agent_test_keyword` to select the 21 existing `ChunkedTests` and `SlicedTests` checks; the broader file contains an unrelated test that exceeds the sandbox's process limit.
+
+```sh
+uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-four-tasks.json \
+  --repeats 1 --max-steps 18 --provider deepseek --no-fallback \
+  --output .local/benchmark/four-tasks-once.json
+```
+
+One run of this fixed four-task manifest scored **4/4**. The evaluator's visible-test counts were 63, 35, 10,036, and 29 passed respectively; hidden-test counts were 6, 5, 7, and 5 passed, with no failures or errors. The manifest SHA-256 was `834c0e46e3e187923e229e2450a3c76609fe50b691308eda03e5d11c0063904e`, and the Docker image ID was `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`. Total duration was 143.255 seconds; provider-reported tokens totaled 226,096. This new gate and single-repeat sample are separate from the earlier 8/9 three-task result. The four tasks are project-authored, and 16 tasks remain before the planned acceptance set.

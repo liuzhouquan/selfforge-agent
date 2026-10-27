@@ -65,6 +65,7 @@ def _manifest(root: Path) -> tuple[Path, list[Path]]:
 class ScriptedModel:
     def __init__(self, case: BenchmarkCase, *, cheat: bool = False) -> None:
         self.index = 0
+        self.case = case
         old, new = (("return a - b", "return a + b") if case.id == "addition"
                     else ("return name.upper()", "return name.strip().lower()"))
         if cheat:
@@ -78,7 +79,9 @@ class ScriptedModel:
         actions = [
             ("read_file", {"path": self.path}),
             ("edit_file", {"path": self.path, "old_text": self.old, "new_text": self.new}),
-            ("run_tests", {"path": "tests"}),
+            ("run_tests", {"path": self.case.agent_test_path,
+                           **({"keyword": self.case.agent_test_keyword}
+                              if self.case.agent_test_keyword else {})}),
         ]
         self.index += 1
         usage = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
@@ -101,6 +104,8 @@ def test_repeated_suite_uses_fresh_repos_and_hidden_tests(tmp_path: Path) -> Non
     assert report["total_tokens"] == 4 * 4 * 15
     assert report["failure_reasons"] == {}
     assert all(item["holdout_passed"] == 1 and item["changed_files"] == ["app.py"]
+               for item in report["results"])
+    assert all(item["visible_status"] == "passed" and item["visible_passed"] == 1
                for item in report["results"])
     assert all(item["agent_steps"] == 4 and item["tools_used"] == 3
                and item["tool_trace"] == [
@@ -146,6 +151,70 @@ def test_claims_and_visible_test_edits_cannot_pass_holdout(tmp_path: Path) -> No
                                  sandbox="host", trusted_host=True)
     assert unavailable["failure_reasons"] == {"agent_failed": 1}
     assert unavailable["agent_error_codes"] == {"runtime_error": 1}
+
+
+def test_unrelated_green_test_cannot_hide_broken_visible_suite(tmp_path: Path) -> None:
+    manifest, _ = _manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["cases"] = payload["cases"][:1]
+    payload["cases"][0]["allowed_changes"] = [
+        "app.py", "tests/test_app.py", "tests/test_smoke.py",
+    ]
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    class RunsUnrelatedTest:
+        def __init__(self) -> None:
+            self.index = 0
+
+        def complete(self, _messages, _tools, _timeout):
+            actions = [
+                ("edit_file", {"path": "app.py", "old_text": "return a - b",
+                               "new_text": "return a + b"}),
+                ("edit_file", {"path": "tests/test_app.py",
+                               "old_text": "assert add(2, 3) == 5",
+                               "new_text": "assert add(2, 3) == 99"}),
+                ("edit_file", {"path": "tests/test_smoke.py", "old_text": "",
+                               "new_text": "def test_smoke():\n    assert True\n"}),
+                ("run_tests", {"path": "tests/test_smoke.py"}),
+            ]
+            self.index += 1
+            if self.index <= len(actions):
+                name, arguments = actions[self.index - 1]
+                return ModelTurn({"role": "assistant", "content": "", "tool_calls": [{
+                    "id": str(self.index), "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }]}, "tool_calls", "fixture", "scripted", None)
+            return ModelTurn({"role": "assistant", "content": "Fixed and tested"},
+                             "stop", "fixture", "scripted", None)
+
+    report = evaluate_suite(manifest, lambda _case: RunsUnrelatedTest(),
+                            sandbox="host", trusted_host=True)
+    result = report["results"][0]
+    assert result["agent_status"] == "completed"
+    assert result["holdout_status"] == "passed" and result["holdout_passed"] == 1
+    assert result["visible_status"] == "failed" and result["visible_failed"] == 1
+    assert result["reason"] == "visible_test_assertion_failed"
+    assert report["successes"] == 0
+
+
+def test_explicit_keyword_selects_relevant_visible_tests(tmp_path: Path) -> None:
+    manifest, repositories = _manifest(tmp_path)
+    repository = repositories[0]
+    (repository / "tests" / "test_unrelated.py").write_text(
+        "def test_unrelated():\n    assert False\n", encoding="utf-8")
+    _git(repository, "add", "tests/test_unrelated.py")
+    _git(repository, "commit", "-qm", "Add unrelated failing test")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["cases"] = payload["cases"][:1]
+    payload["cases"][0]["revision"] = _git(repository, "rev-parse", "HEAD")
+    payload["cases"][0]["agent_test_keyword"] = "test_add"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = evaluate_suite(manifest, ScriptedModel, sandbox="host", trusted_host=True)
+    assert report["successes"] == 1, report["results"]
+    result = report["results"][0]
+    assert result["visible_status"] == "passed" and result["visible_passed"] == 1
+    assert result["holdout_status"] == "passed"
 
 
 def test_provider_failure_code_omits_raw_error_text() -> None:
@@ -282,4 +351,5 @@ def test_suite_runs_agent_and_holdout_in_live_docker(tmp_path: Path) -> None:
     report = evaluate_suite(manifest, ScriptedModel)
     assert report["successes"] == 1, report["results"]
     assert report["results"][0]["holdout_status"] == "passed"
+    assert report["results"][0]["visible_status"] == "passed"
     assert report["image_id"].startswith("sha256:")

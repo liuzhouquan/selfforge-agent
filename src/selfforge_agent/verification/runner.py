@@ -71,6 +71,7 @@ class TestRunner:
         trusted: bool = False,
         timeout: float = 60,
         test_path: str = "tests",
+        keyword: str | None = None,
     ) -> TestResult:
         if not trusted:
             raise TrustRequiredError("Pass trusted=True only for a repository you trust")
@@ -78,7 +79,12 @@ class TestRunner:
         environment = f"local; python={sys.version.split()[0]}; platform={platform.platform()}"
         with tempfile.TemporaryDirectory(prefix="selfforge-agent-") as tempdir:
             xml_path = Path(tempdir) / "junit.xml"
-            command = [sys.executable, "-m", "pytest", str(target), f"--junitxml={xml_path}"]
+            command = [sys.executable, "-m", "pytest", str(target)]
+            if keyword is not None:
+                if not keyword.strip():
+                    raise ValueError("Test keyword must not be blank")
+                command.extend(["-k", keyword])
+            command.append(f"--junitxml={xml_path}")
             start = time.monotonic()
             process = subprocess.Popen(
                 command,
@@ -124,10 +130,15 @@ class DockerTestRunner:
         self.image = image
 
     def run(self, repository: Path, *, trusted: bool = False, timeout: float = 60,
-            test_path: str = "tests") -> TestResult:
+            test_path: str = "tests", keyword: str | None = None) -> TestResult:
         repo, target = _test_target(repository, test_path, timeout)
         relative = target.relative_to(repo).as_posix()
-        command = ["python", "-m", "pytest", relative, "--junitxml=/artifacts/junit.xml"]
+        command = ["python", "-m", "pytest", relative]
+        if keyword is not None:
+            if not keyword.strip():
+                raise ValueError("Test keyword must not be blank")
+            command.extend(["-k", keyword])
+        command.append("--junitxml=/artifacts/junit.xml")
         start = time.monotonic()
         outcome, xml = DockerExecutor(repo, image=self.image).run_with_artifact(
             shlex.join(command), timeout, "junit.xml")

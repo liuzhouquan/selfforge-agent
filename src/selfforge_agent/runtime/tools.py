@@ -58,6 +58,8 @@ class Bash(ToolArgs):
 
 class RunTests(ToolArgs):
     path: str = "tests"
+    keyword: str | None = Field(default=None, min_length=1, max_length=200,
+                                description="Optional pytest -k expression")
     timeout: float = Field(default=60, gt=0, le=180)
 
 
@@ -257,6 +259,10 @@ class ToolRegistry:
             raise ValueError("Test path does not exist")
         relative = path.relative_to(self.root)
         command = "python -m pytest " + shlex.quote(str(relative)) + " -q"
+        if args.keyword is not None:
+            if not args.keyword.strip():
+                raise ValueError("Test keyword must not be blank")
+            command += " -k " + shlex.quote(args.keyword)
         result = self.executor.run(command, args.timeout)
         return ToolOutcome(f"exit={result.returncode} timeout={result.timed_out}\n{result.output}",
                            result.returncode == 0 and not result.timed_out)

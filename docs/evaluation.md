@@ -76,3 +76,20 @@ The frozen [three-repository manifest](../benchmark/real-pilot/suite-three-repos
 | more-itertools | 3/3 | 9, 14, 9 | 33.552, 43.563, 46.096 |
 
 The report totals 321.037 seconds and 594,856 provider-reported tokens. Its ignored local path is `.local/benchmark/three-repos-repeat3.json`. The manifest and each external holdout were frozen before this combined run. The 18-step setting was chosen from earlier exploratory trials, and the more-itertools case was tried once before inclusion; these tasks and holdouts are project-authored. The result reaches three repositories but only three of the planned twenty tasks, so it is not a general model success-rate estimate. The next work is a larger fixed task set, dependency-ready Docker images, and test selection for unrelated suite failures; record every failure in the first acceptance run without adjusting the task wording or budget afterward.
+
+## Independent visible-test gate and fourth task, 2026-10-27
+
+The evaluator now reruns the manifest's visible test path independently on a separate copy **before** adding the unseen holdout. Both suites need at least one passed test and no failures, errors, or timeout. The report records visible and hidden JUnit counts separately. A synthetic negative control changed the source so its holdout passed, deliberately broke the specified visible test, ran a different green test, and obtained Agent `completed`; the new gate scored it `visible_test_assertion_failed`. Optional `agent_test_keyword` selects an explicit pytest `-k` expression for both Agent and evaluator, with tests that cover its use and empty selections.
+
+The [large-file more-itertools task](../benchmark/real-pilot/more-itertools-chunks.md) uses the same pinned upstream commit as the grouper case. The external holdout had four baseline assertion failures and one passing control. A single exploratory DeepSeek-only attempt completed in 17 model steps, changed only `more_itertools/more.py` and `tests/test_more.py`, and passed 23 independently rerun selected visible tests plus all five hidden checks. It took 40.240 seconds, 23 tool calls, and 102,596 provider-reported tokens; this trial is separate from the combined run.
+
+The fixed [four-task manifest](../benchmark/real-pilot/suite-four-tasks.json), SHA-256 `834c0e46e3e187923e229e2450a3c76609fe50b691308eda03e5d11c0063904e`, was then run once per task with DeepSeek `deepseek-flash`, 18 model steps, and Docker image ID `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`. All **4/4** attempts reached `completed`, changed only allowed files, and passed the independently rerun visible selection and external holdout:
+
+| Task | Visible passed | Hidden passed | Steps | Seconds | Provider tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| PocketFlow retry validation | 63 | 6 | 8 | 23.830 | 38,042 |
+| boltons Unicode punctuation | 35 | 5 | 18 | 46.698 | 100,430 |
+| more-itertools grouper size | 10,036 | 7 | 8 | 46.442 | 28,837 |
+| more-itertools zero chunk size | 29 selected | 5 | 11 | 26.285 | 58,787 |
+
+The report totals 143.255 seconds and 226,096 provider-reported tokens; no failure categories occurred. It stays in ignored `.local/benchmark/four-tasks-once.json`. The earlier 8/9 result used three tasks, three repeats each, and an older gate, so the two aggregates are not comparable or combinable. All four tasks and holdouts are project-authored; the 18-step limit was selected after prior trials, and the new task had one successful exploratory attempt before this run. This remains 16 tasks short of the planned 20-task acceptance set.

@@ -14,7 +14,7 @@
 | 2 | Implemented | Web Coding displays a bounded, read-only diff against the worktree base commit |
 | 2 | Implemented | Durable Web job records and history, explicit resume after server interruption, cross-process workspace locks and cancellation markers; active-job limit remains per process |
 | 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
-| 3 | In Progress | A tuned three-repository, three-task DeepSeek pilot scored 8/9 across three runs per task; the one failure reached the step cap after hidden tests passed. Build a frozen 20-task acceptance set and dependency-ready images before claiming broader reliability |
+| 3 | In Progress | A tuned three-repository, four-task DeepSeek pilot scored 4/4 with one repeat per task under the independent visible/hidden test gate. The earlier three-task, three-repeat run scored 8/9 under the older gate. Build a frozen 20-task acceptance set and dependency-ready images before claiming broader reliability |
 | 3 | Implemented | GitHub Actions runs locked dependency installation, Ruff, unit tests, and Docker integration tests on pushes to main and pull requests; first remote run passed |
 | 3 | Planned | Automatic PR risk prioritization and risk-to-test causal investigation; calibrated monetary cost reporting when model prices are available |
 | 4 | Planned | More precise tokenization, richer compaction, interactive approval, and richer Coding UI controls |
