@@ -22,9 +22,7 @@ class ContextManager:
         users = [item for item in messages if item.get("role") == "user"]
         if system is None or not users:
             raise ValueError("Session lacks a system prompt or task")
-        anchors = [system, users[0]]
-        if users[-1] is not users[0]:
-            anchors.append(users[-1])
+        anchors = [system, *users]
         if self.estimate(anchors) >= self.token_budget:
             raise ValueError("Task and constraints exceed context budget")
         digest = []
@@ -48,9 +46,8 @@ class ContextManager:
             body_limit = max(0, limit - len(_SUMMARY_PREFIX))
             return _SUMMARY_PREFIX + (summary_body[-body_limit:] if body_limit else "")
 
-        compacted = [anchors[0], {"role": "system", "content": bounded_summary(allowed)}, anchors[1]]
-        if len(anchors) == 3:
-            compacted.append(anchors[2])
+        compacted = [anchors[0], {"role": "system", "content": bounded_summary(allowed)},
+                     *anchors[1:]]
         while self.estimate(compacted) > self.token_budget and allowed > 100:
             allowed //= 2
             compacted[1]["content"] = bounded_summary(allowed)
