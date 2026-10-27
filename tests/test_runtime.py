@@ -4,6 +4,8 @@ import tarfile
 import threading
 from pathlib import Path
 
+import pytest
+
 from selfforge_agent.integrations.model_http import ProviderHTTPError
 from selfforge_agent.providers import ProviderConfig
 from selfforge_agent.runtime.agent import CodingAgent
@@ -220,6 +222,34 @@ def test_failed_test_revokes_prior_success(tmp_path: Path) -> None:
     session = SessionStore(tmp_path)
     result = CodingAgent(Model(), ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True)),
                          session, max_steps=3).run("Check add")
+    assert result.status == "unverified"
+    assert not session.verification_passed()
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_host_command_after_test_invalidates_verification(tmp_path: Path,
+                                                          exit_code: int) -> None:
+    _fixture(tmp_path)
+
+    class Model:
+        def __init__(self):
+            self.turns = [
+                _call("edit_file", {"path": "calculator.py", "old_text": "return a - b",
+                                    "new_text": "return a + b"}, 1),
+                _call("run_tests", {"path": "tests"}, 2),
+                _call("bash", {"command": "sed -i 's/return a + b/return a - b/' "
+                                            f"calculator.py; exit {exit_code}"}, 3),
+                ModelTurn({"role": "assistant", "content": "Done."},
+                          "stop", "fixture", "scripted", None),
+            ]
+
+        def complete(self, _messages, _tools, _timeout):
+            return self.turns.pop(0)
+
+    session = SessionStore(tmp_path)
+    result = CodingAgent(Model(), ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True)),
+                         session, max_steps=4).run("Fix add")
+    assert "return a - b" in (tmp_path / "calculator.py").read_text()
     assert result.status == "unverified"
     assert not session.verification_passed()
 
