@@ -88,6 +88,39 @@ def test_session_can_resume_after_step_limit(tmp_path: Path) -> None:
     assert second.session_id == first.session_id
 
 
+def test_session_recovers_torn_event_before_next_append(tmp_path: Path) -> None:
+    session = SessionStore(tmp_path)
+    session.record_message({"role": "user", "content": "Keep this task"})
+    session.record_status("max_steps")
+    session.record_verification(True)
+    with session.path.open("ab") as handle:
+        handle.write(b'{"type":"message","content":"\xe4')
+
+    assert session.load() == ([{"role": "user", "content": "Keep this task"}], "max_steps")
+    assert session.verification_passed()
+
+    session.record_status("running")
+    assert session.load()[1] == "running"
+    assert session.verification_passed()
+    assert len(session.path.read_bytes().splitlines()) == 4
+
+
+def test_agent_resumes_after_torn_session_event(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    session = SessionStore(tmp_path)
+    model = ScriptedModel()
+    tools = ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True))
+    first = CodingAgent(model, tools, session, max_steps=1).run("Fix add")
+    assert first.status == "max_steps"
+    with session.path.open("ab") as handle:
+        handle.write(b'{"type":"message"')
+
+    resumed = CodingAgent(model, tools, SessionStore(tmp_path, first.session_id),
+                          max_steps=5).run(resume=True)
+    assert resumed.status == "completed"
+    assert session.load()[1] == "completed"
+
+
 def test_resume_preserves_successful_test_evidence(tmp_path: Path) -> None:
     _fixture(tmp_path)
     class Model:
@@ -261,6 +294,29 @@ def test_trace_tail_ignores_incomplete_concurrent_event(tmp_path: Path) -> None:
     with session.trace_path.open("a", encoding="utf-8") as handle:
         handle.write('{"event": "unfinished"')
     assert [event["event"] for event in session.trace_events(limit=1)] == ["second"]
+
+
+def test_trace_tail_with_incomplete_utf8_recovers_on_next_append(tmp_path: Path) -> None:
+    session = SessionStore(tmp_path)
+    session.trace("first")
+    with session.trace_path.open("ab") as handle:
+        handle.write(b'{"event":"\xe4')
+
+    assert [event["event"] for event in session.trace_events()] == ["first"]
+    session.trace("second")
+    assert [event["event"] for event in session.trace_events()] == ["first", "second"]
+
+
+def test_complete_malformed_session_event_is_not_silently_discarded(tmp_path: Path) -> None:
+    session = SessionStore(tmp_path)
+    session.record_message({"role": "user", "content": "Keep this task"})
+    with session.path.open("ab") as handle:
+        handle.write(b'{"type":\n')
+
+    with pytest.raises(json.JSONDecodeError):
+        session.load()
+    with pytest.raises(json.JSONDecodeError):
+        session.verification_passed()
 
 
 def test_workspace_rejects_traversal_and_untrusted_host(tmp_path: Path) -> None:

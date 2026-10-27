@@ -1,8 +1,10 @@
 """Append-only local sessions and metadata-only execution traces."""
 
+import fcntl
 import json
 import os
 from collections import deque
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -21,10 +23,38 @@ class SessionStore:
 
     @staticmethod
     def _append(path: Path, event: dict) -> None:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"at": datetime.now(UTC).isoformat(), **event},
-                                    ensure_ascii=False) + "\n")
+        payload = (json.dumps({"at": datetime.now(UTC).isoformat(), **event},
+                              ensure_ascii=False) + "\n").encode("utf-8")
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            end = os.lseek(fd, 0, os.SEEK_END)
+            if end and os.pread(fd, 1, end - 1) != b"\n":
+                # A killed writer may leave an uncommitted final record. Repair it
+                # while holding the writer lock, before any new event is appended.
+                position = end
+                while position:
+                    start = max(0, position - 8192)
+                    newline = os.pread(fd, position - start, start).rfind(b"\n")
+                    if newline >= 0:
+                        os.ftruncate(fd, start + newline + 1)
+                        break
+                    position = start
+                else:
+                    os.ftruncate(fd, 0)
+            view = memoryview(payload)
+            while view:
+                view = view[os.write(fd, view):]
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _complete_events(path: Path) -> Iterator[dict]:
+        with path.open("rb") as handle:
+            for line in handle:
+                if not line.endswith(b"\n"):
+                    break  # A writer may still be finishing the last event.
+                yield json.loads(line)
 
     def record_message(self, message: dict) -> None:
         self._append(self.path, {"type": "message", "message": message})
@@ -44,8 +74,7 @@ class SessionStore:
         if not self.path.is_file():
             return False
         passed = False
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            event = json.loads(line)
+        for event in self._complete_events(self.path):
             if event.get("type") == "verification":
                 passed = event["passed"] is True
         return passed
@@ -58,8 +87,7 @@ class SessionStore:
             raise ValueError(f"Unknown session: {self.session_id}")
         messages: list[dict] = []
         status = None
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            event = json.loads(line)
+        for event in self._complete_events(self.path):
             if event.get("type") == "message":
                 messages.append(event["message"])
             elif event.get("type") == "compaction":
@@ -74,9 +102,6 @@ class SessionStore:
         if not self.trace_path.exists():
             return []
         events: deque[dict] = deque(maxlen=limit)
-        with self.trace_path.open(encoding="utf-8") as handle:
-            for line in handle:
-                if not line.endswith("\n"):
-                    break  # A concurrent writer may still be finishing this event.
-                events.append(json.loads(line))
+        for event in self._complete_events(self.trace_path):
+            events.append(event)
         return list(events)
