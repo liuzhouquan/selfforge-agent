@@ -5,11 +5,13 @@ import os
 from pathlib import Path
 from threading import Event
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
@@ -58,6 +60,45 @@ from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
 app = FastAPI(title="selfForge Agent")
+
+
+def _same_origin(request: Request, origin: str) -> bool:
+    try:
+        supplied = urlsplit(origin)
+        current = urlsplit(str(request.base_url))
+        if (supplied.scheme not in {"http", "https"} or not supplied.hostname
+                or supplied.username or supplied.password or supplied.path
+                or supplied.query or supplied.fragment):
+            return False
+        supplied_port = supplied.port
+        current_port = current.port
+    except ValueError:
+        return False
+    supplied_port = supplied_port if supplied_port is not None else (
+        443 if supplied.scheme == "https" else 80)
+    current_port = current_port if current_port is not None else (
+        443 if current.scheme == "https" else 80)
+    return (supplied.scheme, supplied.hostname, supplied_port) == (
+        current.scheme, current.hostname, current_port)
+
+
+@app.middleware("http")
+async def reject_cross_origin_mutations(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("origin")
+        fetch_site = request.headers.get("sec-fetch-site")
+        if ((origin is not None and not _same_origin(request, origin))
+                or (fetch_site is not None and fetch_site not in {"same-origin", "none"})):
+            return JSONResponse({"detail": "Cross-origin requests are not allowed"}, status_code=403)
+    return await call_next(request)
+
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    # TestClient uses testserver; browser users should use a loopback host.
+    allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"],
+    www_redirect=False,
+)
 _STATIC = Path(__file__).resolve().parent / "static"
 _WORKSPACES = Path(__file__).resolve().parents[3] / ".workspaces"
 _CODING_JOBS = CodingJobManager()
@@ -395,8 +436,7 @@ def github_review(request: GitHubReviewRequest) -> GitHubReviewResponse:
 
 @app.post("/api/github/checkout", response_model=CheckoutResult)
 def github_checkout(request: GitHubCheckoutRequest, client: Request) -> CheckoutResult:
-    if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
-        raise HTTPException(status_code=403, detail="Checkout is available only from localhost")
+    _require_local(client)
     try:
         return checkout_pr(request.url, _WORKSPACES)
     except GitHubPRError as exc:
@@ -405,8 +445,7 @@ def github_checkout(request: GitHubCheckoutRequest, client: Request) -> Checkout
 
 @app.post("/api/github/repair", response_model=GitHubRepairResponse)
 def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepairResponse:
-    if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
-        raise HTTPException(status_code=403, detail="Repair is available only from localhost")
+    _require_local(client)
     if (request.sandbox == "host" and
             (os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local_tests)):
         raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this PR")
