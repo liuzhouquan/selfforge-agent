@@ -21,6 +21,8 @@ class CommandResult:
 
 
 class Executor(Protocol):
+    persists_writes: bool
+
     def run(self, command: str, timeout: float) -> CommandResult: ...
 
 
@@ -39,6 +41,8 @@ def _run(argv: list[str], cwd: Path | None, timeout: float) -> CommandResult:
 
 
 class HostExecutor:
+    persists_writes = True
+
     def __init__(self, root: Path, *, trusted: bool = False) -> None:
         if not trusted:
             raise ValueError("Host execution requires explicit trust")
@@ -64,6 +68,8 @@ class HostExecutor:
 
 
 class DockerExecutor:
+    persists_writes = False
+
     def __init__(self, root: Path, image: str = "selfforge-agent-sandbox:latest") -> None:
         self.root = root.resolve()
         if not self.root.is_dir() or not image or any(char.isspace() for char in image):

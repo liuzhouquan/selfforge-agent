@@ -143,7 +143,10 @@ class CodingAgent:
                         from selfforge_agent.runtime.tools import ToolOutcome
                         outcome = ToolOutcome(f"Tool arguments error: {exc}", False)
                     tools_used += 1
-                    if name == "edit_file" and outcome.ok:
+                    # Failed writes can leave partial changes; host commands may write too.
+                    if (name == "edit_file" or
+                            (name == "bash" and getattr(self.tools.executor,
+                                                        "persists_writes", True))):
                         tests_passed = False
                         self.session.record_verification(False)
                     elif name == "run_tests":

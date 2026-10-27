@@ -249,7 +249,13 @@ def test_web_coding_defaults_to_real_docker(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
                         CodingWorkspaceManager(tmp_path / "coding-worktrees"))
     monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager(root=tmp_path / "jobs"))
-    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: ScriptedModel())
+    class DockerModel(ScriptedModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.turns.insert(-1, _call("bash", {"command": "python -c 'from pathlib import Path; "
+                "Path(\"calculator.py\").write_text(\"def add(a, b):\\n    return a - b\\n\")'"}, 5))
+
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: DockerModel())
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.delenv("SELFFORGE_ENABLE_HOST_TESTS", raising=False)
     client = TestClient(api_module.app)
@@ -261,4 +267,6 @@ def test_web_coding_defaults_to_real_docker(monkeypatch: pytest.MonkeyPatch,
     assert done["state"] == "completed", done["error"]
     assert "return a + b" in (Path(done["workspace_path"]) / "calculator.py").read_text()
     assert "return a - b" in (repo / "calculator.py").read_text()
-    assert done["tools_used"] == 4
+    assert done["tools_used"] == 5
+    assert any(item["event"] == "tool" and item["name"] == "bash" and item["ok"]
+               for item in done["trace"])
