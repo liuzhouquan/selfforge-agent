@@ -111,7 +111,7 @@ uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task 'Repair the regression' --sandbox host --trust-local-tests
 ```
 
-Agent statuses are `completed` (pytest succeeded after the last edit), `unverified` (finished without test evidence), `failed`, `max_steps`, `timed_out`, and `cancelled`. New sessions and traces live under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`, outside the target repository; older sessions remain resumable by ID. `workspaces remove` never forces deletion and refuses a dirty worktree. Ctrl-C interrupts a run; cancellation is checked between model and tool calls, while each call has its own timeout.
+Agent statuses are `completed` (pytest succeeded after the last edit), `unverified` (finished without test evidence), `failed`, `max_steps`, `timed_out`, and `cancelled`. New sessions and traces live under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`, outside the target repository; older sessions remain resumable by ID. `workspaces remove` never forces deletion and refuses a dirty worktree. Ctrl-C interrupts a run. Provider fallback shares one model-call timeout budget, and cancellation is checked between provider attempts. An in-flight HTTP request relies on its transport timeout before cancellation is observed.
 
 ## Architecture
 

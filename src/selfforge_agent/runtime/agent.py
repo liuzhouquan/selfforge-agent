@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 from selfforge_agent.runtime.context import ContextManager
-from selfforge_agent.runtime.model import ChatModel
+from selfforge_agent.runtime.model import (
+    ChatModel,
+    ModelCallCancelled,
+    ModelCallTimedOut,
+    OpenAIChatAdapter,
+)
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 
@@ -47,6 +52,9 @@ class CodingAgent:
         self.time_budget = time_budget
         self.context = ContextManager(context_budget)
         self.cancel = cancel or threading.Event()
+        if isinstance(model, OpenAIChatAdapter):
+            # Web jobs may replace self.cancel with a durable cross-process marker.
+            model.set_cancel_check(lambda: self.cancel.is_set())
 
     def _append(self, messages: list[dict], message: dict) -> None:
         messages.append(message)
@@ -159,6 +167,11 @@ class CodingAgent:
             return self._finish("max_steps", "", self.max_steps, tools_used)
         except KeyboardInterrupt:
             return self._finish("cancelled", "", 0, tools_used)
+        except ModelCallCancelled:
+            return self._finish("cancelled", "", 0, tools_used)
+        except ModelCallTimedOut as exc:
+            self.session.trace("error", error_type=type(exc).__name__, message=str(exc))
+            return self._finish("timed_out", "", 0, tools_used, str(exc))
         except (RuntimeError, ValueError, OSError) as exc:
             self.session.trace("error", error_type=type(exc).__name__, message=str(exc)[:300])
             return self._finish("failed", "", 0, tools_used, str(exc))
