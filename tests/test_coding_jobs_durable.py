@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from selfforge_agent.api import app as api_module
 from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.runtime.agent import AgentResult
+from selfforge_agent.runtime.execution import DockerExecutor
 from selfforge_agent.runtime.session import SessionStore
 
 
@@ -77,6 +78,20 @@ def test_two_managers_share_workspace_lock_history_and_cancel(tmp_path: Path,
                                               params={"repository": str(workspace)})
     assert response.status_code == 200
     assert response.json()[0]["job_id"] == job.job_id
+
+
+def test_web_job_binds_durable_cancel_to_docker_staging(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agent = WaitingAgent(workspace, tmp_path / "sessions", Event())
+    executor = DockerExecutor(workspace)
+    agent.tools.executor = executor
+    manager = CodingJobManager(root=tmp_path / "jobs")
+
+    job = manager.start(agent, "Wait")
+    assert executor.cancel is job.cancel
+    manager.cancel(job.job_id)
+    assert _finished(manager, job.job_id)["state"] == "cancelled"
 
 
 def test_crashed_process_job_becomes_interrupted_and_releases_workspace(tmp_path: Path) -> None:

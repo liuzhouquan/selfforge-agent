@@ -1,16 +1,133 @@
 """Bounded command execution on the host or in an isolated Docker container."""
 
+import fnmatch
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import tarfile
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import Protocol
 from uuid import uuid4
+
+MAX_STAGED_ENTRIES = 8_000
+MAX_STAGED_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 96 * 1024 * 1024
+_EXCLUDED = (
+    ".git", ".venv", ".env", ".env.*", ".local", ".selfforge", ".workspaces",
+    ".aws", ".ssh", ".npmrc", ".pypirc", ".netrc", "__pycache__", "node_modules",
+)
+
+
+class _StageTimedOut(Exception):
+    pass
+
+
+class _StageCancelled(Exception):
+    pass
+
+
+def _check_staging(deadline: float, cancel: Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise _StageCancelled
+    if time.monotonic() >= deadline:
+        raise _StageTimedOut
+
+
+class _CheckedReader:
+    def __init__(self, source, deadline: float, cancel: Event | None) -> None:
+        self.source = source
+        self.deadline = deadline
+        self.cancel = cancel
+
+    def read(self, size: int) -> bytes:
+        _check_staging(self.deadline, self.cancel)
+        block = self.source.read(size)
+        _check_staging(self.deadline, self.cancel)
+        return block
+
+
+def _stage_workspace(root: Path, staged: Path, deadline: float,
+                     cancel: Event | None) -> None:
+    entries = 0
+    estimated_bytes = 0
+    copied_bytes = 0
+    staged.mkdir()
+    pending = [(root, staged)]
+    directories = [(root, staged)]
+    while pending:
+        source_dir, destination_dir = pending.pop()
+        _check_staging(deadline, cancel)
+        with os.scandir(source_dir) as listing:
+            for entry in listing:
+                _check_staging(deadline, cancel)
+                if any(fnmatch.fnmatch(entry.name, pattern) for pattern in _EXCLUDED):
+                    continue
+                entries += 1
+                if entries > MAX_STAGED_ENTRIES:
+                    raise ValueError("Workspace staging entry limit exceeded")
+                info = entry.stat(follow_symlinks=False)
+                source = Path(entry.path)
+                destination = destination_dir / entry.name
+                if stat.S_ISDIR(info.st_mode):
+                    destination.mkdir()
+                    pending.append((source, destination))
+                    directories.append((source, destination))
+                elif stat.S_ISLNK(info.st_mode):
+                    destination.symlink_to(os.readlink(source))
+                elif stat.S_ISREG(info.st_mode):
+                    estimated_bytes += info.st_size
+                    if estimated_bytes > MAX_STAGED_BYTES:
+                        raise ValueError("Workspace staging byte limit exceeded")
+                    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0))
+                    fd = os.open(source, flags)
+                    with os.fdopen(fd, "rb") as reader, destination.open("wb") as writer:
+                        if not stat.S_ISREG(os.fstat(reader.fileno()).st_mode):
+                            raise ValueError("Workspace staging contains an unsupported entry")
+                        while block := reader.read(64 * 1024):
+                            _check_staging(deadline, cancel)
+                            copied_bytes += len(block)
+                            if copied_bytes > MAX_STAGED_BYTES:
+                                raise ValueError("Workspace staging byte limit exceeded")
+                            writer.write(block)
+                            _check_staging(deadline, cancel)
+                    shutil.copystat(source, destination, follow_symlinks=False)
+                else:
+                    raise ValueError("Workspace staging contains an unsupported entry")
+    for source, destination in reversed(directories):
+        _check_staging(deadline, cancel)
+        shutil.copystat(source, destination, follow_symlinks=False)
+    _check_staging(deadline, cancel)
+
+
+def _archive_workspace(staged: Path, archive: Path, deadline: float,
+                       cancel: Event | None) -> None:
+    with tarfile.open(archive, "w", dereference=False) as bundle:
+        pending = [staged]
+        while pending:
+            directory = pending.pop()
+            for path in directory.iterdir():
+                _check_staging(deadline, cancel)
+                info = bundle.gettarinfo(str(path), arcname=path.relative_to(staged).as_posix())
+                if info is None:
+                    raise ValueError("Workspace staging contains an unsupported entry")
+                if info.isfile():
+                    with path.open("rb") as source:
+                        bundle.addfile(info, _CheckedReader(source, deadline, cancel))
+                else:
+                    bundle.addfile(info)
+                if bundle.fileobj.tell() > MAX_ARCHIVE_BYTES:
+                    raise ValueError("Workspace staging archive byte limit exceeded")
+                _check_staging(deadline, cancel)
+                if info.isdir():
+                    pending.append(path)
+    _check_staging(deadline, cancel)
 
 
 @dataclass(frozen=True)
@@ -70,11 +187,13 @@ class HostExecutor:
 class DockerExecutor:
     persists_writes = False
 
-    def __init__(self, root: Path, image: str = "selfforge-agent-sandbox:latest") -> None:
+    def __init__(self, root: Path, image: str = "selfforge-agent-sandbox:latest",
+                 *, cancel: Event | None = None) -> None:
         self.root = root.resolve()
         if not self.root.is_dir() or not image or any(char.isspace() for char in image):
             raise ValueError("A workspace directory and Docker image are required")
         self.image = image
+        self.cancel = cancel
 
     def run(self, command: str, timeout: float) -> CommandResult:
         result, _ = self._execute(command, timeout)
@@ -99,17 +218,16 @@ class DockerExecutor:
 
         with tempfile.TemporaryDirectory(prefix="selfforge-docker-") as temp:
             staged = Path(temp) / "workspace"
-            shutil.copytree(self.root, staged, symlinks=True,
-                            ignore=shutil.ignore_patterns(
-                                ".git", ".venv", ".env", ".env.*", ".local", ".selfforge",
-                                ".workspaces",
-                                ".aws", ".ssh", ".npmrc", ".pypirc", ".netrc",
-                                "__pycache__", "node_modules"
-                            ))
             archive = Path(temp) / "workspace.tar"
-            with tarfile.open(archive, "w") as bundle:
-                for child in staged.iterdir():
-                    bundle.add(child, arcname=child.name)
+            try:
+                _stage_workspace(self.root, staged, deadline, self.cancel)
+                _archive_workspace(staged, archive, deadline, self.cancel)
+            except _StageTimedOut:
+                return CommandResult(None, "Workspace staging timed out", True), None
+            except _StageCancelled:
+                return CommandResult(None, "Workspace staging cancelled"), None
+            except ValueError as exc:
+                return CommandResult(1, str(exc)), None
             argv = [
                 "docker", "run", "-d", "--rm", "--name", name, "--pull", "never",
                 "--network", "none", "--read-only",
