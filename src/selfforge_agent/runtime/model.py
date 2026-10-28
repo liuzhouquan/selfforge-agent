@@ -1,6 +1,8 @@
 """OpenAI-compatible native tool-calling adapter with provider fallback."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from time import monotonic
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -26,8 +28,17 @@ class ChatModel(Protocol):
     def complete(self, messages: list[dict], tools: list[dict], timeout: float) -> ModelTurn: ...
 
 
+class ModelCallTimedOut(TimeoutError):
+    """The shared deadline for one model call has expired."""
+
+
+class ModelCallCancelled(RuntimeError):
+    """The caller cancelled a model call between provider attempts."""
+
+
 class OpenAIChatAdapter:
-    def __init__(self, providers: list[ProviderConfig]) -> None:
+    def __init__(self, providers: list[ProviderConfig],
+                 *, cancelled: Callable[[], bool] | None = None) -> None:
         if not providers:
             raise ValueError("Configure at least one model provider")
         for provider in providers:
@@ -38,12 +49,28 @@ class OpenAIChatAdapter:
                 raise ValueError(f"API key required for {provider.name}")
         self.providers = providers
         self.active_index = 0
+        self.cancelled = cancelled
+
+    def set_cancel_check(self, cancelled: Callable[[], bool]) -> None:
+        self.cancelled = cancelled
+
+    def _remaining(self, deadline: float) -> float:
+        if self.cancelled is not None and self.cancelled():
+            raise ModelCallCancelled("Model call cancelled")
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise ModelCallTimedOut("Model call timed out during provider fallback")
+        return remaining
 
     def complete(self, messages: list[dict], tools: list[dict], timeout: float) -> ModelTurn:
+        if timeout <= 0:
+            raise ModelCallTimedOut("Model call timed out before the first provider")
+        deadline = monotonic() + timeout
         errors = []
         for index in range(self.active_index, len(self.providers)):
             provider = self.providers[index]
             try:
+                remaining = self._remaining(deadline)
                 # DeepSeek thinking-mode tool turns require their original reasoning_content.
                 # Other OpenAI-compatible providers may reject this extension.
                 history = (messages if provider.name == "deepseek" else [
@@ -54,8 +81,9 @@ class OpenAIChatAdapter:
                 if tools:
                     payload.update({"tools": tools, "tool_choice": "auto"})
                 response = request_json(provider.base_url.rstrip("/") + "/chat/completions",
-                                        provider.key, payload=payload, timeout=timeout,
+                                        provider.key, payload=payload, timeout=remaining,
                                         max_bytes=2_000_000)
+                self._remaining(deadline)
                 choice = response["choices"][0]
                 raw = choice["message"]
                 if not isinstance(raw, dict):
@@ -74,4 +102,5 @@ class OpenAIChatAdapter:
             except (ProviderHTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
                 errors.append(f"{provider.name}: {exc}")
                 self.active_index = index + 1
+            self._remaining(deadline)
         raise RuntimeError("All providers failed: " + "; ".join(errors))
