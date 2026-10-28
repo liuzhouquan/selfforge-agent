@@ -13,6 +13,7 @@ from threading import Event, Lock, Thread
 from uuid import uuid4
 
 from selfforge_agent.runtime.agent import AgentResult, CodingAgent
+from selfforge_agent.runtime.execution import DockerExecutor
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspace
 
@@ -194,6 +195,8 @@ class CodingJobManager:
                     job_id = uuid4().hex[:12]
                 cancel = DurableCancel(self._cancel_path(job_id), agent.cancel)
                 agent.cancel = cancel
+                if isinstance(getattr(agent.tools, "executor", None), DockerExecutor):
+                    agent.tools.executor.cancel = cancel
                 job = CodingJob(job_id, agent.tools.root, agent.session, cancel,
                                 workspace_info.repository if workspace_info else agent.tools.root,
                                 workspace_info.branch if workspace_info else "",
