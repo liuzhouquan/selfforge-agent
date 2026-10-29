@@ -4,7 +4,7 @@
 
 A Python coding agent with a complete foundational harness, focused on autonomous coding and test-backed verification.
 
-[简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Product scope](./docs/product-scope.en.md) · [Roadmap](./docs/roadmap.md)
+[简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Product scope](./docs/product-scope.en.md) · [Roadmap](./docs/roadmap.md) · [Development guide (中文)](./docs/development.md)
 
 ```text
 User task → native tool calling → search/read code → exact edits → pytest → exit-code evidence and trace
@@ -168,4 +168,4 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, grow the fixed task set to 20 cases, add dependency-ready images, and freeze each test selection and execution policy before rerunning. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).
+Next, unify JUnit evidence requirements for general Coding, then add reproducible project dependency environments. Review task contracts and reference fixes before expanding and freezing the 20-task acceptance set. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).

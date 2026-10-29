@@ -20,6 +20,6 @@ These numbers are project acceptance targets, not achieved results. A useful mod
 
 ## Near-term order
 
-1. Expand the real Python repository task set to 20 cases with the [repeated-evaluation tool](./benchmark.md), freeze tasks, holdouts, and execution policy in advance, then measure failure modes.
-2. Improve dependency-ready execution, test selection, and repair based on those failures.
-3. Finish CI and the delivery workflow, then keep testing Web recovery in real service deployments.
+1. Prioritize reproduced reliability problems. After interruption recovery, align general Coding with independent evaluation requirements for nonempty JUnit-backed test evidence.
+2. Add reproducible project dependencies, test selection, and the repair loop. Review candidate task contracts and reference fixes before freezing 20 tasks with three repeats each and recording failure modes.
+3. Maintain existing CI, complete delivery workflows, and keep testing Web recovery in real deployments. See the [development guide (Chinese)](./development.md) for concrete acceptance checks.

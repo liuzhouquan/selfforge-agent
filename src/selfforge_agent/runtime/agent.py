@@ -75,6 +75,14 @@ class CodingAgent:
                     if item.get("role") == "tool"}
         for call in calls:
             if call.get("id") not in existing:
+                # Older logs may predate write-ahead invalidation. We cannot know
+                # whether an interrupted call wrote files or completed testing.
+                # Invalidate before recording the synthetic reply so another
+                # interrupted resume cannot conceal that uncertainty.
+                if (call.get("function") or {}).get("name") in {
+                    "edit_file", "bash", "run_tests",
+                }:
+                    self.session.record_verification(False)
                 self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),
                                         "content": "Previous run was interrupted before this tool completed"})
 
@@ -84,8 +92,8 @@ class CodingAgent:
             messages, _ = self.session.load()
             self._resume_pending(messages)
             if task.strip():
-                self._append(messages, {"role": "user", "content": task.strip()})
                 self.session.record_verification(False)
+                self._append(messages, {"role": "user", "content": task.strip()})
             else:
                 tests_passed = self.session.verification_passed()
         else:
@@ -140,6 +148,14 @@ class CodingAgent:
                         return self._finish("timed_out", "", step, tools_used)
                     function = call.get("function") or {}
                     name = function.get("name", "")
+                    # Persist invalidation before any side effects. A cancelled
+                    # or killed tool may never return, and failed writes may be
+                    # partial. A new test attempt supersedes earlier evidence.
+                    if (name in {"edit_file", "run_tests"} or
+                            (name == "bash" and getattr(self.tools.executor,
+                                                        "persists_writes", True))):
+                        tests_passed = False
+                        self.session.record_verification(False)
                     try:
                         arguments = json.loads(function.get("arguments") or "{}")
                         if not isinstance(arguments, dict):
@@ -151,13 +167,7 @@ class CodingAgent:
                         from selfforge_agent.runtime.tools import ToolOutcome
                         outcome = ToolOutcome(f"Tool arguments error: {exc}", False)
                     tools_used += 1
-                    # Failed writes can leave partial changes; host commands may write too.
-                    if (name == "edit_file" or
-                            (name == "bash" and getattr(self.tools.executor,
-                                                        "persists_writes", True))):
-                        tests_passed = False
-                        self.session.record_verification(False)
-                    elif name == "run_tests":
+                    if name == "run_tests":
                         tests_passed = outcome.ok
                         self.session.record_verification(tests_passed)
                     self.session.trace("tool", name=name, ok=outcome.ok,

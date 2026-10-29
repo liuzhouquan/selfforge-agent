@@ -1,7 +1,12 @@
 # Roadmap
 
+Development order and per-change acceptance checks: [development guide](./development.md). Confirmed reliability fixes and test-evidence consistency precede expansion of the acceptance task count.
+
 | Priority | Status | Work |
 | --- | --- | --- |
+| 1 | Implemented | Write-ahead verification invalidation for edits, persistent commands, test attempts and new tasks; conservative recovery of legacy pending calls, with abrupt-process-exit regression coverage |
+| 1 | Planned | Reuse JUnit-backed runners for general Coding and reject all-skipped/empty evidence; cover missing or malformed reports and timeouts (audit P1-08) |
+| 2 | Planned | Reproducible project dependency images beyond the default Python/pytest sandbox |
 | 1 | Implemented | General native tool-calling Runtime, validated file/search/bash/test tools, model fallback, step and time limits |
 | 1 | Implemented | Resumable JSONL sessions in user data storage, metadata traces, output caps, approximate context compaction |
 | 1 | Implemented | Objective two-case coding evaluation and deterministic offline end-to-end demo |

@@ -4,7 +4,7 @@
 
 具备完整基础 Harness、以自主编程与测试验证为特色的 Python Coding Agent。
 
-[简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [产品边界](./docs/product-scope.md) · [路线图](./docs/roadmap.md)
+[简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [产品边界](./docs/product-scope.md) · [路线图](./docs/roadmap.md) · [开发指南](./docs/development.md)
 
 ```text
 用户任务 → 原生 Tool Calling → 搜索与阅读代码 → 精确修改 → 运行 pytest → 检查退出码与轨迹
@@ -168,4 +168,4 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-下一步优先把固定任务集扩至 20 题，补项目依赖镜像，并预先固定各题测试范围与运行策略，再复测完成率和失败原因。见[产品边界与验收](./docs/product-scope.md)和[路线图](./docs/roadmap.md)。
+下一步优先统一通用 Coding 的 JUnit 测试证据门槛，再补可复现的项目依赖环境；审核任务契约及参考修复后，扩展并冻结 20 题正式评测集。见[产品边界与验收](./docs/product-scope.md)和[路线图](./docs/roadmap.md) · [开发指南](./docs/development.md)。
