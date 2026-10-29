@@ -67,6 +67,35 @@ def _finished(client: TestClient, job_id: str) -> dict:
     pytest.fail("Coding job did not finish")
 
 
+def test_web_coding_uses_selected_dependency_image(monkeypatch: pytest.MonkeyPatch,
+                                                   tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    selected = []
+
+    def run(agent, _task, *, resume=False):
+        selected.append(agent.tools.executor.image)
+        return AgentResult(agent.session.session_id, "unverified", "Image selected", 0, 0)
+
+    monkeypatch.setattr(api_module.CodingAgent, "run", run)
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
+                        CodingWorkspaceManager(tmp_path / "coding-worktrees"))
+    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager(root=tmp_path / "jobs"))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    client = TestClient(api_module.app)
+    response = client.post("/api/code/jobs", json={
+        "repository": str(repo), "task": "Check project", "image": "project-deps:locked",
+    })
+    assert response.status_code == 200
+    assert _finished(client, response.json()["job_id"])["state"] == "unverified"
+    assert selected == ["project-deps:locked"]
+    for invalid in ("", "--privileged", "image name", "x" * 257):
+        rejected = client.post("/api/code/jobs", json={
+            "repository": str(repo), "task": "Check project", "image": invalid,
+        })
+        assert rejected.status_code == 422
+    assert selected == ["project-deps:locked"]
+
+
 def test_web_coding_can_resume_and_verify_on_host(monkeypatch: pytest.MonkeyPatch,
                                                    tmp_path: Path) -> None:
     repo = _repo(tmp_path)

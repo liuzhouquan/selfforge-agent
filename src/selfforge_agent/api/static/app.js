@@ -64,6 +64,7 @@ function refreshCodingAvailability() {
   const host = $("coding-sandbox").value === "host";
   const direct = $("coding-workspace").value === "direct";
   $("coding-host-trust").hidden = !host;
+  $("coding-image-label").hidden = host;
   $("coding-direct-trust").hidden = !direct;
   $("coding-start").disabled = codingJobRunning || !configuredProviders.length ||
     (host && (!hostTestsEnabled || !$("coding-trust").checked)) ||
@@ -72,7 +73,7 @@ function refreshCodingAvailability() {
     ? "需先配置模型密钥"
     : direct && !$("coding-confirm-direct").checked ? "直接修改原仓库需明确确认"
     : host ? (hostTestsEnabled ? "本机执行需明确勾选信任" : "本机执行需设置 SELFFORGE_ENABLE_HOST_TESTS=1")
-      : "Docker 模式需先构建 selfforge-agent-sandbox:latest 镜像";
+      : "请使用已准备好项目依赖的本机镜像；运行测试时保持禁网";
 }
 
 function renderCodingJob(job) {
@@ -185,6 +186,7 @@ $("coding-form").addEventListener("submit", async (event) => {
       workspace: $("coding-workspace").value,
       confirm_direct: $("coding-workspace").value === "direct" && $("coding-confirm-direct").checked,
       sandbox: $("coding-sandbox").value, trust_local: host && $("coding-trust").checked,
+      image: $("coding-image").value.trim() || "selfforge-agent-sandbox:latest",
       provider: $("coding-provider").value, fallback: $("coding-fallback").checked,
       max_steps: Number($("coding-steps").value), time_budget: Number($("coding-time").value),
     });

@@ -16,6 +16,7 @@ from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.benchmark import evaluate_suite
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
+from selfforge_agent.runtime.images import build_dependency_image
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
@@ -94,6 +95,13 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
+    sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image")
+    sandbox.add_argument("action", choices=["build"])
+    sandbox.add_argument("--requirements", type=Path, required=True)
+    sandbox.add_argument("--wheelhouse", type=Path, required=True)
+    sandbox.add_argument("--tag", required=True)
+    sandbox.add_argument("--base-image", default="selfforge-agent-sandbox:latest")
+    sandbox.add_argument("--timeout", type=float, default=300)
     code = subcommands.add_parser("code", help="Run a general autonomous coding task")
     code.add_argument("--repo", type=Path, default=Path.cwd())
     code.add_argument("--task", help="Natural-language development task")
@@ -189,6 +197,14 @@ def main() -> int:
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
+    if args.command == "sandbox":
+        try:
+            report = build_dependency_image(args.requirements, args.wheelhouse, tag=args.tag,
+                                            base_image=args.base_image, timeout=args.timeout)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(json.dumps(report, indent=2))
+        return 0
     if args.command == "code":
         return _run_code(args, parser)
     if args.command == "test":

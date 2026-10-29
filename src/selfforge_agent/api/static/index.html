@@ -41,6 +41,7 @@
               <label>模型供应商<select id="coding-provider"><option value="auto">自动选择</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option></select></label>
               <label>代码工作区<select id="coding-workspace"><option value="worktree">独立 Git worktree（默认）</option><option value="direct">直接修改原仓库</option></select></label>
               <label>执行环境<select id="coding-sandbox"><option value="docker">Docker 隔离（默认）</option><option value="host">本机执行（仅可信代码）</option></select></label>
+              <label id="coding-image-label">Docker 镜像<input id="coding-image" type="text" value="selfforge-agent-sandbox:latest" maxlength="256" placeholder="本机镜像名称或 sha256 ID" /></label>
               <label>最大步数<input id="coding-steps" type="number" min="1" max="100" value="12" /></label>
               <label>时间预算（秒）<input id="coding-time" type="number" min="1" max="1200" value="300" /></label>
             </div>
