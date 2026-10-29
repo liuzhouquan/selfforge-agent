@@ -55,7 +55,7 @@ from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
-from selfforge_agent.runtime.workspace_diff import workspace_diff
+from selfforge_agent.runtime.workspace_diff import DiffLimitError, workspace_diff
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
@@ -337,6 +337,8 @@ def coding_workspace_diff(session_id: str, repository: str, client: Request) -> 
     try:
         workspace = _CODING_WORKSPACES.get(Path(repository).expanduser().resolve(), session_id)
         return workspace_diff(workspace)
+    except DiffLimitError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
