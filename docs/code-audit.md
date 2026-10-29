@@ -109,7 +109,7 @@
 | P1-01 Host 命令写入后沿用旧测试结果 | [#13](https://github.com/liuzhouquan/selfforge-agent/pull/13) | 持久化写入型命令会清除验证状态；`tests/test_runtime.py` | 未发现该基线问题仍存在 |
 | P1-02 不完整 JSONL 尾行阻断恢复 | [#14](https://github.com/liuzhouquan/selfforge-agent/pull/14) | 只恢复完整换行事件；写入时清理未完成尾记录；`tests/test_runtime.py` | 未发现该基线问题仍存在 |
 | P1-03 上下文压缩丢弃中间用户约束 | [#15](https://github.com/liuzhouquan/selfforge-agent/pull/15) | 保留所有用户消息；约束超出预算时明确失败；`tests/test_context.py` | 未发现该基线问题仍存在 |
-| P1-04 本地 API 未校验 Host/Origin | [#12](https://github.com/liuzhouquan/selfforge-agent/pull/12) | `TrustedHostMiddleware` 和变更请求的 Origin/Fetch Metadata 校验；`tests/test_web_origin.py` | **真实浏览器、DNS rebinding 与不同监听配置仍待验证** |
+| P1-04 本地 API 未校验 Host/Origin | [#12](https://github.com/liuzhouquan/selfforge-agent/pull/12) | `TrustedHostMiddleware` 和变更请求的 Origin/Fetch Metadata 校验；`tests/test_web_origin.py`；Chromium 真实浏览器检查见下文 | 动态 DNS 切换过程及反向代理/不同监听配置仍待验证 |
 | P1-05 Docker 暂存缺少资源/时间上限 | [#16](https://github.com/liuzhouquan/selfforge-agent/pull/16) | 暂存加入文件数、字节数、打包大小、deadline 和取消边界；`tests/test_docker_staging.py` | 大型真实仓库的资源表现仍待观察 |
 | P1-06 Provider 回退重复使用完整超时 | [#17](https://github.com/liuzhouquan/selfforge-agent/pull/17) | 一次模型调用共享 deadline，回退只用剩余时间；`tests/test_model_deadline.py` | 真实供应商网络时延分布仍未测量 |
 | P2-01 Web Diff 先完整读取 Git 输出 | [#18](https://github.com/liuzhouquan/selfforge-agent/pull/18) | Git 输出按字节上限读取并报告截断；`tests/test_workspace.py` | 极大仓库的峰值内存未量化 |
@@ -117,7 +117,11 @@
 | P2-03 损坏元数据使工作区列表整体失败 | [#20](https://github.com/liuzhouquan/selfforge-agent/pull/20) | 列表逐项隔离坏记录并保留诊断；`tests/test_workspace.py` | 未发现该基线问题仍存在 |
 | P2-04 架构文档遗漏可见测试门槛 | [#21](https://github.com/liuzhouquan/selfforge-agent/pull/21) | 架构文档现与实现和 `docs/benchmark.md` 一致 | 文档差异已修复 |
 
-本轮审计没有证实 P0。下一阶段应优先完成 P1-04 的真实浏览器来源边界验证；其余仍待确认项属于大规模资源表现或真实模型/网络分布，不应误写成已证实缺陷。Coding Agent 的 20-task acceptance set 仍未完成，见 [roadmap](./roadmap.md)，这是评测覆盖目标，不是上述基线缺陷之一。
+本轮审计没有证实 P0。Coding Agent 的 20-task acceptance set 仍未完成，见 [roadmap](./roadmap.md)，这是评测覆盖目标，不是上述基线缺陷之一。
+
+### P1-04 真实浏览器验证记录
+
+2026-10-29 使用缓存的 Chromium 对本地 Uvicorn 实例进行了检查。跨端口来源 `http://127.0.0.1:8766` 向 `http://127.0.0.1:8765` 发起简单 POST，浏览器实际发送请求，服务端记录 `403 Forbidden`；同源 POST 继续到业务路由，对不存在的任务返回预期 `404`。另用 Chromium host resolver 将 `attacker.example` 映射到 `127.0.0.1`，通过该 Host 请求 `/health`，服务端记录 `400 Bad Request`。这验证了来源校验和可信 Host 检查在浏览器请求中的拒绝行为。该实验模拟了攻击域名解析到 loopback 时的请求状态，没有验证从公网地址切换到 loopback 的动态 DNS 时序，也没有覆盖反向代理部署。
 
 ## 缺少的关键测试与未验证风险
 
