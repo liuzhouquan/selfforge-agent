@@ -3,11 +3,12 @@
 import json
 import subprocess
 import sys
+import tracemalloc
 from pathlib import Path
 
 import pytest
 
-from selfforge_agent.coding.worktree import WorktreeError
+from selfforge_agent.coding.worktree import WorktreeError, git_bounded
 from selfforge_agent.runtime.evaluation import CASES, OfflineFixtureModel
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager, WorkspaceError
@@ -121,6 +122,50 @@ def test_workspace_diff_caps_large_patches(tmp_path: Path) -> None:
     result = workspace_diff(workspace)
     assert result["files"][0]["truncated"]
     assert len(result["files"][0]["patch"]) < 25_000
+
+
+def test_workspace_diff_bounds_tracked_patch_memory(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "source")
+    workspace = CodingWorkspaceManager(tmp_path / "workspaces").create(repo, "abc123")
+    (workspace.path / "app.py").write_text(("x = '" + "a" * 180 + "'\n") * 25_000)
+    tracemalloc.start()
+    try:
+        result = workspace_diff(workspace)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert result["files"][0]["truncated"]
+    assert result["files"][0]["patch"].endswith("[Patch truncated]")
+    assert peak < 2_000_000
+
+
+def test_workspace_diff_rejects_truncated_path_list(tmp_path: Path,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    from selfforge_agent.runtime import workspace_diff as diff_module
+
+    repo = _repo(tmp_path / "source")
+    workspace = CodingWorkspaceManager(tmp_path / "workspaces").create(repo, "abc123")
+    (workspace.path / "app.py").write_text("VALUE = 2\n")
+    monkeypatch.setattr(diff_module, "MAX_PATH_LIST_BYTES", 1)
+    with pytest.raises(WorktreeError, match="Too many changed paths"):
+        workspace_diff(workspace)
+
+
+def test_bounded_git_preserves_command_failure(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "source")
+    with pytest.raises(WorktreeError, match="not-a-command"):
+        git_bounded(repo, "not-a-command", max_bytes=1024)
+
+
+def test_bounded_git_handles_utf8_cut_at_byte_limit(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "source")
+    (repo / "app.py").write_text("😀" * 100, encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "app.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.com", "commit", "-qm", "Unicode"], check=True)
+    output, truncated = git_bounded(repo, "show", "HEAD:app.py", max_bytes=1)
+    assert truncated
+    assert output == "\ufffd"
 
 
 def test_new_sessions_live_outside_repo_and_legacy_sessions_resume(tmp_path: Path) -> None:

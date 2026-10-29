@@ -105,6 +105,11 @@ def test_web_coding_can_resume_and_verify_on_host(monkeypatch: pytest.MonkeyPatc
     assert diff.status_code == 200
     assert any(item["path"] == "calculator.py" and "+    return a + b" in item["patch"]
                for item in diff.json()["files"])
+    monkeypatch.setattr("selfforge_agent.runtime.workspace_diff.MAX_PATH_LIST_BYTES", 1)
+    oversized = client.get(f"/api/code/workspaces/{done['session_id']}/diff",
+                           params={"repository": str(repo)})
+    assert oversized.status_code == 422
+    assert "Too many changed paths" in oversized.json()["detail"]
     assert client.get(f"/api/code/workspaces/{done['session_id']}/diff",
                       params={"repository": str(tmp_path / "other")}).status_code == 404
     assert not (repo / ".selfforge").exists()
