@@ -71,6 +71,20 @@ def test_worktree_rejects_missing_commit_and_wrong_repository(tmp_path: Path) ->
         manager.get(repo, "abc123")
 
 
+def test_workspace_list_skips_corrupt_metadata_and_warns(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "source")
+    manager = CodingWorkspaceManager(tmp_path / "workspaces")
+    valid = manager.create(repo, "good123")
+    manager.create(repo, "bad123")
+    corrupt = next((tmp_path / "workspaces").rglob("bad123.json"))
+    corrupt.write_text("{broken json", encoding="utf-8")
+
+    with pytest.warns(RuntimeWarning, match="bad123.json"):
+        listed = manager.list(repo)
+
+    assert listed == [valid]
+
+
 def test_worktree_storage_must_not_be_inside_source(tmp_path: Path) -> None:
     repo = _repo(tmp_path / "source")
     manager = CodingWorkspaceManager(repo / ".workspaces")
