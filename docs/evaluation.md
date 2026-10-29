@@ -93,3 +93,9 @@ The fixed [four-task manifest](../benchmark/real-pilot/suite-four-tasks.json), S
 | more-itertools zero chunk size | 29 selected | 5 | 11 | 26.285 | 58,787 |
 
 The report totals 143.255 seconds and 226,096 provider-reported tokens; no failure categories occurred. It stays in ignored `.local/benchmark/four-tasks-once.json`. The earlier 8/9 result used three tasks, three repeats each, and an older gate, so the two aggregates are not comparable or combinable. All four tasks and holdouts are project-authored; the 18-step limit was selected after prior trials, and the new task had one successful exploratory attempt before this run. This remains 16 tasks short of the planned 20-task acceptance set.
+
+## Nine-task candidate baseline, 2026-10-29
+
+The [nine-task candidate manifest](../benchmark/real-pilot/suite-nine-tasks.json) keeps the four existing cases and adds five boundary cases across the same three repositories. Its SHA-256 is `bb6606594f9995da94e697e669859428ffee8599c5af3f789fe55e62c6188f60`. Before any model evaluation, the Docker baseline gate confirmed all nine external holdouts fail by assertion without collection errors, and all selected visible suites pass. The five new cases have 2, 8, 14, 1, and 8 failing holdout assertions respectively; their visible selections pass 56, 56, 56, 13, and 60 tests. These are task-validity checks, not Agent runs or success-rate measurements. The checks used the existing image ID `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`.
+
+The new cases have not been run with a live model. The candidate set still needs 11 additional tasks and a frozen evaluation policy before it can satisfy the 20-task acceptance target; the four-task pilot results above do not apply to this larger manifest.
