@@ -28,11 +28,16 @@ def _junit_counts(xml: bytes | None, timed_out: bool) -> tuple[dict[str, int], s
         suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
         if not suites:
             raise ValueError("No testsuite element")
-        total = sum(int(s.get("tests", "0")) for s in suites)
-        counts["failed"] = sum(int(s.get("failures", "0")) for s in suites)
-        counts["errors"] = sum(int(s.get("errors", "0")) for s in suites)
-        counts["skipped"] = sum(int(s.get("skipped", "0")) for s in suites)
-        counts["passed"] = max(0, total - counts["failed"] - counts["errors"] - counts["skipped"])
+        for suite in suites:
+            total, failed, errors, skipped = (
+                int(suite.get(key, "0")) for key in ("tests", "failures", "errors", "skipped")
+            )
+            if min(total, failed, errors, skipped) < 0 or failed + errors + skipped > total:
+                raise ValueError("Inconsistent testsuite counts")
+            counts["failed"] += failed
+            counts["errors"] += errors
+            counts["skipped"] += skipped
+            counts["passed"] += total - failed - errors - skipped
         return counts, None
     except (ET.ParseError, ValueError) as exc:
         return counts, f"Invalid JUnit XML: {exc}"
@@ -44,10 +49,12 @@ def _result_status(returncode: int | None, timed_out: bool, counts: dict[str, in
         return "timeout", f"pytest exceeded {timeout:g} seconds"
     if parse_error:
         return "error", parse_error
-    if returncode == 0:
-        return "passed", None
     if counts["failed"] or counts["errors"]:
         return "failed", None
+    if returncode == 0:
+        if counts["passed"] > 0:
+            return "passed", None
+        return "error", "pytest produced no passing tests (empty or all skipped)"
     return "error", f"pytest exited with code {returncode}"
 
 
@@ -96,13 +103,15 @@ class TestRunner:
             timed_out = False
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
+            except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                 timed_out = True
                 if os.name == "posix":
                     os.killpg(process.pid, signal.SIGKILL)
                 else:
                     process.kill()
                 stdout, stderr = process.communicate()
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
             duration = time.monotonic() - start
             counts, parse_error = _junit_counts(xml_path.read_bytes() if xml_path.exists() else None,
                                                 timed_out)
@@ -130,8 +139,13 @@ class DockerTestRunner:
         self.image = image
 
     def run(self, repository: Path, *, trusted: bool = False, timeout: float = 60,
-            test_path: str = "tests", keyword: str | None = None) -> TestResult:
+            test_path: str = "tests", keyword: str | None = None,
+            executor: DockerExecutor | None = None) -> TestResult:
         repo, target = _test_target(repository, test_path, timeout)
+        if executor is None:
+            executor = DockerExecutor(repo, image=self.image)
+        elif executor.root != repo or executor.image != self.image:
+            raise ValueError("Docker executor workspace and image must match the test runner")
         relative = target.relative_to(repo).as_posix()
         command = ["python", "-m", "pytest", relative]
         if keyword is not None:
@@ -140,8 +154,7 @@ class DockerTestRunner:
             command.extend(["-k", keyword])
         command.append("--junitxml=/artifacts/junit.xml")
         start = time.monotonic()
-        outcome, xml = DockerExecutor(repo, image=self.image).run_with_artifact(
-            shlex.join(command), timeout, "junit.xml")
+        outcome, xml = executor.run_with_artifact(shlex.join(command), timeout, "junit.xml")
         duration = time.monotonic() - start
         counts, parse_error = _junit_counts(xml, outcome.timed_out)
         status, error = _result_status(outcome.returncode, outcome.timed_out,

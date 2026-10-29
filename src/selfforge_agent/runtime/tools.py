@@ -2,7 +2,6 @@
 
 import fnmatch
 import os
-import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,7 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from selfforge_agent.runtime.execution import Executor
+from selfforge_agent.runtime.execution import DockerExecutor, Executor, HostExecutor
+from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
 MAX_TOOL_OUTPUT = 6_000
 MAX_WHOLE_FILE_BYTES = 128_000
@@ -140,7 +140,7 @@ class ToolRegistry:
             definition = self.definitions[name]
             args = definition.args_type.model_validate(arguments)
             outcome = definition.handler(args)
-        except (KeyError, ValidationError, ValueError, OSError, RuntimeError) as exc:
+        except (KeyError, ValidationError, ValueError, TypeError, OSError, RuntimeError) as exc:
             outcome = ToolOutcome(f"Tool error: {exc}", False)
         content = outcome.content
         if len(content) > MAX_TOOL_OUTPUT:
@@ -257,12 +257,25 @@ class ToolRegistry:
         path = self._path(args.path)
         if not path.exists():
             raise ValueError("Test path does not exist")
-        relative = path.relative_to(self.root)
-        command = "python -m pytest " + shlex.quote(str(relative)) + " -q"
-        if args.keyword is not None:
-            if not args.keyword.strip():
-                raise ValueError("Test keyword must not be blank")
-            command += " -k " + shlex.quote(args.keyword)
-        result = self.executor.run(command, args.timeout)
-        return ToolOutcome(f"exit={result.returncode} timeout={result.timed_out}\n{result.output}",
-                           result.returncode == 0 and not result.timed_out)
+        relative = path.relative_to(self.root).as_posix()
+        if isinstance(self.executor, DockerExecutor):
+            # Retain the existing executor's image and durable cancellation marker.
+            result = DockerTestRunner(self.executor.image).run(
+                self.root, timeout=args.timeout, test_path=relative, keyword=args.keyword,
+                executor=self.executor)
+        elif isinstance(self.executor, HostExecutor):
+            if self.executor.root != self.root:
+                raise ValueError("Host executor workspace must match the tool workspace")
+            # HostExecutor construction already required explicit trust.
+            result = TestRunner().run(self.root, trusted=True, timeout=args.timeout,
+                                      test_path=relative, keyword=args.keyword)
+        else:
+            raise TypeError("This executor does not support JUnit test evidence")
+        summary = (f"status={result.status} exit={result.exit_code} "
+                   f"timeout={result.status == 'timeout'}\n"
+                   f"passed={result.passed} failed={result.failed} "
+                   f"errors={result.errors} skipped={result.skipped}")
+        if result.error_message:
+            summary += "\n" + result.error_message
+        return ToolOutcome(summary + "\n" + result.stdout + result.stderr,
+                           result.status == "passed")

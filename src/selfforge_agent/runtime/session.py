@@ -68,7 +68,8 @@ class SessionStore:
         self.trace("status", status=status, detail=detail[:300])
 
     def record_verification(self, passed: bool) -> None:
-        self._append(self.path, {"type": "verification", "passed": passed})
+        self._append(self.path, {"type": "verification", "passed": passed,
+                                 "evidence": "junit-v1"})
 
     def verification_passed(self) -> bool:
         if not self.path.is_file():
@@ -76,7 +77,9 @@ class SessionStore:
         passed = False
         for event in self._complete_events(self.path):
             if event.get("type") == "verification":
-                passed = event["passed"] is True
+                # Legacy success only checked exit=0, which includes all-skipped
+                # suites. Keep that history, but require a fresh verified run.
+                passed = event["passed"] is True and event.get("evidence") == "junit-v1"
         return passed
 
     def trace(self, event: str, **fields: object) -> None:

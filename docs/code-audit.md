@@ -1,5 +1,7 @@
 # selfForge Agent 代码质量审计（第一阶段）
 
+2026-10-30 的 P1-08 修复记录见文末；前面的只读审计声明与测试数量保留为历史基线。
+
 审计基线：`67cd21b4758665e8e6a86b7757bd3296fedd5006`（`main`）。本轮只分析与验证；除本报告外没有修改实现、测试或配置。下列问题描述的是该审计基线，后续修复应以各自 PR 的验证结果为准。问题等级：P0 为严重正确性或安全问题，P1 为重要可靠性问题，P2 为维护性与设计问题。“已复现”指本轮用临时目录或模拟请求触发；“代码证据”指执行路径明确，但尚未做相应故障注入或真实环境验证。
 
 ## 范围与实际执行路径
@@ -147,3 +149,25 @@
 5. **P2-01～P2-04**：按资源影响和维护收益拆成小 PR；每次保留已有断言，不以重构或代码风格替代行为修复。
 
 尚未验证的结论在条目中逐一标明。本报告不把没有复现的竞态、真实网络攻击或性能量化写成已证实故障。
+
+
+## 2026-10-30：P1-08 通用 Coding 的 JUnit 证据门槛
+
+**状态：本分支修复，未合并。** 本次从已合并的 `278ff34` 开始；#24 的评测候选集及 #25 的中断恢复修复仍是独立 PR。P1-08 的首次复现记录在 #25 的审计文档中，此处记录它的实施与验收。
+
+- **问题与影响**：`runtime/tools.py` 的 `_test()` 先前只检查 pytest 退出码。一个只包含 `pytest.skip()` 的测试文件会产生 `exit=0`、`1 skipped`，随后 CodingAgent 可返回 `completed`。旧版 `SessionStore.verification_passed()` 也会恢复这种成功。影响通用 Coding 的完成状态；benchmark 独立可见/隐藏验证原本已有 `passed > 0` 门槛。
+- **复现与回归**：`tests/test_coding_evidence.py` 的 Host/真实 Docker 用例构造全部跳过的测试，再让脚本模型结束任务。修复前 Host 得到 `completed`；修复后为 `unverified`，续跑仍不能恢复成功；替换成真实通过的测试并重跑后可完成。初版新增断言在旧实现上 21 项失败、1 项通过、1 项集成测试未选择，包含证据门槛和新返回格式的检查，不代表发现了 21 个独立缺陷。
+- **实现位置**：`runtime/tools.py::_test` 复用已有 `TestRunner`/`DockerTestRunner`；`verification/runner.py::_result_status` 要求退出码 0、至少一项通过、没有失败/错误，`_junit_counts` 拒绝负数或相互矛盾的计数。缺失/损坏 XML、空选择和全部跳过均不能成功。
+- **执行边界**：Docker 复用已有 executor，校验工作区和镜像，保留 Web 取消标记。Host 保持显式信任，使用 Agent 所在 Python 环境；Ctrl-C 会杀死并回收测试进程。未知执行器不允许降级为只看退出码。
+- **恢复兼容**：新的私有会话验证事件标记 `evidence=junit-v1`。旧消息保持可读，但旧的无标记成功状态必须重测；不改写历史 Web job 显示的旧状态。该改动不替代 #25 对中断顺序的修复。
+- **专项流程**：共享 Runner 的严格门槛也作用于 Repair；新增全部跳过 Base 的拒绝用例，保留既有 Base/Head/Repaired 通过、失败、修复控制组。
+
+| 本次验证 | 结果 |
+| --- | --- |
+| `uv run --no-sync pytest -q tests/test_coding_evidence.py tests/test_repair_agent.py` | **38 passed**；包含真实 Docker 的全跳过拒绝与随后成功重测 |
+| `uv run --no-sync pytest -q` | **158 passed**，无 skipped，62.36 秒；1 条已有 Starlette/httpx 弃用警告 |
+| `uv run --no-sync ruff check .`、`git diff --check` | 通过 |
+| `uv run --no-sync python examples/coding_demo.py` | **2/2**，脚本模型驱动真实文件编辑和独立 pytest；不是新的真实模型评测成绩 |
+| 与 #25 的源码组合检查 | **67 passed**（Runtime、#25 中断恢复和新证据测试）；临时源码快照，不修改或合并 PR 分支。首次直接启动解释器时 1 项评测失败，诊断为子命令使用未安装 pytest 的系统 Python；改用项目 uv 环境后通过 |
+
+边界：JUnit 来自被执行的项目，不防恶意测试伪造报告，也不证明测试覆盖完整；证据仍未绑定工作区内容指纹。本轮未测供应商 API 或新增真实模型评测。下一步优先完善带额外项目依赖的可复现镜像，再扩充经过任务契约和参考修复审核的验收集。证据协议与复现命令见 [test-evidence.md](./test-evidence.md)。

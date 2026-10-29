@@ -2,6 +2,8 @@
 
 | Priority | Status | Work |
 | --- | --- | --- |
+| 1 | Implemented | General Coding reuses JUnit runners with a nonempty-pass gate, preserves Docker cancellation, and requires retesting of legacy exit-code-only session evidence |
+| 2 | Planned | Reproducible project dependency images beyond the default Python/pytest sandbox |
 | 1 | Implemented | General native tool-calling Runtime, validated file/search/bash/test tools, model fallback, step and time limits |
 | 1 | Implemented | Resumable JSONL sessions in user data storage, metadata traces, output caps, approximate context compaction |
 | 1 | Implemented | Objective two-case coding evaluation and deterministic offline end-to-end demo |

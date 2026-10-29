@@ -7,7 +7,7 @@ A Python coding agent with a complete foundational harness, focused on autonomou
 [简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Product scope](./docs/product-scope.en.md) · [Roadmap](./docs/roadmap.md)
 
 ```text
-User task → native tool calling → search/read code → exact edits → pytest → exit-code evidence and trace
+User task → native tool calling → search/read code → exact edits → pytest → JUnit evidence and trace
 ```
 
 Run an end-to-end demo without an API key:
@@ -28,7 +28,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Tools and sessions | Implemented | read/edit/search/bash/run_tests; bounded line-range reads of large files, pytest `-k` selection, workspace path checks, resumable JSONL sessions and traces |
 | Context management | Implemented | Truncated tool output, approximate token budget, deterministic summary retaining task constraints |
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
-| Self-testing | Implemented | Uses actual pytest exit status; tasks without test evidence are `unverified` |
+| Self-testing | Implemented | Requires exit code 0 and JUnit with at least one pass and no failures/errors; all-skipped suites cannot complete a task |
 | Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cross-process cancellation, job history, and session resume; interrupted work needs an explicit resume |
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
@@ -140,7 +140,7 @@ The Runtime separates the loop, model adapter, tools, executor, context, and ses
 
 ## Verification and Evaluation
 
-A general coding task is `completed` only when `run_tests` succeeded after the final edit. Otherwise it is `unverified`. `eval` independently reruns fixture tests and checks for a real source change; it does not trust the model's claim. PR Repair only emits a verified patch when Base tests pass, Head fails with an assertion, and Repaired passes. That establishes repair of an existing-suite regression, not causality for an individual review finding.
+General Coding reuses the JUnit runners: `run_tests` needs exit code 0, at least one passing test, and no failures or errors. All-skipped suites, empty selections, and missing or malformed reports cannot establish completion. The tool returns counts and error details. A task is `completed` only after such a run following the final edit; otherwise it is `unverified`. Legacy sessions that recorded exit-code-only success require retesting; see the [test evidence rules](./docs/test-evidence.md). `eval` independently reruns fixture tests and checks for a real source change; it does not trust the model's claim. PR Repair only emits a verified patch when Base tests pass, Head fails with an assertion, and Repaired passes. That establishes repair of an existing-suite regression, not causality for an individual review finding.
 
 `generate-test` creates one pytest candidate by default. `--max-candidates 2/3` lets it use prior Base/Head results for further attempts, stops early on a differential result, and skips duplicate code. Multi-candidate generation has a 300-second total budget by default; `--time-budget` can raise it to at most 600 seconds. `--finding-index` selects a local rule finding; the Web page can select a displayed rule or model finding. The server checks that the risk points to an actual added diff line. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. Tests run only in temporary worktrees until explicitly exported. The risk description remains a hypothesis; a differential result does not establish its cause.
 
