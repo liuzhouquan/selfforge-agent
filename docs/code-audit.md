@@ -100,6 +100,25 @@
 - **影响**：读者可能低估评测条件，尤其误以为只用无关测试跑通 Agent 即可。代码与 `AGENTS.md` 一致，属于文档陈旧，不是评测实现回退。
 - **最小修复**：在单独的小型文档修复中同步该段文字及相关示例。
 
+## 基线问题后续修复状态（截至 2026-10-29）
+
+上面的等级和复现记录针对审计基线 `67cd21b`，不表示这些问题仍存在于当前 `main`。逐项对照当前源码后，P1/P2 均有后续修复提交；对应 PR 已合并。此表记录修复落点和仍未验证的范围：
+
+| 问题 | 合并修复 | 当前代码/回归覆盖 | 剩余验证 |
+| --- | --- | --- | --- |
+| P1-01 Host 命令写入后沿用旧测试结果 | [#13](https://github.com/liuzhouquan/selfforge-agent/pull/13) | 持久化写入型命令会清除验证状态；`tests/test_runtime.py` | 未发现该基线问题仍存在 |
+| P1-02 不完整 JSONL 尾行阻断恢复 | [#14](https://github.com/liuzhouquan/selfforge-agent/pull/14) | 只恢复完整换行事件；写入时清理未完成尾记录；`tests/test_runtime.py` | 未发现该基线问题仍存在 |
+| P1-03 上下文压缩丢弃中间用户约束 | [#15](https://github.com/liuzhouquan/selfforge-agent/pull/15) | 保留所有用户消息；约束超出预算时明确失败；`tests/test_context.py` | 未发现该基线问题仍存在 |
+| P1-04 本地 API 未校验 Host/Origin | [#12](https://github.com/liuzhouquan/selfforge-agent/pull/12) | `TrustedHostMiddleware` 和变更请求的 Origin/Fetch Metadata 校验；`tests/test_web_origin.py` | **真实浏览器、DNS rebinding 与不同监听配置仍待验证** |
+| P1-05 Docker 暂存缺少资源/时间上限 | [#16](https://github.com/liuzhouquan/selfforge-agent/pull/16) | 暂存加入文件数、字节数、打包大小、deadline 和取消边界；`tests/test_docker_staging.py` | 大型真实仓库的资源表现仍待观察 |
+| P1-06 Provider 回退重复使用完整超时 | [#17](https://github.com/liuzhouquan/selfforge-agent/pull/17) | 一次模型调用共享 deadline，回退只用剩余时间；`tests/test_model_deadline.py` | 真实供应商网络时延分布仍未测量 |
+| P2-01 Web Diff 先完整读取 Git 输出 | [#18](https://github.com/liuzhouquan/selfforge-agent/pull/18) | Git 输出按字节上限读取并报告截断；`tests/test_workspace.py` | 极大仓库的峰值内存未量化 |
+| P2-02 并发供应商配置可能丢更新 | [#19](https://github.com/liuzhouquan/selfforge-agent/pull/19) | 完整读-改-写事务使用跨进程锁；`tests/test_providers.py` | 未发现该基线问题仍存在 |
+| P2-03 损坏元数据使工作区列表整体失败 | [#20](https://github.com/liuzhouquan/selfforge-agent/pull/20) | 列表逐项隔离坏记录并保留诊断；`tests/test_workspace.py` | 未发现该基线问题仍存在 |
+| P2-04 架构文档遗漏可见测试门槛 | [#21](https://github.com/liuzhouquan/selfforge-agent/pull/21) | 架构文档现与实现和 `docs/benchmark.md` 一致 | 文档差异已修复 |
+
+本轮审计没有证实 P0。下一阶段应优先完成 P1-04 的真实浏览器来源边界验证；其余仍待确认项属于大规模资源表现或真实模型/网络分布，不应误写成已证实缺陷。Coding Agent 的 20-task acceptance set 仍未完成，见 [roadmap](./roadmap.md)，这是评测覆盖目标，不是上述基线缺陷之一。
+
 ## 缺少的关键测试与未验证风险
 
 | 领域 | 现有覆盖 | 建议补的失败/边界路径 |
