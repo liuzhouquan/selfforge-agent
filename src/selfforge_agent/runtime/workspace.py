@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -124,7 +125,14 @@ class CodingWorkspaceManager:
     def list(self, repository: Path) -> list[CodingWorkspace]:
         repo = self.validate_repository(repository)
         _, metadata, _ = self._paths(repo, "placeholder")
-        return [self.get(repo, path.stem) for path in sorted(metadata.parent.glob("*.json"))]
+        workspaces = []
+        for entry in sorted(metadata.parent.glob("*.json")):
+            try:
+                workspaces.append(self.get(repo, entry.stem))
+            except (WorkspaceError, WorktreeError) as exc:
+                warnings.warn(f"Skipping invalid Coding workspace metadata {entry}: {exc}",
+                              RuntimeWarning, stacklevel=2)
+        return workspaces
 
     def remove(self, repository: Path, session_id: str) -> CodingWorkspace:
         workspace = self.get(repository, session_id)
