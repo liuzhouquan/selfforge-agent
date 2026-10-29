@@ -1,3 +1,7 @@
+import json
+import time
+from multiprocessing import get_context
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -61,6 +65,7 @@ def test_settings_save_and_discover_models_without_exposing_key(
     assert response.status_code == 200
     assert "local-secret" not in response.text
     assert path.stat().st_mode & 0o777 == 0o600
+    assert path.with_name("providers.json.lock").stat().st_mode & 0o777 == 0o600
     assert providers.configured_providers()[0].key == "local-secret"
 
     requested = []
@@ -98,6 +103,48 @@ def test_provider_settings_reject_unsafe_url(
         })
         assert response.status_code == 400
     assert not (tmp_path / "providers.json").exists()
+
+
+def test_concurrent_provider_saves_preserve_both_updates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    path = tmp_path / "providers.json"
+    monkeypatch.setenv("SELFFORGE_PROVIDER_CONFIG_PATH", str(path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    original_settings = providers._settings
+
+    def slow_settings() -> dict[str, dict[str, str]]:
+        settings = original_settings()
+        time.sleep(0.1)
+        return settings
+
+    monkeypatch.setattr(providers, "_settings", slow_settings)
+    context = get_context("fork")
+    start = context.Barrier(2)
+
+    def save(provider: str, model: str) -> None:
+        start.wait(timeout=5)
+        providers.save_provider_settings(
+            provider, api_key=f"{provider}-secret",
+            base_url=f"https://{provider}.example/v1", model=model,
+        )
+
+    workers = [context.Process(target=save, args=("deepseek", "deepseek-chat")),
+               context.Process(target=save, args=("openrouter", "openai/gpt-4.1-mini"))]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(timeout=2)
+    assert [worker.exitcode for worker in workers] == [0, 0]
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert set(saved) == {"deepseek", "openrouter"}
+    assert saved["deepseek"]["model"] == "deepseek-chat"
+    assert saved["openrouter"]["model"] == "openai/gpt-4.1-mini"
 
 
 def test_buffered_proxy_response_with_closed_socket(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,9 +1,12 @@
 """Server-side model configuration, routing, and key/credit checks."""
 
+import fcntl
 import ipaddress
 import json
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -70,6 +73,22 @@ def _settings() -> dict[str, dict[str, str]]:
     }
 
 
+@contextmanager
+def _settings_lock(path: Path) -> Iterator[None]:
+    """Serialize provider settings read-modify-write operations across processes."""
+    lock_path = path.with_name(path.name + ".lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def validate_base_url(value: str) -> str:
     url = value.strip().rstrip("/")
     parts = urlsplit(url)
@@ -95,27 +114,28 @@ def save_provider_settings(name: ProviderName, *, api_key: str | None,
         raise ValueError("Model must be a nonempty model ID without spaces")
     if api_key is not None and (len(api_key) > 4096 or "\n" in api_key or "\r" in api_key):
         raise ValueError("Invalid API key")
-    settings = _settings()
-    current = settings.get(name, {})
-    settings[name] = {"base_url": base_url, "model": model}
-    if api_key is None:
-        if isinstance(current.get("api_key"), str):
-            settings[name]["api_key"] = current["api_key"]
-    elif api_key:
-        settings[name]["api_key"] = api_key.strip()
     path = _settings_path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=".providers-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(settings, handle, indent=2)
-            handle.write("\n")
-        os.chmod(temp_name, 0o600)
-        os.replace(temp_name, path)
-    finally:
-        if os.path.exists(temp_name):
-            os.unlink(temp_name)
-    return next(item for item in provider_info() if item.name == name)
+    with _settings_lock(path):
+        settings = _settings()
+        current = settings.get(name, {})
+        settings[name] = {"base_url": base_url, "model": model}
+        if api_key is None:
+            if isinstance(current.get("api_key"), str):
+                settings[name]["api_key"] = current["api_key"]
+        elif api_key:
+            settings[name]["api_key"] = api_key.strip()
+        fd, temp_name = tempfile.mkstemp(prefix=".providers-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(settings, handle, indent=2)
+                handle.write("\n")
+            os.chmod(temp_name, 0o600)
+            os.replace(temp_name, path)
+        finally:
+            if os.path.exists(temp_name):
+                os.unlink(temp_name)
+        return next(item for item in provider_info() if item.name == name)
 
 
 class ProviderStatus(BaseModel):
