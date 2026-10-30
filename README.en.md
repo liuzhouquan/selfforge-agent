@@ -24,7 +24,7 @@ This demo checks the protocol and execution path; live model results are below. 
 
 | Capability | Status | Current boundary |
 | --- | --- | --- |
-| Coding Agent Runtime | Implemented | OpenAI-compatible native tool calling, multiple turns, step/time limits, provider fallback |
+| Coding Agent Runtime | Implemented | OpenAI-compatible native tool calling, multiple turns, step/time limits, dynamic budget and verification feedback, provider fallback |
 | Tools and sessions | Implemented | read/edit/search/bash/run_tests; bounded line-range reads of large files, pytest `-k` selection, workspace path checks, resumable JSONL sessions and traces |
 | Context management | Implemented | Truncated tool output, approximate token budget, deterministic summary retaining task constraints |
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
@@ -33,7 +33,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
-| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent reruns of specified visible and unseen tests, per-case pinned Docker images, and failure categories; a three-repository/four-task exploratory pilot exists, but the 20-task acceptance set remains open |
+| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent visible/unseen tests, image IDs and failure categories; optional external reference fixes are checked before model calls. Exploratory pilots exist; the 20-task acceptance set remains open |
 
 Bounded JUnit diagnostics feed test failures back into the same Coding Agent for inspection, repair and retesting. Run the live-model demo with a configured provider and Docker image:
 
@@ -122,6 +122,8 @@ uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
 
 Agent statuses are `completed` (pytest succeeded after the last edit), `unverified` (finished without test evidence), `failed`, `max_steps`, `timed_out`, and `cancelled`. New sessions and traces live under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`, outside the target repository; older sessions remain resumable by ID. `workspaces remove` never forces deletion and refuses a dirty worktree. Ctrl-C interrupts a run. Provider fallback shares one model-call timeout budget, and cancellation is checked between provider attempts. An in-flight HTTP request relies on its transport timeout before cancellation is observed.
 
+Each turn gives the model its remaining turns/time and current `run_tests` verification state; near the cap, it prioritizes verification and a final answer. Notices count toward the approximate context budget and are regenerated on resume. The cap includes the final answer. Feedback adds no model calls, does not run tests automatically, and does not promote unfinished tasks to success. See [budget feedback](./docs/runtime-budget.md).
+
 ## Architecture
 
 ```mermaid
@@ -171,10 +173,14 @@ GitHub Actions runs Ruff, unit tests, and Docker integration tests on pushes to 
 
 On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. On 2026-10-27, three project-authored tasks across PocketFlow, boltons, and more-itertools scored **8/9** with three repeats each under the earlier gate; one attempt hit the step cap despite passing its holdout. After adding independent visible-test reruns and a large-file chunking task, four tasks scored **4/4** in one run each, with selected visible and unseen tests passing. The gates and repeat counts differ, so these results cannot be combined into a success rate. The 18-step limit came from earlier trials, and the planned 20-task acceptance set remains open. See [evaluation notes](./docs/evaluation.md).
 
+`selfforge-agent eval-validate --manifest MANIFEST` checks the negative baseline, allowed paths and positive reference fix without a model. Legacy manifests stay compatible. See [task validation](./docs/benchmark.md) and the [two-case reference controls](./benchmark/validated-candidates/README.md). Qualification proves the reference passes these tests; coverage still needs human review.
+
+On 2026-10-30, the two reference-qualified tasks with Runtime budget feedback scored **5/6** on DeepSeek with three repeats and unchanged limits. One attempt reached the step cap and failed its independent visible tests. All six called the official test tool; this small sample does not establish a success-rate improvement or increase the acceptance task count. See the [budget-feedback follow-up](./docs/runtime-budget.md) for per-run results and limitations.
+
 ## Specialized Workflows: PR Review
 
 The web workbench can also import your own or someone else's accessible GitHub PR, inspect diffs and heuristic/model findings, check out an editable branch, generate a differential test, and optionally run verified repair. Findings remain `suspected`; import and review never execute PR code. Web test generation and repair run in Docker by default. Explicit host execution still requires `SELFFORGE_ENABLE_HOST_TESTS=1` and per-request trust. The app does not push, comment on, or merge PRs. Repair traces are stored in the checkout's `.selfforge/sessions/`; inspect them with `selfforge-agent trace --repo CHECKOUT RUN_ID`.
 
 ## Roadmap
 
-Next, unify JUnit evidence requirements for general Coding, then add reproducible project dependency environments. Review task contracts and reference fixes before expanding and freezing the 20-task acceptance set. See the [product scope](./docs/product-scope.en.md) and [roadmap](./docs/roadmap.md).
+Next, verify the combined Runtime, improve real-task recovery and automatic environment detection, then expand the distinct reference-qualified 20-task acceptance set. See [product scope](./docs/product-scope.en.md), [roadmap](./docs/roadmap.md), and the [development guide](./docs/development.md).

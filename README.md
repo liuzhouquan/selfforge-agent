@@ -24,7 +24,7 @@ uv run python examples/coding_demo.py
 
 | 能力 | 状态 | 当前边界 |
 | --- | --- | --- |
-| Coding Agent Runtime | Implemented | OpenAI-compatible 原生工具调用，多轮执行，步数/时间限制，供应商回退 |
+| Coding Agent Runtime | Implemented | OpenAI-compatible 原生工具调用，多轮执行，步数/时间限制、动态预算与验证状态提示，供应商回退 |
 | 工具与会话 | Implemented | read/edit/search/bash/run_tests；大文件有界分段读取、pytest `-k` 选择、工作区路径校验、JSONL 恢复与轨迹 |
 | Context 管理 | Implemented | 工具输出截断、近似 token 预算、保留任务约束的确定性摘要压缩 |
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
@@ -33,7 +33,7 @@ uv run python examples/coding_demo.py
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
-| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立重跑指定可见测试与隐藏测试、按案例锁定 Docker 镜像、失败分类；已有 3 仓库/4 任务探索性试点，正式 20 任务集尚未建立 |
+| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。已有探索性试点，正式 20 任务集尚未建立 |
 
 失败测试会通过有界 JUnit 诊断回填给同一个 Coding Agent，它可读取相关代码、修复并重测。可运行真实模型演示（需配置供应商和 Docker 镜像）：
 
@@ -122,6 +122,8 @@ uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
 
 Agent 状态有 `completed`（最后修改后 pytest 成功）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。新会话与轨迹保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`，不会进入目标仓库；旧会话仍可通过 ID 恢复。`workspaces remove` 不使用强制删除；工作区有改动时会拒绝清理。运行中可用 Ctrl-C 中断；供应商回退共享一次模型调用的超时预算，取消会在供应商调用之间检查。正在进行的 HTTP 请求依赖传输层超时，返回后才会响应取消。
 
+Runtime 每轮向模型提示剩余轮数、时间和当前 `run_tests` 验证状态；接近上限时提醒优先验证与收尾。提示会计入近似上下文预算，续跑时重新生成。轮数上限包含最终答复；提示不会增加调用次数、自动执行测试或把未完成任务改判为成功。见[预算反馈说明](./docs/runtime-budget.md)。
+
 ## 架构
 
 ```mermaid
@@ -171,10 +173,14 @@ GitHub Actions 在推送 `main` 和提交 PR 时运行 Ruff、单元测试及 Do
 
 2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 旧门槛下三仓库三题各重复 3 次得到 **8/9**；唯一失败达到步数上限，虽然隐藏测试通过。加入独立可见测试门槛与大文件分块任务后，四题各运行 1 次得到 **4/4**，指定可见测试与隐藏测试均通过。两次运行的门槛和重复次数不同，不能合并成成功率；18 步预算也来自先前试跑。正式 20 任务验收集尚未建立，复现条件见[评测记录](./docs/evaluation.md)。
 
+新增 `selfforge-agent eval-validate --manifest MANIFEST` 可在不配置模型的情况下检查任务的负例基线、允许修改范围与参考修复正例；已有清单可保持原格式。详见[任务预检](./docs/benchmark.md)与[两题参考控制集](./benchmark/validated-candidates/README.md)。预检通过表示参考补丁能通过这些测试，任务覆盖仍需人工审核。
+
+2026-10-30，两题参考控制集在相同预算下增加 Runtime 预算反馈后，DeepSeek 三次重复仍为 **5/6**，一次达到轮数上限且独立可见测试有失败。六次均调用了正式测试工具，但该小样本不能证明成功率提升，且不增加验收任务数。逐次数据与限制见[预算反馈复测](./docs/runtime-budget.md)。
+
 ## Specialized Workflows：PR Review
 
 Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支、生成差异验证测试，并运行验证修复。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 测试生成与修复默认在 Docker 中执行；选择主机执行时，仍需 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。工具不会自动推送、评论或合并 PR。修复轨迹保存在 checkout 的 `.selfforge/sessions/`，可用 `selfforge-agent trace --repo CHECKOUT RUN_ID` 查看。
 
 ## Roadmap
 
-下一步优先统一通用 Coding 的 JUnit 测试证据门槛，再补可复现的项目依赖环境；审核任务契约及参考修复后，扩展并冻结 20 题正式评测集。见[产品边界与验收](./docs/product-scope.md)和[路线图](./docs/roadmap.md) · [开发指南](./docs/development.md)。
+下一步优先完成组合版本回归，继续改善真实任务的失败恢复与自动环境识别，再扩展互不重复、带参考验证的 20 题正式评测集。见[产品边界与验收](./docs/product-scope.md)、[路线图](./docs/roadmap.md)和[开发指南](./docs/development.md)。

@@ -109,3 +109,20 @@ The fixed [four-task manifest](../benchmark/real-pilot/suite-four-tasks.json), S
 | more-itertools zero chunk size | 29 selected | 5 | 11 | 26.285 | 58,787 |
 
 The report totals 143.255 seconds and 226,096 provider-reported tokens; no failure categories occurred. It stays in ignored `.local/benchmark/four-tasks-once.json`. The earlier 8/9 result used three tasks, three repeats each, and an older gate, so the two aggregates are not comparable or combinable. All four tasks and holdouts are project-authored; the 18-step limit was selected after prior trials, and the new task had one successful exploratory attempt before this run. This remains 16 tasks short of the planned 20-task acceptance set.
+
+
+## 2026-10-30：带参考修复预检的两题试跑
+
+新增 provider-free `eval-validate`：固定并哈希外部参考补丁，检查允许路径、负例基线，以及独立可见/隐藏测试正例。PocketFlow async 空输入的一致性任务和 boltons Unicode 分隔功能扩展分别通过 56/10、33/11 项参考可见/隐藏测试；原代码分别有 2、6 项 holdout 失败且无收集错误。任务契约、开源通知和复现命令见[参考控制集](../benchmark/validated-candidates/README.md)。这些任务与已有候选/试点重叠，不增加正式 20 题验收集的完成数量。
+
+之后固定 DeepSeek 无回退、每题 3 次、18 轮、每任务 180 秒和每测试 30 秒，报告的模型 ID 为 `deepseek-flash`，实际得到 **5/6** 完整成功：PocketFlow **3/3**，boltons **2/3**。六次独立可见/隐藏测试全部通过，但 boltons 第 2 次达到轮数上限，仍计 `agent_max_steps` 失败。合计 285.961 秒、479,247 个供应商上报 token，未推算费用。逐次测试数、轮数与工具数见上述控制集文档。
+
+清单 SHA-256：`d5e0480e6c2b2c2e7de0cfccceda66569ef975fb43fd22fb7284c0ec0b7ef5e5`。镜像：`sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`。清单、holdout、参考补丁在预检时冻结；参考代码未进入 Agent 工作区或对话。该结果来自已有试点暴露的两题和调过的预算，不能与先前 4/4、8/9 合并，也不代表通用 Coding 成功率。下一步应先改善已观察到的收尾效率，再审核更多互不重复的任务契约与参考控制。
+
+## 2026-10-30：Runtime 预算反馈复测
+
+上轮 boltons 失败尝试的工具元数据显示：多次调用 `bash`，没有正式调用 `run_tests`。本轮新增每轮预算与验证状态提示，并为提示预留上下文空间；接近上限时提醒优先验证和答复。现有完成门槛、工具权限和 18 轮上限均保留，没有额外赠送收尾轮。
+
+在运行前固定原清单、镜像、DeepSeek 无回退、每题 3 次、180 秒任务预算和 30 秒测试超时。`deepseek-flash` 实际得到 **5/6**：PocketFlow **2/3**，boltons **3/3**。六次均调用了 `run_tests`；PocketFlow 第 1 次三次测试工具调用均失败，最终达到轮数上限，独立可见测试 **84 通过、1 失败**，隐藏测试 10 通过，因此仍计 `agent_max_steps`。失败断言与最终源码没有保留在紧凑报告中，具体原因待确认，不推断为上游代码或 Agent 新增测试的错误。
+
+合计 **218.621 秒**、**396,089 个供应商上报 token**（prompt 370,902，completion 25,187），未报告供应商错误。完整逐次数据、复现命令和验证边界见[预算反馈](./runtime-budget.md)。本机回归与本次运行早期阶段有重叠，模型输出也具有随机性；此次结果不能证明成功率或性能提升。旧 5/6 保留，本次结果单独报告，不增加正式任务集数量。下一步优先改善失败测试的诊断与恢复，再扩展互不重复的参考验证任务。

@@ -1,0 +1,10 @@
+--- a/boltons/strutils.py
++++ b/boltons/strutils.py
+@@ -120,6 +120,7 @@
+     >>> split_punct_ws('First post! Hi!!!!~1    ')
+     ['First', 'post', 'Hi', '1']
+     """
++    text = ''.join(' ' if unicodedata.category(c).startswith('P') else c for c in text)
+     return [w for w in _punct_re.split(text) if w]
+ 
+ 

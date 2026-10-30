@@ -35,6 +35,13 @@ process output for the existing native tool loop. Optional
 local files without sending holdout data to the Agent or adding test text to
 reports. Host pytest uses a fresh bytecode-cache namespace so rapid same-size
 edits cannot reuse stale source imports. See [test-diagnostics.md](./test-diagnostics.md).
+Before each model call, `runtime.control` generates a transient system notice
+with remaining turns/time and current verification state. `ContextManager`
+reserves its estimated size before compacting durable history. The notice
+precedes task/history messages, does not split tool responses, and is regenerated
+on resume. Near exhaustion it prioritizes `run_tests` and a final answer, without
+changing evidence rules, tool permissions, or the call cap. `turn_budget` traces
+record only numeric/boolean state. See [runtime-budget.md](./runtime-budget.md).
 
 ## Existing specialized PR workflows
 
@@ -52,3 +59,6 @@ Provider settings and HTTP transport are shared across general coding and PR wor
 ## Dependency image preparation
 
 The explicit CLI `sandbox build` command uses `runtime.images` to validate exact hashed pins and local wheels, freeze input bytes, resolve a local base image ID and send a generated tar context to Docker. It uses no repository Dockerfile or source-distribution build. A private base alias supports BuildKit; `--iidfile` identifies this build even if its output tag changes concurrently. Installation and tests stay offline; package download is a separate operator step. Metadata contains the base/result IDs and input hashes. The existing runtime remains the execution path. Web Coding accepts an optional image reference. Before model calls, `runtime.environment.bind_environment` records the execution mode and immutable image ID in the private session and sets the existing Docker executor to that ID. Omitted image arguments on resume reuse this ID; explicit mismatches, mode changes or unavailable images fail before model/tool execution. Legacy binding first revokes old test evidence. Job status/history derives the saved mode/ID from session events, so another server process can display them. Host mode still requires operator/per-request trust and does not pin host dependencies. Image inspection shares the task deadline (at most 10 seconds). See [dependency images](./dependency-images.md) for limits and the 297-test real-repository verification.
+## Task reference qualification
+
+`eval-validate` calls the benchmark module's shared preflight without creating a model. Optional external reference patches are frozen/hashed by `load_suite`; the qualification command requires one for every case, while legacy `eval-suite` manifests remain compatible. After the existing negative holdout control, Git validates and applies an allowed text patch in a fresh checkout. Independent visible and holdout copies must both pass nonempty selections. When a reference is provided, the same control runs before a live `eval-suite`. Reports contain hashes/counts, not patch source or model messages. See [benchmark.md](./benchmark.md) and the reference-qualified candidate contracts.
