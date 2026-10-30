@@ -29,7 +29,7 @@ and the Host bytecode-cache fix.
 - Executors without the supported evidence path cannot silently run tests using exit codes alone.
 - Verification events now include `evidence=junit-v1`. Old session messages stay readable, but old success booleans without this policy marker cannot restore completion. Resume and run tests again. Existing historical job records retain the status originally recorded; they are not retroactively rewritten.
 
-This is an evidence-quality gate, not proof of adequate test coverage or a defense against malicious test code forging reports. Workspace evidence is not yet bound to a content fingerprint. Interruption ordering is addressed separately by PR #25.
+This is an evidence-quality gate, not proof of adequate coverage or a defense against malicious test code forging reports. Evidence is not yet bound to a workspace fingerprint. Write-ahead invalidation and conservative pending-call recovery from PR #25 are included in the combined Runtime; see [integration checks](./runtime-integration.md).
 
 ## Reproduce and regress
 

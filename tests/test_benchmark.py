@@ -12,6 +12,7 @@ from selfforge_agent.runtime import benchmark
 from selfforge_agent.runtime.benchmark import (
     BenchmarkCase,
     BenchmarkOutcome,
+    BenchmarkSuite,
     evaluate_suite,
     load_suite,
 )
@@ -393,6 +394,34 @@ def test_manifest_rejects_invalid_case_image(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="invalid Docker image"):
         load_suite(manifest)
+
+
+def test_nine_task_candidate_manifest_and_holdouts_are_well_formed() -> None:
+    manifest = (Path(__file__).parents[1]
+                / "benchmark/real-pilot/suite-nine-tasks.json")
+    suite = BenchmarkSuite.model_validate_json(manifest.read_bytes())
+    expected_ids = {
+        "pocketflow_invalid_retries",
+        "pocketflow_async_batch_empty",
+        "pocketflow_retry_count_type",
+        "pocketflow_wait_validation",
+        "boltons_unicode_punctuation",
+        "boltons_negative_max_depth",
+        "more_itertools_grouper_size",
+        "more_itertools_zero_chunk_size",
+        "more_itertools_negative_split_maxsplit",
+    }
+    assert {case.id for case in suite.cases} == expected_ids
+
+    for case in suite.cases:
+        repository = (manifest.parent / case.repository).resolve()
+        holdout = (manifest.parent / case.holdout_test).resolve()
+        assert len(case.revision) == 40
+        assert holdout.is_file()
+        assert not holdout.is_relative_to(repository)
+        assert case.allowed_changes
+        assert all(not Path(path).is_absolute() and ".." not in Path(path).parts
+                   for path in case.allowed_changes)
 
 
 @pytest.mark.integration

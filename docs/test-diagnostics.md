@@ -88,9 +88,9 @@ Actual run on 2026-10-30: success, **5 model turns / 5 tools**: failed `run_test
 fixture does not measure real-repository coverage, a general success rate, or
 additional acceptance tasks. The twenty-task acceptance target remains open.
 
-Local verification: `uv run --no-sync pytest -q` **175 passed**, no skips,
+Historical standalone-branch verification: `uv run --no-sync pytest -q` **175 passed**, no skips,
 including live Docker integration tests, with one existing Starlette/httpx
-deprecation warning. Ruff passed. This branch builds on PR #26; separate
-interruption, offline-image, reference-validation and budget-feedback branches
-are not included in that count. Integrate them independently and rerun the
-combined regression suite.
+deprecation warning. Ruff passed. That branch was based on PR #26, excluding the
+then-separate interruption, offline-image, reference-validation and budget
+branches. They are now included in the [combined delivery](./runtime-integration.md);
+the historical 175-test count is preserved for its original scope.

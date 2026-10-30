@@ -126,3 +126,8 @@ The report totals 143.255 seconds and 226,096 provider-reported tokens; no failu
 在运行前固定原清单、镜像、DeepSeek 无回退、每题 3 次、180 秒任务预算和 30 秒测试超时。`deepseek-flash` 实际得到 **5/6**：PocketFlow **2/3**，boltons **3/3**。六次均调用了 `run_tests`；PocketFlow 第 1 次三次测试工具调用均失败，最终达到轮数上限，独立可见测试 **84 通过、1 失败**，隐藏测试 10 通过，因此仍计 `agent_max_steps`。失败断言与最终源码没有保留在紧凑报告中，具体原因待确认，不推断为上游代码或 Agent 新增测试的错误。
 
 合计 **218.621 秒**、**396,089 个供应商上报 token**（prompt 370,902，completion 25,187），未报告供应商错误。完整逐次数据、复现命令和验证边界见[预算反馈](./runtime-budget.md)。本机回归与本次运行早期阶段有重叠，模型输出也具有随机性；此次结果不能证明成功率或性能提升。旧 5/6 保留，本次结果单独报告，不增加正式任务集数量。下一步优先改善失败测试的诊断与恢复，再扩展互不重复的参考验证任务。
+## Nine-task candidate baseline, 2026-10-29
+
+The [nine-task candidate manifest](../benchmark/real-pilot/suite-nine-tasks.json) keeps the four existing cases and adds five boundary cases across the same three repositories. Its SHA-256 is `bb6606594f9995da94e697e669859428ffee8599c5af3f789fe55e62c6188f60`. Before any model evaluation, the Docker baseline gate confirmed all nine external holdouts fail by assertion without collection errors, and all selected visible suites pass. The five new cases have 2, 8, 14, 1, and 8 failing holdout assertions respectively; their visible selections pass 56, 56, 56, 13, and 60 tests. These are task-validity checks, not Agent runs or success-rate measurements. The checks used the existing image ID `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`.
+
+The new cases have not been run with a live model. The candidate set still needs 11 additional tasks and a frozen evaluation policy before it can satisfy the 20-task acceptance target; the four-task pilot results above do not apply to this larger manifest.

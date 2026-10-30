@@ -6,22 +6,25 @@
 
 目标是面向 Python Git 仓库的 Coding Agent 与测试框架：用户提交任务，Agent 在独立 worktree 中读、改、测，交付可检查的 Diff、测试结果和会话轨迹。Web 与 CLI 使用同一 Runtime。PR Review、差异测试生成和 Repair 是专项流程。
 
-- 已有：原生 Tool Calling、受限文件工具、Docker 命令执行、可恢复会话、Web 工作台、工作区隔离、pytest 验证与重复评测工具。
-- 尚未完成：真实项目依赖环境的可复现配置、完整 PR 交付流程、20 题 × 每题 3 次的正式模型验收。Repair 的 proposer loop 仍独立。
+- 已有：原生 Tool Calling、受限文件工具、Docker 执行、可恢复会话、Web 工作台、独立工作区、非空 JUnit 验证、预算反馈、参考修复预检与私有失败诊断；显式离线依赖镜像和会话环境绑定已接入同一 Runtime。
+- 尚未完成：自动依赖识别与更广的依赖配置、完整产品 PR 交付流程、20 题 × 每题 3 次的正式模型验收。Repair 的 proposer loop 仍独立。
 - 暂不增加：Multi-Agent、通用 MCP 平台、额外 RAG、大型前端或另一套 Runtime。
-- `completed` 表示最后一次可能持久写入后的 Agent 测试命令成功；不代表需求全部满足，也不防恶意仓库伪造测试证据。正式评测还需独立可见/隐藏测试与允许修改路径检查。
+- `completed` 要求最后一次可能持久写入后 `run_tests` 有非空 JUnit 通过证据，且模型给出非空最终答复；不代表需求全部满足，也不防恶意仓库伪造证据。正式评测还需独立可见/隐藏测试与允许修改路径检查。
+
+七个 PR 的组合与验证记录见[Runtime 整合](./runtime-integration.md)。独立分支历史测试数不能相加，也不能用于替代组合版本的全量回归。
 
 ## 模块与变更入口
 
 | 责任 | 主要源码 | 相关回归 |
 | --- | --- | --- |
-| 工具循环、完成条件、中断恢复 | `runtime/agent.py`、`session.py`、`context.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_context.py` |
+| 工具循环、完成条件、中断恢复、预算 | `runtime/agent.py`、`session.py`、`context.py`、`control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_context.py`、`test_runtime_budget.py`、`test_runtime_composition.py` |
+| 依赖镜像与会话环境 | `runtime/images.py`、`environment.py` | `test_dependency_images.py`、`test_session_environment.py` |
 | 文件权限、编辑策略、命令与暂存限制 | `runtime/tools.py`、`execution.py` | `test_runtime.py`、`test_docker_staging.py` |
 | 模型协议、回退、配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py` | `test_model_deadline.py`、`test_providers.py` |
 | Web 任务持久化、锁、取消 | `api/coding_jobs.py`、`api/app.py` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py` |
 | 工作区及 Diff | `runtime/workspace.py`、`workspace_diff.py` | `test_workspace.py` |
-| 测试证据、修复与测试生成 | `verification/`、`coding/` | `test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py` |
-| 独立任务评测 | `runtime/benchmark.py`、`evaluation.py` | `test_benchmark.py`、离线 Coding 演示 |
+| 测试证据、诊断、修复与测试生成 | `verification/`、`coding/` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py` |
+| 独立评测、参考修复与私有快照 | `runtime/benchmark.py`、`evaluation.py`、`failure_artifacts.py` | `test_benchmark.py`、`test_reference_validation.py`、离线 Coding 演示 |
 
 源码相对 `src/selfforge_agent/`，测试相对 `tests/`。新增能力先找现有模块的扩展点；只为已确认的问题增加抽象。
 
@@ -63,13 +66,13 @@ uv run --no-sync python examples/coding_demo.py
 
 | 顺序 | 工作 | 验收证据 |
 | --- | --- | --- |
-| 1 | 修复中断导致测试证据过期却仍可恢复的问题 | 编辑/Host 命令/重测被中断后不沿用旧成功；日志失败时不执行写入；旧会话续跑保守处理未完成调用；重新测试可恢复完成状态 |
-| 2 | 统一通用 Coding 的测试证据要求 | 复用 JUnit Runner；覆盖全部 skipped、空测试、缺失或损坏 JUnit、测试超时；与 Repair/benchmark 的更严格门槛逐项对照，明确兼容性 |
-| 3 | 可复现的项目依赖环境 | 至少一个需要额外依赖的仓库，固定依赖及镜像标识，离线隔离运行；安装失败有明确诊断，不放开默认执行网络 |
+| 已整合 | 中断后的验证状态恢复 | 写入前失效、未完成调用保守恢复；组合测试覆盖 JUnit 成功后中断写入，再续跑失败、编辑、重测成功 |
+| 已整合 | 通用 Coding 测试证据 | 共用非空 JUnit Runner；全部 skipped、空/损坏报告、超时和失败诊断均有回归，不弱化 Repair/benchmark 门槛 |
+| 已整合 | 显式可复现项目依赖环境 | 哈希锁定 wheels、离线安装和镜像 ID；会话模式/镜像不可静默更换；自动依赖识别仍未实现 |
 | 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
 | 5 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，覆盖远端失败和恢复，不自动强推或合并 |
 
-只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。PR #24 的九题清单在本次检查时仍未合并，属于候选，不替代正式验收。
+只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。两道带参考修复的任务与既有候选重叠，不能额外计数。
 
 ## 尚需明确的可靠性边界
 

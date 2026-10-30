@@ -94,9 +94,9 @@ changed per-task outcomes establish a general success-rate improvement. Do not
 combine this run with earlier pilots or count its overlapping tasks as new
 acceptance cases.
 
-Local verification: `uv run --no-sync pytest -q` **155 passed**, no skips,
+Historical standalone-branch verification: `uv run --no-sync pytest -q` **155 passed**, no skips,
 including live Docker integration tests; one existing Starlette/httpx deprecation
-warning. `uv run --no-sync ruff check .` passed. This branch builds on PR #28;
-open PRs #24–#27 are not included in that count. Raw sessions and generated
-reports stay in ignored local storage. Next, improve failed-test diagnosis and
-recovery, then qualify more distinct tasks for the twenty-task acceptance set.
+warning. `uv run --no-sync ruff check .` passed. That branch was based on PR #28,
+without the then-open PRs #24–#27. The [combined delivery](./runtime-integration.md)
+now includes these prerequisites. Raw sessions and generated reports remain
+ignored. Historical model results and task counts are unchanged.

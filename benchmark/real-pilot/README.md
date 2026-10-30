@@ -62,3 +62,19 @@ uv run selfforge-agent eval-suite --manifest benchmark/real-pilot/suite-four-tas
 ```
 
 One run of this fixed four-task manifest scored **4/4**. The evaluator's visible-test counts were 63, 35, 10,036, and 29 passed respectively; hidden-test counts were 6, 5, 7, and 5 passed, with no failures or errors. The manifest SHA-256 was `834c0e46e3e187923e229e2450a3c76609fe50b691308eda03e5d11c0063904e`, and the Docker image ID was `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`. Total duration was 143.255 seconds; provider-reported tokens totaled 226,096. This new gate and single-repeat sample are separate from the earlier 8/9 three-task result. The four tasks are project-authored, and 16 tasks remain before the planned acceptance set.
+
+## Nine-task candidate baseline, 2026-10-29
+
+The [nine-task candidate manifest](./suite-nine-tasks.json) retains those four pilot cases and adds five project-authored boundary tasks: empty async batches, retry-count types, retry-wait validation, negative file-search depth, and split `maxsplit` validation. It uses the same three pinned repositories and the existing network-isolated Docker image. The manifest SHA-256 is `bb6606594f9995da94e697e669859428ffee8599c5af3f789fe55e62c6188f60`; the image ID is `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`.
+
+Before any model run, all nine holdouts were checked on their pinned baseline. Each produced assertion failures with no collection errors. The visible selections also passed:
+
+| Added candidate | Visible tests passed | Baseline holdout assertions failed |
+| --- | ---: | ---: |
+| PocketFlow empty async batches | 56 | 2 |
+| PocketFlow retry-count types | 56 | 8 |
+| PocketFlow retry-wait validation | 56 | 14 |
+| boltons negative `max_depth` | 13 | 1 |
+| more-itertools negative `maxsplit` | 60 | 8 |
+
+These checks establish that the five tasks are runnable against the current image; they are not live Agent results. The nine-task candidate is still 11 tasks short of the 20-task acceptance target, and no live-model runs have been made on these five additions. Do not report the earlier four-task 4/4 pilot as a result for this larger manifest.

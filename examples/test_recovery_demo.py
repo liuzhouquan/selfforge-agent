@@ -49,14 +49,15 @@ def main() -> int:
         test = workspace / "tests/test_order.py"
         test.write_text(TESTS)
         session = SessionStore(root / "session")
-        agent = CodingAgent(model, ToolRegistry(workspace, DockerExecutor(workspace, args.image)),
+        executor = DockerExecutor(workspace, args.image)
+        agent = CodingAgent(model, ToolRegistry(workspace, executor),
                             session, max_steps=12, time_budget=180)
         result = agent.run(
             "First call run_tests on tests to observe the failures. Then inspect tests/source "
             "and repair app.py: unique_in_order must deduplicate hashable values while "
             "preserving first-seen order, including generators. Do not modify tests. "
             "Use run_tests after your final edit, then report the result.")
-        evidence = DockerTestRunner(args.image).run(workspace, test_path="tests", timeout=30)
+        evidence = DockerTestRunner(executor.image).run(workspace, test_path="tests", timeout=30)
         tools = [e for e in session.trace_events() if e["event"] == "tool"]
         observed_failure = bool(tools and tools[0]["name"] == "run_tests" and not tools[0]["ok"])
         tests_unchanged = test.read_text() == TESTS
@@ -64,6 +65,7 @@ def main() -> int:
         success = (result.status == "completed" and observed_failure and tests_unchanged
                    and changed and evidence.status == "passed" and evidence.passed == 4)
         report = {"kind": "live-generated-fixture", "provider": args.provider,
+                  "image_id": executor.image,
                   "success": success, "agent_status": result.status,
                   "observed_initial_test_failure": observed_failure, "tests_unchanged": tests_unchanged,
                   "source_changed": changed, "steps": result.steps, "tools_used": result.tools_used,
