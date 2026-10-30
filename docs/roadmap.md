@@ -5,6 +5,7 @@
 | 1 | Implemented | General native tool-calling Runtime, validated file/search/bash/test tools, model fallback, step and time limits |
 | 1 | Implemented | Resumable JSONL sessions in user data storage, metadata traces, output caps, approximate context compaction |
 | 1 | Implemented | Objective two-case coding evaluation and deterministic offline end-to-end demo |
+| 1 | Implemented | Provider-free task reference qualification: frozen external patches, allowed-path checks, baseline failure and independent visible/holdout positive controls before model runs |
 | 1 | Implemented | Manifest-driven repeated Coding evaluation over pinned local Git commits, unseen pytest holdouts, baseline negative controls, per-case Docker images pinned to IDs, and aggregate reason/token/latency reports with sanitized tool-step diagnostics |
 | 2 | Implemented | Docker command executor and Docker-backed JUnit TestRunner; live daemon Base/Head/Repaired integration test |
 | 2 | Implemented | PR Repair shares the Docker executor and JSONL session trace while preserving Base/Head/Repaired evidence |
@@ -14,7 +15,7 @@
 | 2 | Implemented | Web Coding displays a bounded, read-only diff against the worktree base commit |
 | 2 | Implemented | Durable Web job records and history, explicit resume after server interruption, cross-process workspace locks and cancellation markers; active-job limit remains per process |
 | 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
-| 3 | In Progress | A tuned three-repository, four-task DeepSeek pilot scored 4/4 with one repeat per task under the independent visible/hidden test gate. The earlier three-task, three-repeat run scored 8/9 under the older gate. Build a frozen 20-task acceptance set and dependency-ready images before claiming broader reliability |
+| 3 | In Progress | A tuned three-repository, four-task DeepSeek pilot scored 4/4 with one repeat per task under the independent visible/hidden test gate. The earlier three-task, three-repeat run scored 8/9 under the older gate. Two reference-qualified candidates scored 5/6 across three repeats each (one max_steps despite passing tests); qualify more distinct tasks and improve finalization before the frozen 20-task acceptance run |
 | 3 | Implemented | GitHub Actions runs locked dependency installation, Ruff, unit tests, and Docker integration tests on pushes to main and pull requests; first remote run passed |
 | 3 | Planned | Automatic PR risk prioritization and risk-to-test causal investigation; calibrated monetary cost reporting when model prices are available |
 | 4 | Planned | More precise tokenization, richer compaction, interactive approval, and richer Coding UI controls |

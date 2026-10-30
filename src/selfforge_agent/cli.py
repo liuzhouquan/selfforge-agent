@@ -13,7 +13,7 @@ from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
-from selfforge_agent.runtime.benchmark import evaluate_suite
+from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
@@ -143,6 +143,13 @@ def main() -> int:
     suite.add_argument("--time-budget", type=float, default=300)
     suite.add_argument("--test-timeout", type=float, default=60)
     suite.add_argument("--output", type=Path, help="Write aggregate JSON report")
+    validation = subcommands.add_parser("eval-validate", help="Validate task reference fixes without a model")
+    validation.add_argument("--manifest", type=Path, required=True)
+    validation.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    validation.add_argument("--trust-local", action="store_true")
+    validation.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    validation.add_argument("--test-timeout", type=float, default=60)
+    validation.add_argument("--output", type=Path)
     review = subcommands.add_parser("review", help="Review a local Git comparison")
     review.add_argument("--repo", type=Path, required=True)
     review.add_argument("--base", required=True)
@@ -189,6 +196,18 @@ def main() -> int:
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
+    if args.command == "eval-validate":
+        try:
+            report = validate_suite(args.manifest, sandbox=args.sandbox,
+                                    trusted_host=args.trust_local, image=args.image,
+                                    test_timeout=args.test_timeout)
+        except (ValueError, RuntimeError, OSError) as exc:
+            parser.error(str(exc))
+        rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        if args.output:
+            args.output.write_text(rendered, encoding="utf-8")
+        print(rendered, end="")
+        return 0
     if args.command == "code":
         return _run_code(args, parser)
     if args.command == "test":

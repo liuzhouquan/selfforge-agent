@@ -14,12 +14,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from selfforge_agent.models import TestResult
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import ChatModel
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry, _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
+
+MAX_REFERENCE_BYTES = 256 * 1024
 
 
 class BenchmarkCase(BaseModel):
@@ -31,6 +34,7 @@ class BenchmarkCase(BaseModel):
     task: str = Field(min_length=1, max_length=8_000)
     allowed_changes: list[str] = Field(min_length=1)
     holdout_test: str = Field(min_length=1)
+    reference_patch: str | None = Field(default=None, min_length=1)
     agent_test_path: str = "tests"
     agent_test_keyword: str | None = Field(default=None, min_length=1, max_length=200)
     image: str | None = None
@@ -49,6 +53,8 @@ class PreparedCase:
     repository: Path
     holdout_bytes: bytes
     holdout_sha256: str
+    reference_bytes: bytes | None = None
+    reference_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,8 +140,20 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None
         if len(set(case.allowed_changes)) != len(case.allowed_changes):
             raise ValueError(f"Case {case.id} repeats an allowed change path")
         holdout_bytes = holdout.read_bytes()
+        reference_bytes = None
+        if case.reference_patch is not None:
+            reference = (manifest.parent / case.reference_patch).resolve()
+            if (not reference.is_file() or reference.suffix not in {".patch", ".diff"}
+                    or reference.is_relative_to(repository)):
+                raise ValueError(f"Case {case.id} needs a reference patch outside the repository")
+            with reference.open("rb") as handle:
+                reference_bytes = handle.read(MAX_REFERENCE_BYTES + 1)
+            if not reference_bytes or len(reference_bytes) > MAX_REFERENCE_BYTES:
+                raise ValueError(f"Case {case.id} reference patch must contain 1-262144 bytes")
         prepared.append(PreparedCase(case, repository, holdout_bytes,
-                                     hashlib.sha256(holdout_bytes).hexdigest()))
+                                     hashlib.sha256(holdout_bytes).hexdigest(), reference_bytes,
+                                     hashlib.sha256(reference_bytes).hexdigest()
+                                     if reference_bytes is not None else None))
     return suite, prepared
 
 
@@ -275,6 +293,105 @@ def _baseline(case: PreparedCase, *, sandbox: Literal["docker", "host"],
             "status": result.status, "failed": result.failed}
 
 
+def _test_summary(result: TestResult) -> dict:
+    return {name: getattr(result, name) for name in
+            ("status", "passed", "failed", "errors", "skipped", "exit_code")}
+
+
+def _reference_check(case: PreparedCase, *, sandbox: Literal["docker", "host"],
+                     trusted_host: bool, image: str, test_timeout: float) -> dict:
+    if case.reference_bytes is None:
+        raise ValueError(f"Case {case.spec.id} has no reference patch")
+    with tempfile.TemporaryDirectory(prefix="selfforge-reference-") as temp:
+        root = Path(temp)
+        workspace = root / "source"
+        _checkout(case, workspace)
+        patch = root / "reference.patch"
+        patch.write_bytes(case.reference_bytes)
+        try:
+            stats = _git("apply", "--numstat", "-z", str(patch), cwd=workspace, timeout=10)
+            paths = []
+            for record in stats.split("\0"):
+                if not record:
+                    continue
+                fields = record.split("\t", 2)
+                if (len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit()
+                        or _safe_relative(fields[2]) not in case.spec.allowed_changes):
+                    raise ValueError("Reference must be an allowed text patch; renames are unsupported")
+                paths.append(fields[2])
+            if not paths:
+                raise ValueError("Reference patch must change an allowed file")
+            _git("apply", "--check", str(patch), cwd=workspace, timeout=10)
+            _git("apply", str(patch), cwd=workspace, timeout=10)
+        except (RuntimeError, ValueError) as exc:
+            raise ValueError(f"Case {case.spec.id} reference patch has invalid paths or cannot apply") from exc
+        changed = _changed_files(workspace)
+        if not changed or not set(changed) <= set(case.spec.allowed_changes):
+            raise ValueError(f"Case {case.spec.id} reference changed unexpected files")
+        summaries = {}
+        runner = _runner(sandbox, image)
+        for phase in ("visible", "holdout"):
+            # Separate copies prevent visible tests from modifying holdout inputs.
+            verification = root / phase
+            _verification_copy(workspace, verification)
+            path = (case.spec.agent_test_path if phase == "visible"
+                    else _install_holdout(verification, case))
+            result = runner.run(verification, trusted=trusted_host, timeout=test_timeout,
+                                test_path=path,
+                                keyword=case.spec.agent_test_keyword if phase == "visible" else None)
+            summaries[phase] = _test_summary(result)
+            if (result.status != "passed" or result.exit_code != 0 or result.passed == 0
+                    or result.failed or result.errors):
+                raise ValueError(f"Case {case.spec.id} reference {phase} tests did not pass: "
+                                 f"{summaries[phase]}")
+    return {"status": "validated", "patch_sha256": case.reference_sha256,
+            "changed_files": changed, **summaries}
+
+
+def _preflight(manifest: Path, *, sandbox: Literal["docker", "host"], trusted_host: bool,
+               image: str, test_timeout: float, require_references: bool = False
+               ) -> tuple[bytes, BenchmarkSuite, list[PreparedCase], dict, dict]:
+    if sandbox not in {"docker", "host"} or test_timeout <= 0:
+        raise ValueError("Invalid benchmark sandbox or test timeout")
+    if sandbox == "host" and not trusted_host:
+        raise ValueError("Host benchmark execution requires explicit trust")
+    manifest = manifest.expanduser().resolve()
+    manifest_bytes = manifest.read_bytes()
+    suite, cases = load_suite(manifest, _contents=manifest_bytes)
+    if require_references and any(case.reference_bytes is None for case in cases):
+        raise ValueError("Task validation requires a reference_patch for every case")
+    images = {}
+    if sandbox == "docker":
+        resolved_images = {}
+        for case in cases:
+            reference = case.spec.image or image
+            if reference not in resolved_images:
+                resolved_images[reference] = _image_id(reference)
+            images[case.spec.id] = {"reference": reference, "id": resolved_images[reference]}
+    baselines = {}
+    for case in cases:
+        options = {"sandbox": sandbox, "trusted_host": trusted_host,
+                   "image": images[case.spec.id]["id"] if images else image,
+                   "test_timeout": test_timeout}
+        baseline = _baseline(case, **options)
+        if case.reference_bytes is not None:
+            baseline["reference"] = _reference_check(case, **options)
+        baselines[case.spec.id] = baseline
+    return manifest_bytes, suite, cases, images, baselines
+
+
+def validate_suite(manifest: Path, *, sandbox: Literal["docker", "host"] = "docker",
+                   trusted_host: bool = False, image: str = "selfforge-agent-sandbox:latest",
+                   test_timeout: float = 60) -> dict:
+    """Check task solvability without constructing or calling a model."""
+    contents, suite, _, images, baselines = _preflight(
+        manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
+        test_timeout=test_timeout, require_references=True)
+    return {"version": 1, "status": "validated", "cases": len(suite.cases),
+            "manifest_sha256": hashlib.sha256(contents).hexdigest(),
+            "sandbox": sandbox, "images": images, "baselines": baselines}
+
+
 def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[BenchmarkCase], ChatModel],
               *, sandbox: Literal["docker", "host"], trusted_host: bool, image: str,
               max_steps: int, time_budget: float, test_timeout: float) -> BenchmarkOutcome:
@@ -356,25 +473,9 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
     """Run each pinned case from scratch; verify with an unseen external pytest file."""
     if not 1 <= repeats <= 20 or not 1 <= max_steps <= 100 or time_budget <= 0 or test_timeout <= 0:
         raise ValueError("Invalid benchmark repeat, step, or time limit")
-    if sandbox not in {"docker", "host"}:
-        raise ValueError("Benchmark sandbox must be docker or host")
-    if sandbox == "host" and not trusted_host:
-        raise ValueError("Host benchmark execution requires explicit trust")
-    manifest = manifest.expanduser().resolve()
-    manifest_bytes = manifest.read_bytes()
-    suite, cases = load_suite(manifest, _contents=manifest_bytes)
-    images = {}
-    if sandbox == "docker":
-        resolved_images = {}
-        for case in cases:
-            reference = case.spec.image or image
-            if reference not in resolved_images:
-                resolved_images[reference] = _image_id(reference)
-            images[case.spec.id] = {"reference": reference, "id": resolved_images[reference]}
-    baselines = {case.spec.id: _baseline(case, sandbox=sandbox, trusted_host=trusted_host,
-                                         image=images[case.spec.id]["id"] if images else image,
-                                         test_timeout=test_timeout)
-                 for case in cases}
+    manifest_bytes, suite, cases, images, baselines = _preflight(
+        manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
+        test_timeout=test_timeout)
     outcomes = [_run_once(case, repeat, model_factory, sandbox=sandbox,
                           trusted_host=trusted_host,
                           image=images[case.spec.id]["id"] if images else image,

@@ -33,7 +33,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
-| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent reruns of specified visible and unseen tests, per-case pinned Docker images, and failure categories; a three-repository/four-task exploratory pilot exists, but the 20-task acceptance set remains open |
+| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent visible/unseen tests, image IDs and failure categories; optional external reference fixes are checked before model calls. Exploratory pilots exist; the 20-task acceptance set remains open |
 
 ## Quick Start
 
@@ -161,6 +161,8 @@ uv run ruff check .
 GitHub Actions runs Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests. Its [first hosted run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798) passed (90 unit tests and 5 Docker integration tests).
 
 On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. On 2026-10-27, three project-authored tasks across PocketFlow, boltons, and more-itertools scored **8/9** with three repeats each under the earlier gate; one attempt hit the step cap despite passing its holdout. After adding independent visible-test reruns and a large-file chunking task, four tasks scored **4/4** in one run each, with selected visible and unseen tests passing. The gates and repeat counts differ, so these results cannot be combined into a success rate. The 18-step limit came from earlier trials, and the planned 20-task acceptance set remains open. See [evaluation notes](./docs/evaluation.md).
+
+`selfforge-agent eval-validate --manifest MANIFEST` checks the negative baseline, allowed paths and positive reference fix without a model. Legacy manifests stay compatible. See [task validation](./docs/benchmark.md) and the [two-case reference controls](./benchmark/validated-candidates/README.md). Qualification proves the reference passes these tests; coverage still needs human review.
 
 ## Specialized Workflows: PR Review
 

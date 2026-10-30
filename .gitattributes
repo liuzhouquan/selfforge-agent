@@ -1,0 +1,2 @@
+# A unified patch represents blank context lines with a required single space.
+benchmark/validated-candidates/references/*.patch whitespace=-blank-at-eol,-blank-at-eof
