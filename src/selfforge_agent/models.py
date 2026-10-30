@@ -61,6 +61,15 @@ class Finding(BaseModel):
     source: str = "heuristic"
 
 
+class TestFailure(BaseModel):
+    """Bounded test-emitted diagnostics, not trusted instructions or causal claims."""
+
+    test_id: str = Field(max_length=256)
+    kind: str = Field(pattern="^(failure|error)$")
+    message: str = Field(max_length=256)
+    detail: str = Field(max_length=1200)
+
+
 class TestResult(BaseModel):
     command: list[str]
     environment: str
@@ -74,6 +83,8 @@ class TestResult(BaseModel):
     stdout: str
     stderr: str
     error_message: str | None = None
+    failure_details: list[TestFailure] = Field(default_factory=list, max_length=5)
+    failure_details_truncated: bool = False
 
 
 class EvidenceReport(BaseModel):

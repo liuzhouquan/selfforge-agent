@@ -28,6 +28,14 @@ Docker command execution stages a temporary workspace copy that excludes `.env`,
 
 The Coding Web API also exposes a bounded, read-only diff against the worktree's base SHA. It includes committed, uncommitted, and untracked text changes and skips protected paths. Git patch output is read incrementally up to 96 KiB per file before the 24,000-character display cap; an oversized Git process is stopped and the response carries a truncation marker. Changed-path enumeration is capped at 256 KiB and fails explicitly if incomplete. The response includes at most 40 files. The diff does not mutate the worktree.
 
+The shared runners parse counts and bounded failure records in
+`verification.junit`; `verification.feedback` prioritizes labels/messages over
+process output for the existing native tool loop. Optional
+`runtime.failure_artifacts` snapshots retain independent diagnostics in private
+local files without sending holdout data to the Agent or adding test text to
+reports. Host pytest uses a fresh bytecode-cache namespace so rapid same-size
+edits cannot reuse stale source imports. See [test-diagnostics.md](./test-diagnostics.md).
+
 ## Existing specialized PR workflows
 
 The FastAPI app serves a PR workbench. `integrations.github_pr` reads PR metadata and patches with `gh api`, creates `PRContext`, and can clone the head into an editable checkout. `ReviewService` runs deterministic baseline findings. `ProviderReviewer` optionally calls configured models and validates findings against actual added lines; findings remain `suspected`. PR import/review never executes PR code.

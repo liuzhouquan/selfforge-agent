@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
+from selfforge_agent.runtime.failure_artifacts import prepare_artifacts, write_failure
 from selfforge_agent.runtime.model import ChatModel
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry, _protected
@@ -79,6 +80,8 @@ class BenchmarkOutcome:
     visible_failed: int = 0
     visible_errors: int = 0
     visible_exit_code: int | None = None
+    failure_artifact_id: str = ""
+    failure_artifact_error: str = ""
 
 
 def _git(*args: str, cwd: Path | None = None, timeout: float = 120) -> str:
@@ -277,7 +280,8 @@ def _baseline(case: PreparedCase, *, sandbox: Literal["docker", "host"],
 
 def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[BenchmarkCase], ChatModel],
               *, sandbox: Literal["docker", "host"], trusted_host: bool, image: str,
-              max_steps: int, time_budget: float, test_timeout: float) -> BenchmarkOutcome:
+              max_steps: int, time_budget: float, test_timeout: float,
+              failure_artifacts: Path | None = None) -> BenchmarkOutcome:
     started = time.monotonic()
     agent_status = visible_status = holdout_status = provider = model = ""
     changed: list[str] = []
@@ -285,6 +289,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     exit_code = None
     visible_passed = visible_failed = visible_errors = 0
     visible_exit_code = None
+    visible = evidence = None
+    artifact_id = artifact_error = ""
     reason = "harness_error"
     agent_error_code = ""
     agent_steps = tools_used = 0
@@ -340,19 +346,26 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                                  holdout_status, passed, failed, errors)
     except (OSError, RuntimeError, ValueError) as exc:
         reason = f"harness_error:{type(exc).__name__}"
+    if reason != "passed" and failure_artifacts is not None:
+        try:
+            artifact_id = write_failure(failure_artifacts, case=case.spec.id, repeat=repeat,
+                                        reason=reason, visible=visible, holdout=evidence)
+        except (OSError, ValueError):
+            artifact_error = "artifact_write_failed"
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
                             prompt, completion, total, agent_error_code,
                             agent_steps, tools_used, tool_trace, visible_status,
-                            visible_passed, visible_failed, visible_errors, visible_exit_code)
+                            visible_passed, visible_failed, visible_errors, visible_exit_code,
+                            artifact_id, artifact_error)
 
 
 def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], ChatModel], *,
                    repeats: int = 1, sandbox: Literal["docker", "host"] = "docker",
                    trusted_host: bool = False, image: str = "selfforge-agent-sandbox:latest",
                    max_steps: int = 12, time_budget: float = 300,
-                   test_timeout: float = 60) -> dict:
+                   test_timeout: float = 60, failure_artifacts: Path | None = None) -> dict:
     """Run each pinned case from scratch; verify with an unseen external pytest file."""
     if not 1 <= repeats <= 20 or not 1 <= max_steps <= 100 or time_budget <= 0 or test_timeout <= 0:
         raise ValueError("Invalid benchmark repeat, step, or time limit")
@@ -363,6 +376,8 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
     manifest = manifest.expanduser().resolve()
     manifest_bytes = manifest.read_bytes()
     suite, cases = load_suite(manifest, _contents=manifest_bytes)
+    artifact_root = (prepare_artifacts(failure_artifacts, [case.repository for case in cases])
+                     if failure_artifacts is not None else None)
     images = {}
     if sandbox == "docker":
         resolved_images = {}
@@ -379,7 +394,8 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
                           trusted_host=trusted_host,
                           image=images[case.spec.id]["id"] if images else image,
                           max_steps=max_steps,
-                          time_budget=time_budget, test_timeout=test_timeout)
+                          time_budget=time_budget, test_timeout=test_timeout,
+                          failure_artifacts=artifact_root)
                 for case in cases for repeat in range(1, repeats + 1)]
     successes = sum(item.success for item in outcomes)
     counts = Counter(item.reason for item in outcomes if not item.success)
@@ -392,6 +408,7 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
     return {
         "version": 1,
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "failure_artifact_run": artifact_root.name if artifact_root is not None else None,
         "cases": len(suite.cases), "repeats": repeats, "runs": len(outcomes),
         "successes": successes, "success_rate": successes / len(outcomes),
         "sandbox": sandbox, "image": image if sandbox == "docker" else None,

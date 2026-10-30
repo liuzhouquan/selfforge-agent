@@ -15,6 +15,13 @@ Passing tests mixed with skips are allowed. All-skipped and empty selections are
 
 `run_tests` places the status, exit code, counts, and error detail before bounded stdout/stderr in the tool response. General Coding only reaches `completed` with valid post-edit evidence and a nonempty final answer. Independent benchmark runs additionally verify allowed file changes and their own visible/holdout selections.
 
+Failure feedback also prioritizes bounded JUnit labels/messages and first-failure
+detail before stdout. Host and Docker parse counts and diagnostics together;
+contradictory evidence cannot establish success. Optional private evaluation
+snapshots retain independent diagnostics while reports stay metadata-only.
+See [test diagnostics](./test-diagnostics.md) for bounds, the live recovery demo
+and the Host bytecode-cache fix.
+
 ## Execution and recovery
 
 - Docker is the default. Tests use `run_with_artifact` and fetch JUnit before container cleanup. The supplied executor retains its image and cancellation marker; a workspace/image mismatch is rejected. The container remains isolated, and source modifications are discarded.

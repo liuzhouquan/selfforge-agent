@@ -125,6 +125,15 @@
 
 2026-10-29 使用缓存的 Chromium 对本地 Uvicorn 实例进行了检查。跨端口来源 `http://127.0.0.1:8766` 向 `http://127.0.0.1:8765` 发起简单 POST，浏览器实际发送请求，服务端记录 `403 Forbidden`；同源 POST 继续到业务路由，对不存在的任务返回预期 `404`。另用 Chromium host resolver 将 `attacker.example` 映射到 `127.0.0.1`，通过该 Host 请求 `/health`，服务端记录 `400 Bad Request`。这验证了来源校验和可信 Host 检查在浏览器请求中的拒绝行为。该实验模拟了攻击域名解析到 loopback 时的请求状态，没有验证从公网地址切换到 loopback 的动态 DNS 时序，也没有覆盖反向代理部署。
 
+## 2026-10-30 增量检查：Host 重测读取陈旧字节码（P1，已复现并在本分支修复）
+
+- **位置**：`src/selfforge_agent/verification/runner.py:67` 的 Host pytest 启动命令；原实现没有隔离 Python 字节码缓存。
+- **复现**：`tests/test_test_diagnostics.py::test_host_retest_ignores_stale_source_bytecode` 先用返回 0 的函数生成 `.pyc`，改成同尺寸的返回 1，再把修改时间固定回同一整数秒。修复前第二次 pytest 仍读取旧实现并失败；复现不依赖 sleep 或调度时机。
+- **影响**：显式信任的 Host 测试可能验证旧源码，使修复后的结果失真；本轮证明的是旧实现造成误报失败，没有把未经反向故障注入的“误报通过”写作已验证事实。Docker 暂存排除了 `__pycache__`，不是本复现路径。
+- **最小修复**：每次 Host pytest 使用临时 `-X pycache_prefix` 与 `-B`，忽略旧缓存且不写新缓存，不删除用户已有文件。代价是额外解释器启动工作。
+- **验证**：修复前定向用例失败；修复后定向诊断/评测回归 29 项通过，完整 `uv run --no-sync pytest -q` **175 passed**（无跳过，含 Docker），Ruff 通过。一条现存 Starlette/httpx 弃用警告。真实 DeepSeek 生成夹具以 5 轮完成失败→编辑→重测，独立 Docker 4 项通过，原测试未改。
+- **状态与剩余边界**：当前功能分支基于尚未合并的 #26，不代表 main 已修复；其他 Runtime 分支仍需合并后的联合回归。可选失败快照只保留有界独立测试诊断，不保留工作区、完整源码或模型历史，不能承诺完整重放。详见[测试诊断](./test-diagnostics.md)。
+
 ## 缺少的关键测试与未验证风险
 
 | 领域 | 现有覆盖 | 建议补的失败/边界路径 |

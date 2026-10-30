@@ -35,6 +35,15 @@ uv run python examples/coding_demo.py
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
 | 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立重跑指定可见测试与隐藏测试、按案例锁定 Docker 镜像、失败分类；已有 3 仓库/4 任务探索性试点，正式 20 任务集尚未建立 |
 
+失败测试会通过有界 JUnit 诊断回填给同一个 Coding Agent，它可读取相关代码、修复并重测。可运行真实模型演示（需配置供应商和 Docker 镜像）：
+
+```sh
+uv run python examples/test_recovery_demo.py --provider deepseek
+# 测试失败 → 读取代码与测试 → 修改源码 → 重测 → 独立 Docker 验证
+```
+
+一次 DeepSeek 运行以 5 轮完成，原测试未改，独立验证 4 项通过。这是生成夹具演示，不计入正式任务评测。失败快照、边界与复现条件见[测试诊断](./docs/test-diagnostics.md)。
+
 ## Quick Start
 
 需要 Python 3.11+、[uv](https://docs.astral.sh/uv/)；PR 工作流还需要 Git 和 [GitHub CLI](https://cli.github.com/)。在仓库目录执行：

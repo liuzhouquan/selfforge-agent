@@ -1,5 +1,21 @@
 # Evaluation record
 
+## Live generated-fixture test recovery — 2026-10-30
+
+`examples/test_recovery_demo.py` ran on the actual configured DeepSeek provider
+without fallback, with a 12-turn/180-second cap and Docker execution. It first
+observed failing tests, read source/tests, edited source, and successfully called
+`run_tests` again. The Agent reached `completed` in **5 turns / 5 tools**;
+independent Docker verification passed **4/4**, with original test bytes
+unchanged. The ignored summary is `.local/demo/test-recovery-deepseek.json`.
+
+This is one generated-fixture demonstration, not real-repository task coverage,
+a provider comparison or a general success rate. It does not replace or combine
+older pilot results. See [test diagnostics](./test-diagnostics.md) for bounds and
+optional private benchmark snapshots.
+
+## Initial fixture evaluation
+
 Date: 2026-10-17 (Asia/Shanghai)
 
 The command `uv run selfforge-agent eval --provider deepseek` creates two temporary Python projects. Each has a source defect and a pytest assertion. The Agent is asked to edit code and run tests. After the Agent finishes, the evaluator independently checks that `app.py` changed and reruns `python -m pytest tests -q`. Success requires both checks and an Agent `completed` status. Model text alone cannot pass a task.

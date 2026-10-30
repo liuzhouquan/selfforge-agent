@@ -21,6 +21,7 @@ from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
 from selfforge_agent.service import ReviewService
+from selfforge_agent.verification.feedback import failure_feedback
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
 
@@ -82,6 +83,9 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                   f"errors={report.errors}; exit={report.exit_code}")
             if report.error_message:
                 print(report.error_message, file=sys.stderr)
+            diagnostics = failure_feedback(report)
+            if diagnostics:
+                print(diagnostics)
             return 0 if report.status == "passed" else 1
         outcome = ToolRegistry(root, DockerExecutor(root, image=args.image)).execute(
             "run_tests", {"path": args.path, "timeout": args.timeout})
@@ -143,6 +147,8 @@ def main() -> int:
     suite.add_argument("--time-budget", type=float, default=300)
     suite.add_argument("--test-timeout", type=float, default=60)
     suite.add_argument("--output", type=Path, help="Write aggregate JSON report")
+    suite.add_argument("--failure-artifacts", type=Path,
+                       help="Opt in to private local test-failure snapshots outside evaluated repos")
     review = subcommands.add_parser("review", help="Review a local Git comparison")
     review.add_argument("--repo", type=Path, required=True)
     review.add_argument("--base", required=True)
@@ -248,7 +254,7 @@ def main() -> int:
                 args.manifest, lambda _case: OpenAIChatAdapter(providers),
                 repeats=args.repeats, sandbox=args.sandbox, trusted_host=args.trust_local,
                 image=args.image, max_steps=args.max_steps, time_budget=args.time_budget,
-                test_timeout=args.test_timeout,
+                test_timeout=args.test_timeout, failure_artifacts=args.failure_artifacts,
             )
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))

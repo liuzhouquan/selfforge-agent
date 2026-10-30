@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from selfforge_agent.runtime.execution import DockerExecutor, Executor, HostExecutor
+from selfforge_agent.verification.feedback import failure_feedback
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
 MAX_TOOL_OUTPUT = 6_000
@@ -277,5 +278,8 @@ class ToolRegistry:
                    f"errors={result.errors} skipped={result.skipped}")
         if result.error_message:
             summary += "\n" + result.error_message
+        diagnostics = failure_feedback(result)
+        if diagnostics:
+            summary += "\n" + diagnostics
         return ToolOutcome(summary + "\n" + result.stdout + result.stderr,
                            result.status == "passed")

@@ -35,6 +35,15 @@ This demo checks the protocol and execution path; live model results are below. 
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
 | Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent reruns of specified visible and unseen tests, per-case pinned Docker images, and failure categories; a three-repository/four-task exploratory pilot exists, but the 20-task acceptance set remains open |
 
+Bounded JUnit diagnostics feed test failures back into the same Coding Agent for inspection, repair and retesting. Run the live-model demo with a configured provider and Docker image:
+
+```sh
+uv run python examples/test_recovery_demo.py --provider deepseek
+# Failed tests → read code/tests → source edit → retest → independent Docker verification
+```
+
+One DeepSeek run completed in 5 turns, kept the original tests unchanged, and passed all 4 independent checks. This is a generated-fixture demonstration, separate from formal task evaluation. See [test diagnostics](./docs/test-diagnostics.md) for private snapshots, bounds and reproduction.
+
 ## Quick Start
 
 Install Python 3.11+ and [uv](https://docs.astral.sh/uv/). PR workflows also need Git and [GitHub CLI](https://cli.github.com/). From this repository:
