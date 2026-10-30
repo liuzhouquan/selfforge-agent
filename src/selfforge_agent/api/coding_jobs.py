@@ -254,11 +254,14 @@ class CodingJobManager:
             record = self._recover(record)
         session = job.session if job else SessionStore(Path(record["session_root"]),
                                                         record["session_id"])
+        environment = session.environment()
         return {
             "job_id": job_id, "session_id": record["session_id"],
             "state": record["state"], "answer": record["answer"],
             "steps": record["steps"], "tools_used": record["tools_used"],
             "error": record["error"],
+            "sandbox": environment["sandbox"] if environment else None,
+            "image_id": environment["image_id"] if environment else None,
             "cancel_requested": self._cancel_path(job_id).is_file(),
             "repository": record["repository"],
             "workspace_path": record["workspace_path"],

@@ -13,14 +13,16 @@ from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
-from selfforge_agent.runtime.benchmark import evaluate_suite
+from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
+from selfforge_agent.runtime.images import build_dependency_image
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
 from selfforge_agent.service import ReviewService
+from selfforge_agent.verification.feedback import failure_feedback
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
 
@@ -82,6 +84,9 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                   f"errors={report.errors}; exit={report.exit_code}")
             if report.error_message:
                 print(report.error_message, file=sys.stderr)
+            diagnostics = failure_feedback(report)
+            if diagnostics:
+                print(diagnostics)
             return 0 if report.status == "passed" else 1
         outcome = ToolRegistry(root, DockerExecutor(root, image=args.image)).execute(
             "run_tests", {"path": args.path, "timeout": args.timeout})
@@ -94,6 +99,13 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
+    sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image")
+    sandbox.add_argument("action", choices=["build"])
+    sandbox.add_argument("--requirements", type=Path, required=True)
+    sandbox.add_argument("--wheelhouse", type=Path, required=True)
+    sandbox.add_argument("--tag", required=True)
+    sandbox.add_argument("--base-image", default="selfforge-agent-sandbox:latest")
+    sandbox.add_argument("--timeout", type=float, default=300)
     code = subcommands.add_parser("code", help="Run a general autonomous coding task")
     code.add_argument("--repo", type=Path, default=Path.cwd())
     code.add_argument("--task", help="Natural-language development task")
@@ -102,7 +114,7 @@ def main() -> int:
                       help="Persistent isolated worktree (default) or explicit direct edits")
     code.add_argument("--sandbox", choices=["docker", "host"], default="docker")
     code.add_argument("--trust-local", action="store_true", help="Required for host execution")
-    code.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    code.add_argument("--image", help="New Docker image (default sandbox); resume reuses saved ID")
     code.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
     code.add_argument("--no-fallback", action="store_true")
     code.add_argument("--model")
@@ -143,6 +155,15 @@ def main() -> int:
     suite.add_argument("--time-budget", type=float, default=300)
     suite.add_argument("--test-timeout", type=float, default=60)
     suite.add_argument("--output", type=Path, help="Write aggregate JSON report")
+    suite.add_argument("--failure-artifacts", type=Path,
+                       help="Opt in to private local test-failure snapshots outside evaluated repos")
+    validation = subcommands.add_parser("eval-validate", help="Validate task reference fixes without a model")
+    validation.add_argument("--manifest", type=Path, required=True)
+    validation.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    validation.add_argument("--trust-local", action="store_true")
+    validation.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    validation.add_argument("--test-timeout", type=float, default=60)
+    validation.add_argument("--output", type=Path)
     review = subcommands.add_parser("review", help="Review a local Git comparison")
     review.add_argument("--repo", type=Path, required=True)
     review.add_argument("--base", required=True)
@@ -189,6 +210,26 @@ def main() -> int:
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
+    if args.command == "sandbox":
+        try:
+            report = build_dependency_image(args.requirements, args.wheelhouse, tag=args.tag,
+                                            base_image=args.base_image, timeout=args.timeout)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(json.dumps(report, indent=2))
+        return 0
+    if args.command == "eval-validate":
+        try:
+            report = validate_suite(args.manifest, sandbox=args.sandbox,
+                                    trusted_host=args.trust_local, image=args.image,
+                                    test_timeout=args.test_timeout)
+        except (ValueError, RuntimeError, OSError) as exc:
+            parser.error(str(exc))
+        rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        if args.output:
+            args.output.write_text(rendered, encoding="utf-8")
+        print(rendered, end="")
+        return 0
     if args.command == "code":
         return _run_code(args, parser)
     if args.command == "test":
@@ -248,7 +289,7 @@ def main() -> int:
                 args.manifest, lambda _case: OpenAIChatAdapter(providers),
                 repeats=args.repeats, sandbox=args.sandbox, trusted_host=args.trust_local,
                 image=args.image, max_steps=args.max_steps, time_budget=args.time_budget,
-                test_timeout=args.test_timeout,
+                test_timeout=args.test_timeout, failure_artifacts=args.failure_artifacts,
             )
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))

@@ -12,6 +12,7 @@ from selfforge_agent.runtime import benchmark
 from selfforge_agent.runtime.benchmark import (
     BenchmarkCase,
     BenchmarkOutcome,
+    BenchmarkSuite,
     evaluate_suite,
     load_suite,
 )
@@ -117,6 +118,67 @@ def test_repeated_suite_uses_fresh_repos_and_hidden_tests(tmp_path: Path) -> Non
     assert "return a - b" in (repositories[0] / "app.py").read_text()
     assert not any(repo.joinpath("tests", "test_selfforge_holdout_addition.py").exists()
                    for repo in repositories)
+
+
+def test_failed_runs_keep_opt_in_private_diagnostics_outside_public_report(tmp_path: Path) -> None:
+    manifest, _ = _manifest(tmp_path)
+
+    class Claims:
+        def complete(self, *_args):
+            return ModelTurn({"role": "assistant", "content": "Done"}, "stop", "fixture", "claim", None)
+
+    artifacts = tmp_path / "private"
+    report = evaluate_suite(manifest, lambda _case: Claims(), sandbox="host", trusted_host=True,
+                            failure_artifacts=artifacts)
+    run = artifacts / report["failure_artifact_run"]
+    assert run.stat().st_mode & 0o777 == 0o700
+    for outcome in report["results"]:
+        path = run / outcome["failure_artifact_id"]
+        assert path.stat().st_mode & 0o777 == 0o600
+        payload = json.loads(path.read_text())
+        assert payload["visible"]["failure_details"]
+        assert payload["visible"]["failed"] == 1
+        assert "stdout" not in payload["visible"]
+        assert "command" not in payload["visible"]
+        assert payload["reason"] == outcome["reason"] == "no_code_change"
+    published = json.dumps(report)
+    assert "AssertionError" not in published and "test_app.test_add" not in published
+    assert str(artifacts) not in published
+    assert len(list(run.glob("*.json"))) == 2
+
+
+def test_successful_suite_does_not_write_failure_snapshots(tmp_path: Path) -> None:
+    manifest, _ = _manifest(tmp_path)
+    artifacts = tmp_path / "private"
+    report = evaluate_suite(manifest, ScriptedModel, sandbox="host", trusted_host=True,
+                            failure_artifacts=artifacts)
+    assert report["successes"] == 2
+    assert not list(artifacts.rglob("*.json"))
+    assert all(not row["failure_artifact_id"] for row in report["results"])
+
+
+def test_artifact_write_error_preserves_primary_failure(tmp_path: Path, monkeypatch) -> None:
+    manifest, _ = _manifest(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise OSError("private path and credential must not enter report")
+
+    monkeypatch.setattr(benchmark, "write_failure", broken)
+    report = evaluate_suite(manifest, lambda case: ScriptedModel(case, cheat=True),
+                            sandbox="host", trusted_host=True,
+                            failure_artifacts=tmp_path / "private")
+    assert report["successes"] == 0
+    assert all(row["failure_artifact_error"] == "artifact_write_failed"
+               for row in report["results"])
+    assert all(row["reason"] != "harness_error:OSError" for row in report["results"])
+    assert "credential" not in json.dumps(report)
+
+
+def test_artifacts_cannot_be_placed_in_evaluated_repository(tmp_path: Path) -> None:
+    manifest, repos = _manifest(tmp_path)
+    with pytest.raises(ValueError, match="outside evaluated repositories"):
+        evaluate_suite(manifest, lambda _case: pytest.fail("must stop before model creation"),
+                       sandbox="host", trusted_host=True, failure_artifacts=repos[0] / "private")
 
 
 def test_claims_and_visible_test_edits_cannot_pass_holdout(tmp_path: Path) -> None:
@@ -332,6 +394,34 @@ def test_manifest_rejects_invalid_case_image(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="invalid Docker image"):
         load_suite(manifest)
+
+
+def test_nine_task_candidate_manifest_and_holdouts_are_well_formed() -> None:
+    manifest = (Path(__file__).parents[1]
+                / "benchmark/real-pilot/suite-nine-tasks.json")
+    suite = BenchmarkSuite.model_validate_json(manifest.read_bytes())
+    expected_ids = {
+        "pocketflow_invalid_retries",
+        "pocketflow_async_batch_empty",
+        "pocketflow_retry_count_type",
+        "pocketflow_wait_validation",
+        "boltons_unicode_punctuation",
+        "boltons_negative_max_depth",
+        "more_itertools_grouper_size",
+        "more_itertools_zero_chunk_size",
+        "more_itertools_negative_split_maxsplit",
+    }
+    assert {case.id for case in suite.cases} == expected_ids
+
+    for case in suite.cases:
+        repository = (manifest.parent / case.repository).resolve()
+        holdout = (manifest.parent / case.holdout_test).resolve()
+        assert len(case.revision) == 40
+        assert holdout.is_file()
+        assert not holdout.is_relative_to(repository)
+        assert case.allowed_changes
+        assert all(not Path(path).is_absolute() and ".." not in Path(path).parts
+                   for path in case.allowed_changes)
 
 
 @pytest.mark.integration

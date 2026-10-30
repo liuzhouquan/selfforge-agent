@@ -14,12 +14,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from selfforge_agent.models import TestResult
 from selfforge_agent.runtime.agent import CodingAgent
-from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
+from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor, resolve_docker_image
+from selfforge_agent.runtime.failure_artifacts import prepare_artifacts, write_failure
 from selfforge_agent.runtime.model import ChatModel
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry, _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
+
+MAX_REFERENCE_BYTES = 256 * 1024
 
 
 class BenchmarkCase(BaseModel):
@@ -31,6 +35,7 @@ class BenchmarkCase(BaseModel):
     task: str = Field(min_length=1, max_length=8_000)
     allowed_changes: list[str] = Field(min_length=1)
     holdout_test: str = Field(min_length=1)
+    reference_patch: str | None = Field(default=None, min_length=1)
     agent_test_path: str = "tests"
     agent_test_keyword: str | None = Field(default=None, min_length=1, max_length=200)
     image: str | None = None
@@ -49,6 +54,8 @@ class PreparedCase:
     repository: Path
     holdout_bytes: bytes
     holdout_sha256: str
+    reference_bytes: bytes | None = None
+    reference_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +86,8 @@ class BenchmarkOutcome:
     visible_failed: int = 0
     visible_errors: int = 0
     visible_exit_code: int | None = None
+    failure_artifact_id: str = ""
+    failure_artifact_error: str = ""
 
 
 def _git(*args: str, cwd: Path | None = None, timeout: float = 120) -> str:
@@ -134,8 +143,20 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None
         if len(set(case.allowed_changes)) != len(case.allowed_changes):
             raise ValueError(f"Case {case.id} repeats an allowed change path")
         holdout_bytes = holdout.read_bytes()
+        reference_bytes = None
+        if case.reference_patch is not None:
+            reference = (manifest.parent / case.reference_patch).resolve()
+            if (not reference.is_file() or reference.suffix not in {".patch", ".diff"}
+                    or reference.is_relative_to(repository)):
+                raise ValueError(f"Case {case.id} needs a reference patch outside the repository")
+            with reference.open("rb") as handle:
+                reference_bytes = handle.read(MAX_REFERENCE_BYTES + 1)
+            if not reference_bytes or len(reference_bytes) > MAX_REFERENCE_BYTES:
+                raise ValueError(f"Case {case.id} reference patch must contain 1-262144 bytes")
         prepared.append(PreparedCase(case, repository, holdout_bytes,
-                                     hashlib.sha256(holdout_bytes).hexdigest()))
+                                     hashlib.sha256(holdout_bytes).hexdigest(), reference_bytes,
+                                     hashlib.sha256(reference_bytes).hexdigest()
+                                     if reference_bytes is not None else None))
     return suite, prepared
 
 
@@ -226,14 +247,7 @@ def _checkout(case: PreparedCase, workspace: Path) -> None:
 
 
 def _image_id(image: str) -> str:
-    try:
-        result = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image],
-                                capture_output=True, text=True, timeout=10, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ValueError(f"Docker image inspection failed: {exc}") from exc
-    if result.returncode or not result.stdout.strip():
-        raise ValueError(f"Docker image is unavailable: {image}")
-    return result.stdout.strip()
+    return resolve_docker_image(image)
 
 
 def _verification_copy(workspace: Path, destination: Path) -> None:
@@ -275,9 +289,109 @@ def _baseline(case: PreparedCase, *, sandbox: Literal["docker", "host"],
             "status": result.status, "failed": result.failed}
 
 
+def _test_summary(result: TestResult) -> dict:
+    return {name: getattr(result, name) for name in
+            ("status", "passed", "failed", "errors", "skipped", "exit_code")}
+
+
+def _reference_check(case: PreparedCase, *, sandbox: Literal["docker", "host"],
+                     trusted_host: bool, image: str, test_timeout: float) -> dict:
+    if case.reference_bytes is None:
+        raise ValueError(f"Case {case.spec.id} has no reference patch")
+    with tempfile.TemporaryDirectory(prefix="selfforge-reference-") as temp:
+        root = Path(temp)
+        workspace = root / "source"
+        _checkout(case, workspace)
+        patch = root / "reference.patch"
+        patch.write_bytes(case.reference_bytes)
+        try:
+            stats = _git("apply", "--numstat", "-z", str(patch), cwd=workspace, timeout=10)
+            paths = []
+            for record in stats.split("\0"):
+                if not record:
+                    continue
+                fields = record.split("\t", 2)
+                if (len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit()
+                        or _safe_relative(fields[2]) not in case.spec.allowed_changes):
+                    raise ValueError("Reference must be an allowed text patch; renames are unsupported")
+                paths.append(fields[2])
+            if not paths:
+                raise ValueError("Reference patch must change an allowed file")
+            _git("apply", "--check", str(patch), cwd=workspace, timeout=10)
+            _git("apply", str(patch), cwd=workspace, timeout=10)
+        except (RuntimeError, ValueError) as exc:
+            raise ValueError(f"Case {case.spec.id} reference patch has invalid paths or cannot apply") from exc
+        changed = _changed_files(workspace)
+        if not changed or not set(changed) <= set(case.spec.allowed_changes):
+            raise ValueError(f"Case {case.spec.id} reference changed unexpected files")
+        summaries = {}
+        runner = _runner(sandbox, image)
+        for phase in ("visible", "holdout"):
+            # Separate copies prevent visible tests from modifying holdout inputs.
+            verification = root / phase
+            _verification_copy(workspace, verification)
+            path = (case.spec.agent_test_path if phase == "visible"
+                    else _install_holdout(verification, case))
+            result = runner.run(verification, trusted=trusted_host, timeout=test_timeout,
+                                test_path=path,
+                                keyword=case.spec.agent_test_keyword if phase == "visible" else None)
+            summaries[phase] = _test_summary(result)
+            if (result.status != "passed" or result.exit_code != 0 or result.passed == 0
+                    or result.failed or result.errors):
+                raise ValueError(f"Case {case.spec.id} reference {phase} tests did not pass: "
+                                 f"{summaries[phase]}")
+    return {"status": "validated", "patch_sha256": case.reference_sha256,
+            "changed_files": changed, **summaries}
+
+
+def _preflight(manifest: Path, *, sandbox: Literal["docker", "host"], trusted_host: bool,
+               image: str, test_timeout: float, require_references: bool = False
+               ) -> tuple[bytes, BenchmarkSuite, list[PreparedCase], dict, dict]:
+    if sandbox not in {"docker", "host"} or test_timeout <= 0:
+        raise ValueError("Invalid benchmark sandbox or test timeout")
+    if sandbox == "host" and not trusted_host:
+        raise ValueError("Host benchmark execution requires explicit trust")
+    manifest = manifest.expanduser().resolve()
+    manifest_bytes = manifest.read_bytes()
+    suite, cases = load_suite(manifest, _contents=manifest_bytes)
+    if require_references and any(case.reference_bytes is None for case in cases):
+        raise ValueError("Task validation requires a reference_patch for every case")
+    images = {}
+    if sandbox == "docker":
+        resolved_images = {}
+        for case in cases:
+            reference = case.spec.image or image
+            if reference not in resolved_images:
+                resolved_images[reference] = _image_id(reference)
+            images[case.spec.id] = {"reference": reference, "id": resolved_images[reference]}
+    baselines = {}
+    for case in cases:
+        options = {"sandbox": sandbox, "trusted_host": trusted_host,
+                   "image": images[case.spec.id]["id"] if images else image,
+                   "test_timeout": test_timeout}
+        baseline = _baseline(case, **options)
+        if case.reference_bytes is not None:
+            baseline["reference"] = _reference_check(case, **options)
+        baselines[case.spec.id] = baseline
+    return manifest_bytes, suite, cases, images, baselines
+
+
+def validate_suite(manifest: Path, *, sandbox: Literal["docker", "host"] = "docker",
+                   trusted_host: bool = False, image: str = "selfforge-agent-sandbox:latest",
+                   test_timeout: float = 60) -> dict:
+    """Check task solvability without constructing or calling a model."""
+    contents, suite, _, images, baselines = _preflight(
+        manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
+        test_timeout=test_timeout, require_references=True)
+    return {"version": 1, "status": "validated", "cases": len(suite.cases),
+            "manifest_sha256": hashlib.sha256(contents).hexdigest(),
+            "sandbox": sandbox, "images": images, "baselines": baselines}
+
+
 def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[BenchmarkCase], ChatModel],
               *, sandbox: Literal["docker", "host"], trusted_host: bool, image: str,
-              max_steps: int, time_budget: float, test_timeout: float) -> BenchmarkOutcome:
+              max_steps: int, time_budget: float, test_timeout: float,
+              failure_artifacts: Path | None = None) -> BenchmarkOutcome:
     started = time.monotonic()
     agent_status = visible_status = holdout_status = provider = model = ""
     changed: list[str] = []
@@ -285,6 +399,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     exit_code = None
     visible_passed = visible_failed = visible_errors = 0
     visible_exit_code = None
+    visible = evidence = None
+    artifact_id = artifact_error = ""
     reason = "harness_error"
     agent_error_code = ""
     agent_steps = tools_used = 0
@@ -340,46 +456,40 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                                  holdout_status, passed, failed, errors)
     except (OSError, RuntimeError, ValueError) as exc:
         reason = f"harness_error:{type(exc).__name__}"
+    if reason != "passed" and failure_artifacts is not None:
+        try:
+            artifact_id = write_failure(failure_artifacts, case=case.spec.id, repeat=repeat,
+                                        reason=reason, visible=visible, holdout=evidence)
+        except (OSError, ValueError):
+            artifact_error = "artifact_write_failed"
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
                             prompt, completion, total, agent_error_code,
                             agent_steps, tools_used, tool_trace, visible_status,
-                            visible_passed, visible_failed, visible_errors, visible_exit_code)
+                            visible_passed, visible_failed, visible_errors, visible_exit_code,
+                            artifact_id, artifact_error)
 
 
 def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], ChatModel], *,
                    repeats: int = 1, sandbox: Literal["docker", "host"] = "docker",
                    trusted_host: bool = False, image: str = "selfforge-agent-sandbox:latest",
                    max_steps: int = 12, time_budget: float = 300,
-                   test_timeout: float = 60) -> dict:
+                   test_timeout: float = 60, failure_artifacts: Path | None = None) -> dict:
     """Run each pinned case from scratch; verify with an unseen external pytest file."""
     if not 1 <= repeats <= 20 or not 1 <= max_steps <= 100 or time_budget <= 0 or test_timeout <= 0:
         raise ValueError("Invalid benchmark repeat, step, or time limit")
-    if sandbox not in {"docker", "host"}:
-        raise ValueError("Benchmark sandbox must be docker or host")
-    if sandbox == "host" and not trusted_host:
-        raise ValueError("Host benchmark execution requires explicit trust")
-    manifest = manifest.expanduser().resolve()
-    manifest_bytes = manifest.read_bytes()
-    suite, cases = load_suite(manifest, _contents=manifest_bytes)
-    images = {}
-    if sandbox == "docker":
-        resolved_images = {}
-        for case in cases:
-            reference = case.spec.image or image
-            if reference not in resolved_images:
-                resolved_images[reference] = _image_id(reference)
-            images[case.spec.id] = {"reference": reference, "id": resolved_images[reference]}
-    baselines = {case.spec.id: _baseline(case, sandbox=sandbox, trusted_host=trusted_host,
-                                         image=images[case.spec.id]["id"] if images else image,
-                                         test_timeout=test_timeout)
-                 for case in cases}
+    manifest_bytes, suite, cases, images, baselines = _preflight(
+        manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
+        test_timeout=test_timeout)
+    artifact_root = (prepare_artifacts(failure_artifacts, [case.repository for case in cases])
+                     if failure_artifacts is not None else None)
     outcomes = [_run_once(case, repeat, model_factory, sandbox=sandbox,
                           trusted_host=trusted_host,
                           image=images[case.spec.id]["id"] if images else image,
                           max_steps=max_steps,
-                          time_budget=time_budget, test_timeout=test_timeout)
+                          time_budget=time_budget, test_timeout=test_timeout,
+                          failure_artifacts=artifact_root)
                 for case in cases for repeat in range(1, repeats + 1)]
     successes = sum(item.success for item in outcomes)
     counts = Counter(item.reason for item in outcomes if not item.success)
@@ -392,6 +502,7 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
     return {
         "version": 1,
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "failure_artifact_run": artifact_root.name if artifact_root is not None else None,
         "cases": len(suite.cases), "repeats": repeats, "runs": len(outcomes),
         "successes": successes, "success_rate": successes / len(outcomes),
         "sandbox": sandbox, "image": image if sandbox == "docker" else None,

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "pocketflow_async_batch_empty",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "Make AsyncBatchNode and AsyncParallelBatchNode treat prep_async returning None as an empty batch, consistent with BatchNode and the default prep method. Their public run_async lifecycle must call post_async with an empty result and must not call exec_async for None or empty iterables. Preserve nonempty sequence/generator order and exception propagation. Add regression tests in tests/test_async_empty_prep.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_async_empty_prep.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_async_batch_empty.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_async_batch_empty.patch"
+    },
+    {
+      "id": "boltons_unicode_punctuation",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "Extend boltons.strutils.split_punct_ws and slugify to treat Unicode punctuation (category P*) as word separators. Preserve existing ASCII punctuation/whitespace behavior, Unicode letters, combining marks and Unicode non-punctuation symbols. This is an explicit feature extension. Add regression tests to tests/test_strutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/strutils.py",
+        "tests/test_strutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_unicode_punctuation.py",
+      "agent_test_path": "tests/test_strutils.py",
+      "reference_patch": "references/boltons_unicode_punctuation.patch"
+    }
+  ]
+}

@@ -95,6 +95,21 @@ def test_requires_trust_and_real_regression(demo_repo: tuple[Path, str, str]) ->
     assert model.calls == 0
 
 
+def test_repair_rejects_all_skipped_baseline(demo_repo: tuple[Path, str, str]) -> None:
+    repo, _, _ = demo_repo
+    (repo / "tests/test_calculator.py").write_text(
+        "import pytest\ndef test_add():\n    pytest.skip('environment not configured')\n")
+    git(repo, "add", "tests/test_calculator.py")
+    git(repo, "commit", "-qm", "skip all tests")
+    revision = git(repo, "rev-parse", "HEAD")
+    model = FixedModel()
+    report = RepairAgent(model).run(repo, revision, revision, "Fix add", trusted=True)
+    assert report.status == "error"
+    assert report.base_test.status == "error" and report.base_test.skipped == 1
+    assert model.calls == 0 and report.verified_patch == ""
+    assert any("no passing tests" in error for error in report.errors)
+
+
 def test_retries_after_rejected_edit(demo_repo: tuple[Path, str, str]) -> None:
     class RetryModel:
         def propose(self, observation: RepairObservation) -> CodeEdit:

@@ -17,6 +17,7 @@ Create a JSON file outside the repositories under test:
       "task": "Fix the parser regression and run tests",
       "allowed_changes": ["src/example/parser.py"],
       "holdout_test": "./holdouts/test_parser.py",
+      "reference_patch": "./references/parser.patch",
       "agent_test_path": "tests",
       "agent_test_keyword": "parser",
       "image": "my-project-benchmark:locked"
@@ -26,6 +27,20 @@ Create a JSON file outside the repositories under test:
 ```
 
 Paths are relative to the manifest. `revision` must be a full commit SHA present in the local repository. `holdout_test` must be a Python file outside that repository; it is copied only into a separate verification checkout after the Agent stops. `allowed_changes` lists exact paths that the Agent may change, including any regression-test file the task requests. Python and pytest cache files are ignored when computing changed paths. `agent_test_path` selects a committed test directory or file and defaults to `tests`. Optional `agent_test_keyword` is a bounded pytest `-k` expression used by both the Agent's `run_tests` instruction and the evaluator's independent visible-test run. Use it only for a documented relevant selection; disclose unrelated failures in the broader suite. The optional `image` selects a Docker image for this case, overriding the CLI `--image` fallback.
+
+Optional `reference_patch` names an external `.patch` or `.diff` file (1–262144 bytes). It is frozen and hashed with the other inputs. Before model execution, a provided patch must apply as a text patch, change only exact allowed paths, and pass both the visible selection and holdout with nonzero passing counts, zero failures/errors and exit 0. Reference visible and holdout tests run on separate disposable copies. Renames/binary patches are unsupported; Git path checks stay enabled. Reference source and patch bytes never enter the Agent checkout or conversation. A bad reference stops the suite before constructing any model. Existing manifests without this field keep their previous baseline gate.
+
+Use the provider-free qualification command to require a reference on **every** case:
+
+```sh
+uv run selfforge-agent eval-validate --manifest ./benchmark/suite.json \
+  --output .local/task-validation.json
+# Trusted fixtures only:
+uv run selfforge-agent eval-validate --manifest ./benchmark/suite.json \
+  --sandbox host --trust-local
+```
+
+The result records the manifest, holdout and patch hashes, image IDs, allowed changed paths and test counts. It is a task-validation result, not a model success rate. A passing reference does not prove full specification coverage. The [two-case reference-qualified set](../benchmark/validated-candidates/README.md) documents its contracts, original behavior and positive/negative controls.
 
 The evaluator first checks that the holdout has a failing assertion on the pinned baseline, with no collection errors. A passing or broken baseline is rejected as an invalid task. It freezes and hashes the manifest and holdout contents before any repeat starts.
 

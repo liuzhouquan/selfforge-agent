@@ -8,34 +8,15 @@ import subprocess
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from selfforge_agent.models import TestResult
 from selfforge_agent.runtime.execution import DockerExecutor
+from selfforge_agent.verification.junit import MAX_JUNIT_BYTES, parse_junit
 
 
 class TrustRequiredError(ValueError):
     """Running repository code requires an explicit trust choice."""
-
-
-def _junit_counts(xml: bytes | None, timed_out: bool) -> tuple[dict[str, int], str | None]:
-    counts = {key: 0 for key in ("passed", "failed", "errors", "skipped")}
-    if xml is None:
-        return counts, None if timed_out else "pytest did not produce JUnit XML"
-    try:
-        root = ET.fromstring(xml)
-        suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
-        if not suites:
-            raise ValueError("No testsuite element")
-        total = sum(int(s.get("tests", "0")) for s in suites)
-        counts["failed"] = sum(int(s.get("failures", "0")) for s in suites)
-        counts["errors"] = sum(int(s.get("errors", "0")) for s in suites)
-        counts["skipped"] = sum(int(s.get("skipped", "0")) for s in suites)
-        counts["passed"] = max(0, total - counts["failed"] - counts["errors"] - counts["skipped"])
-        return counts, None
-    except (ET.ParseError, ValueError) as exc:
-        return counts, f"Invalid JUnit XML: {exc}"
 
 
 def _result_status(returncode: int | None, timed_out: bool, counts: dict[str, int],
@@ -44,10 +25,12 @@ def _result_status(returncode: int | None, timed_out: bool, counts: dict[str, in
         return "timeout", f"pytest exceeded {timeout:g} seconds"
     if parse_error:
         return "error", parse_error
-    if returncode == 0:
-        return "passed", None
     if counts["failed"] or counts["errors"]:
         return "failed", None
+    if returncode == 0:
+        if counts["passed"] > 0:
+            return "passed", None
+        return "error", "pytest produced no passing tests (empty or all skipped)"
     return "error", f"pytest exited with code {returncode}"
 
 
@@ -79,7 +62,10 @@ class TestRunner:
         environment = f"local; python={sys.version.split()[0]}; platform={platform.platform()}"
         with tempfile.TemporaryDirectory(prefix="selfforge-agent-") as tempdir:
             xml_path = Path(tempdir) / "junit.xml"
-            command = [sys.executable, "-m", "pytest", str(target)]
+            # A fresh cache namespace avoids timestamp/size-valid .pyc files from
+            # an earlier test run after a rapid same-size source edit.
+            command = [sys.executable, "-B", "-X", f"pycache_prefix={Path(tempdir) / 'pycache'}",
+                       "-m", "pytest", str(target)]
             if keyword is not None:
                 if not keyword.strip():
                     raise ValueError("Test keyword must not be blank")
@@ -96,18 +82,23 @@ class TestRunner:
             timed_out = False
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
+            except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                 timed_out = True
                 if os.name == "posix":
                     os.killpg(process.pid, signal.SIGKILL)
                 else:
                     process.kill()
                 stdout, stderr = process.communicate()
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
             duration = time.monotonic() - start
-            counts, parse_error = _junit_counts(xml_path.read_bytes() if xml_path.exists() else None,
-                                                timed_out)
-            status, error = _result_status(process.returncode, timed_out, counts,
-                                           parse_error, timeout)
+            xml = None
+            if xml_path.exists():
+                with xml_path.open("rb") as handle:
+                    xml = handle.read(MAX_JUNIT_BYTES + 1)
+            evidence = parse_junit(xml, timed_out)
+            status, error = _result_status(process.returncode, timed_out, evidence.counts,
+                                           evidence.error, timeout)
             return TestResult(
                 command=command,
                 environment=environment,
@@ -117,7 +108,9 @@ class TestRunner:
                 stdout=stdout.decode("utf-8", "replace")[-20000:],
                 stderr=stderr.decode("utf-8", "replace")[-20000:],
                 error_message=error,
-                **counts,
+                failure_details=evidence.failures,
+                failure_details_truncated=evidence.truncated,
+                **evidence.counts,
             )
 
 
@@ -130,8 +123,13 @@ class DockerTestRunner:
         self.image = image
 
     def run(self, repository: Path, *, trusted: bool = False, timeout: float = 60,
-            test_path: str = "tests", keyword: str | None = None) -> TestResult:
+            test_path: str = "tests", keyword: str | None = None,
+            executor: DockerExecutor | None = None) -> TestResult:
         repo, target = _test_target(repository, test_path, timeout)
+        if executor is None:
+            executor = DockerExecutor(repo, image=self.image)
+        elif executor.root != repo or executor.image != self.image:
+            raise ValueError("Docker executor workspace and image must match the test runner")
         relative = target.relative_to(repo).as_posix()
         command = ["python", "-m", "pytest", relative]
         if keyword is not None:
@@ -140,17 +138,17 @@ class DockerTestRunner:
             command.extend(["-k", keyword])
         command.append("--junitxml=/artifacts/junit.xml")
         start = time.monotonic()
-        outcome, xml = DockerExecutor(repo, image=self.image).run_with_artifact(
-            shlex.join(command), timeout, "junit.xml")
+        outcome, xml = executor.run_with_artifact(shlex.join(command), timeout, "junit.xml")
         duration = time.monotonic() - start
-        counts, parse_error = _junit_counts(xml, outcome.timed_out)
+        evidence = parse_junit(xml, outcome.timed_out)
         status, error = _result_status(outcome.returncode, outcome.timed_out,
-                                       counts, parse_error, timeout)
-        if status == "error" and parse_error and outcome.output:
-            error = f"{parse_error}: {outcome.output[-500:]}"
+                                       evidence.counts, evidence.error, timeout)
+        if status == "error" and evidence.error and outcome.output:
+            error = f"{evidence.error}: {outcome.output[-500:]}"
         return TestResult(
             command=command, environment=f"docker; image={self.image}; network=none",
             exit_code=outcome.returncode, duration_seconds=duration,
             status=status, stdout=outcome.output[-20000:], stderr="",
-            error_message=error, **counts,
+            error_message=error, failure_details=evidence.failures,
+            failure_details_truncated=evidence.truncated, **evidence.counts,
         )
