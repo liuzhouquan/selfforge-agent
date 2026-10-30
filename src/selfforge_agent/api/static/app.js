@@ -8,6 +8,7 @@ let activeCodingJob = null;
 let currentCodingSession = null;
 let currentCodingRepo = null;
 let currentCodingBranch = "";
+let currentCodingSandbox = "docker";
 let codingJobRunning = false;
 let codingPollTimer = null;
 let codingDiffJobId = null;
@@ -81,6 +82,7 @@ function renderCodingJob(job) {
   currentCodingSession = job.session_id;
   currentCodingRepo = job.repository;
   currentCodingBranch = job.branch;
+  currentCodingSandbox = job.sandbox || "docker";
   codingJobRunning = ["queued", "running"].includes(job.state);
   const labels = {
     queued: "等待运行", running: "正在执行", completed: "已验证完成",
@@ -91,6 +93,10 @@ function renderCodingJob(job) {
   $("coding-job").hidden = false;
   $("coding-state").textContent = labels[job.state] || job.state;
   $("coding-job-meta").textContent = `会话 ${job.session_id} · ${job.steps} 步 · ${job.tools_used} 次工具调用${job.cancel_requested ? " · 已请求取消" : ""}`;
+  if (job.sandbox) {
+    $("coding-job-meta").textContent += job.image_id ? ` · Docker ${job.image_id.slice(7, 19)}` : " · 本机执行";
+    $("coding-job-meta").title = job.image_id || "";
+  }
   $("coding-workspace-info").textContent = job.branch
     ? `独立工作区：${job.workspace_path} · 分支 ${job.branch} · 基于 ${job.base_sha.slice(0, 12)}`
     : `直接修改：${job.workspace_path}`;
@@ -186,7 +192,7 @@ $("coding-form").addEventListener("submit", async (event) => {
       workspace: $("coding-workspace").value,
       confirm_direct: $("coding-workspace").value === "direct" && $("coding-confirm-direct").checked,
       sandbox: $("coding-sandbox").value, trust_local: host && $("coding-trust").checked,
-      image: $("coding-image").value.trim() || "selfforge-agent-sandbox:latest",
+      image: host ? null : $("coding-image").value.trim() || null,
       provider: $("coding-provider").value, fallback: $("coding-fallback").checked,
       max_steps: Number($("coding-steps").value), time_budget: Number($("coding-time").value),
     });
@@ -252,6 +258,9 @@ $("coding-resume-current").addEventListener("click", () => {
   $("coding-resume").value = currentCodingSession;
   $("coding-repo").value = currentCodingRepo;
   $("coding-workspace").value = currentCodingBranch ? "worktree" : "direct";
+  $("coding-sandbox").value = currentCodingSandbox;
+  $("coding-image").value = "";
+  $("coding-trust").checked = false;
   refreshCodingAvailability();
   $("coding-task-text").focus();
 });

@@ -7,7 +7,7 @@
 | 1 | Implemented | Objective two-case coding evaluation and deterministic offline end-to-end demo |
 | 1 | Implemented | Manifest-driven repeated Coding evaluation over pinned local Git commits, unseen pytest holdouts, baseline negative controls, per-case Docker images pinned to IDs, and aggregate reason/token/latency reports with sanitized tool-step diagnostics |
 | 2 | Implemented | Explicit offline dependency-image builder with hash-locked wheels, frozen base/result IDs, src-layout support and Web Coding image selection; pinned ItsDangerous suite passed 297 tests |
-| 2 | Planned | Persist the selected immutable image ID with Coding sessions and automatically reuse it on resume |
+| 2 | Implemented | Coding sessions persist execution mode and immutable Docker image ID; CLI/Web resume reuses it, rejects environment changes and exposes it in durable history |
 | 2 | Planned | Broader dependency profiles and automatic environment detection; source builds and OS dependencies remain operator-managed |
 | 2 | Implemented | Docker command executor and Docker-backed JUnit TestRunner; live daemon Base/Head/Repaired integration test |
 | 2 | Implemented | PR Repair shares the Docker executor and JSONL session trace while preserving Base/Head/Repaired evidence |

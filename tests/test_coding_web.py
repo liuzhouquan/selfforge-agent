@@ -96,6 +96,47 @@ def test_web_coding_uses_selected_dependency_image(monkeypatch: pytest.MonkeyPat
     assert selected == ["project-deps:locked"]
 
 
+def test_web_resume_and_history_keep_pinned_image(monkeypatch: pytest.MonkeyPatch,
+                                                 tmp_path: Path) -> None:
+    from test_session_environment import A, B, Model, RecordingDocker
+
+    repo = _repo(tmp_path)
+    images = {"project:tag": A, A: A}
+    model = Model(test=True)
+    monkeypatch.setattr("selfforge_agent.runtime.environment.resolve_docker_image",
+                        lambda ref, _timeout: images[ref])
+    monkeypatch.setattr(api_module, "DockerExecutor", RecordingDocker)
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: model)
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
+                        CodingWorkspaceManager(tmp_path / "coding-worktrees"))
+    jobs_root = tmp_path / "jobs"
+    monkeypatch.setattr(api_module, "_CODING_JOBS", CodingJobManager(root=jobs_root))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    client = TestClient(api_module.app)
+    payload = {"repository": str(repo), "task": "Verify environment", "max_steps": 1,
+               "image": "project:tag"}
+    first = client.post("/api/code/jobs", json=payload)
+    assert first.status_code == 200
+    paused = _finished(client, first.json()["job_id"])
+    assert paused["state"] == "max_steps" and paused["image_id"] == A
+    images["project:tag"] = B
+    resumed = client.post("/api/code/jobs", json={"repository": str(repo),
+                          "resume_session": paused["session_id"]})
+    assert resumed.status_code == 200
+    completed = _finished(client, resumed.json()["job_id"])
+    assert completed["state"] == "completed" and completed["image_id"] == A
+    assert completed["sandbox"] == "docker"
+    recovered = CodingJobManager(root=jobs_root).get(completed["job_id"])
+    assert recovered["image_id"] == A and recovered["state"] == "completed"
+    calls = model.calls
+    rejected = client.post("/api/code/jobs", json={"repository": str(repo),
+                           "resume_session": paused["session_id"], "image": "project:tag"})
+    assert rejected.status_code == 200
+    failed = _finished(client, rejected.json()["job_id"])
+    assert failed["state"] == "failed" and model.calls == calls
+    assert "image differs" in failed["error"]
+
+
 def test_web_coding_can_resume_and_verify_on_host(monkeypatch: pytest.MonkeyPatch,
                                                    tmp_path: Path) -> None:
     repo = _repo(tmp_path)

@@ -178,7 +178,7 @@ class CodingTaskRequest(BaseModel):
     workspace: Literal["worktree", "direct"] = "worktree"
     confirm_direct: bool = False
     sandbox: Literal["docker", "host"] = "docker"
-    image: str = Field(default="selfforge-agent-sandbox:latest", min_length=1, max_length=256,
+    image: str | None = Field(default=None, min_length=1, max_length=256,
                        pattern=r"^[^\s-][^\s]*$")
     trust_local: bool = False
     provider: Literal["auto", "deepseek", "openrouter"] = "auto"
@@ -195,6 +195,8 @@ class CodingJobResponse(BaseModel):
     steps: int
     tools_used: int
     error: str
+    sandbox: Literal["docker", "host"] | None = None
+    image_id: str | None = None
     cancel_requested: bool
     repository: str
     workspace_path: str

@@ -49,7 +49,7 @@ uv run selfforge-agent code --repo ./your-project --task '修复失败的测试�
 
 `code` 默认从 Git 仓库已提交的 HEAD 创建 `selfforge/SESSION_ID` 分支和独立 worktree。原仓库的未提交改动不会带入；Agent 的文件工具只修改新 worktree。工作区保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/worktrees/`，任务结束后保留供检查与提交。需要已有的首次 Git commit。确需直接修改原仓库时，显式传 `--workspace direct`。
 
-命令与测试默认通过 Docker 执行，容器禁用网络、限制 CPU/内存/进程数。工具把排除了 `.env`、本地密钥和会话目录的临时工作区副本送入容器 tmpfs；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时，可用 `selfforge-agent sandbox build` 从带哈希的锁文件和本地 wheelhouse 离线准备镜像，再通过 `--image` 或 Web 的“Docker 镜像”选择。固定 SHA 的 ItsDangerous 完整测试已在依赖镜像中通过 297 项，见[依赖镜像指南](./docs/dependency-images.md)。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。模型会收到读取的代码和工具输出。
+命令与测试默认通过 Docker 执行，容器禁用网络、限制 CPU/内存/进程数。工具把排除了 `.env`、本地密钥和会话目录的临时工作区副本送入容器 tmpfs；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时，可用 `selfforge-agent sandbox build` 从带哈希的锁文件和本地 wheelhouse 离线准备镜像，再通过 `--image` 或 Web 的“Docker 镜像”选择。Coding 会话会保存实际镜像 ID，续跑留空即可复用；标签变化不会改变原会话环境。固定 SHA 的 ItsDangerous 完整测试已在依赖镜像中通过 297 项，见[依赖镜像指南](./docs/dependency-images.md)。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。模型会收到读取的代码和工具输出。
 
 DeepSeek 与 OpenRouter 默认 URL 和模型已配置；Web 工作台还支持本机保存密钥、URL 与模型列表自动同步。自定义 OpenAI-compatible 端点可用 `--model ID --base-url URL`，密钥从 `SELFFORGE_API_KEY` 或 `OPENAI_API_KEY` 读取。`--provider openrouter` 可指定供应商，默认自动路由并在调用失败时切换备用供应商。
 

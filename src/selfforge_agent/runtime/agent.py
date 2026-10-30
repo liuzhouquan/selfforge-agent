@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from selfforge_agent.runtime.context import ContextManager
+from selfforge_agent.runtime.environment import bind_environment
 from selfforge_agent.runtime.model import (
     ChatModel,
     ModelCallCancelled,
@@ -98,6 +99,13 @@ class CodingAgent:
         deadline = time.monotonic() + self.time_budget
         tools_used = 0
         try:
+            if self.cancel.is_set():
+                return self._finish("cancelled", "", 0, tools_used)
+            if deadline <= time.monotonic():
+                return self._finish("timed_out", "", 0, tools_used)
+            bind_environment(self.tools.executor, self.session,
+                             timeout=min(10, deadline - time.monotonic()), resume=resume)
+            tests_passed = tests_passed and self.session.verification_passed()
             for step in range(1, self.max_steps + 1):
                 if self.cancel.is_set():
                     return self._finish("cancelled", "", step - 1, tools_used)
@@ -171,6 +179,8 @@ class CodingAgent:
             return self._finish("cancelled", "", 0, tools_used)
         except ModelCallTimedOut as exc:
             self.session.trace("error", error_type=type(exc).__name__, message=str(exc))
+            return self._finish("timed_out", "", 0, tools_used, str(exc))
+        except TimeoutError as exc:
             return self._finish("timed_out", "", 0, tools_used, str(exc))
         except (RuntimeError, ValueError, OSError) as exc:
             self.session.trace("error", error_type=type(exc).__name__, message=str(exc)[:300])

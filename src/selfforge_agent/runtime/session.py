@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import re
 from collections import deque
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -69,6 +70,41 @@ class SessionStore:
 
     def record_verification(self, passed: bool) -> None:
         self._append(self.path, {"type": "verification", "passed": passed})
+
+    @staticmethod
+    def _environment(value: object) -> dict:
+        if (not isinstance(value, dict) or set(value) != {"version", "sandbox", "image_id"}
+                or type(value["version"]) is not int or value["version"] != 1
+                or value["sandbox"] not in ("docker", "host")
+                or not isinstance(value["image_id"], str)):
+            raise ValueError("Invalid session execution environment")
+        if ((value["sandbox"] == "docker" and not re.fullmatch(
+                r"sha256:[0-9a-f]{64}", value["image_id"]))
+                or (value["sandbox"] == "host" and value["image_id"])):
+            raise ValueError("Invalid session execution environment")
+        return value
+
+    def environment(self) -> dict | None:
+        if not self.path.is_file():
+            return None
+        saved = None
+        for event in self._complete_events(self.path):
+            if event.get("type") == "execution_environment":
+                value = self._environment(event.get("environment"))
+                if saved is not None and value != saved:
+                    raise ValueError("Conflicting session execution environments")
+                saved = value
+        return saved
+
+    def record_environment(self, environment: dict) -> None:
+        environment = self._environment(environment)
+        saved = self.environment()
+        if saved is not None:
+            if saved != environment:
+                raise ValueError("Cannot change a session execution environment")
+            return
+        self._append(self.path, {"type": "execution_environment", "environment": environment})
+        self.trace("execution_environment", **environment)
 
     def verification_passed(self) -> bool:
         if not self.path.is_file():

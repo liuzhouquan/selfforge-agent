@@ -110,7 +110,7 @@ def main() -> int:
                       help="Persistent isolated worktree (default) or explicit direct edits")
     code.add_argument("--sandbox", choices=["docker", "host"], default="docker")
     code.add_argument("--trust-local", action="store_true", help="Required for host execution")
-    code.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    code.add_argument("--image", help="New Docker image (default sandbox); resume reuses saved ID")
     code.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
     code.add_argument("--no-fallback", action="store_true")
     code.add_argument("--model")

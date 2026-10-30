@@ -44,9 +44,17 @@ uv run selfforge-agent code --repo /path/to/itsdangerous --image "$SELFFORGE_TES
   --task 'Inspect the code, implement the requested change, and run tests'
 ```
 
-In Web Coding, choose **Docker 隔离** and paste the ID into **Docker 镜像**. Blank input uses the default sandbox. The field is hidden for Host execution. Resume currently requires selecting the same image again; image choice is not yet bound to durable session metadata. The `eval-suite` manifest also accepts the image in each case and already resolves it once per evaluation.
+In Web Coding, choose **Docker 隔离** and paste the ID into **Docker 镜像**. Blank input selects the default sandbox for a new session and reuses the stored image ID on resume. The field is hidden for Host execution. Job status/history exposes the actual execution mode and image ID, including after restarting the server. The Continue action restores the saved mode and clears the image override; Host trust must be confirmed again. The `eval-suite` manifest also accepts the image in each case and already resolves it once per evaluation.
 
 Images add `/workspace/src:/workspace` to `PYTHONPATH`, allowing source-layout projects to test their current checkout without installing the checkout itself. Commands/tests still use the existing isolated executor, with no network and discarded container writes. This does not enable project build hooks, system-package installation, automatic dependency discovery or graphical image building. Builds are reproducible in inputs and execution environment, not guaranteed byte-identical image hashes across Docker versions, architectures or repeated builds. Preserve the base and result IDs for comparisons; mutable tags are convenience names.
+
+## Session environment binding
+
+Before the first model call, the common Coding runtime resolves the selected local Docker reference to an immutable ID. The existing executor uses that ID for every command/test, and an `execution_environment` event stores the mode and ID in the private mode-0600 session. Compaction does not remove this metadata.
+
+For CLI resume, omit `--image`; Web requests can omit `image` or set it to null. Retagging the original name does not change the session. An explicit image argument must resolve to the saved ID; changing execution mode is rejected. If the saved image has been removed, restore it locally or save/review your changes and start a new session. There is no implicit pull or fallback to another image.
+
+Legacy sessions without environment metadata remain resumable: the selected/default environment is bound once, and earlier test evidence is invalidated before the binding is saved. Fresh tests are required. Host sessions bind the execution mode, not the host interpreter/dependency contents, and keep the existing explicit trust requirements. Image inspection is bounded by the task deadline and capped at 10 seconds; cancellation is checked before and after this preflight. Concurrent use of a CLI session remains subject to the existing workspace ownership limits.
 
 ## Real repository verification — 2026-10-30
 
@@ -69,3 +77,9 @@ This verifies the dependency environment, not a Coding Agent success rate. There
 On 2026-10-30, the dependency-image and Web suites passed **24 tests**. The full branch suite passed **148 tests**, with no skips and one existing Starlette/httpx deprecation warning. Ruff, JavaScript syntax (`node --check`) and Git whitespace checks passed. This branch starts from main `278ff34`; it does not include tests added by the still-open PRs #24–#26.
 
 A Chromium check confirmed the custom image field, Host-mode hiding and the submitted `image`/`sandbox` values. The browser submission was intercepted before the API to avoid starting a model task; the API forwarding has a separate pytest regression. At a 390px viewport the document width remained 390px. The temporary browser and server were closed afterward.
+
+
+Session-binding regressions additionally cover CLI/API resume without an image, durable history, explicit image/mode mismatches, absent images, invalid/conflicting metadata, legacy migration after a torn log event, storage failure, cancellation and inspection timeout. A real Docker test retags an image to add an environment variable that would fail the task's test; the resumed session still tests successfully on its original ID. No model provider is called by these scripted regressions.
+
+
+After adding automatic session binding, the final full branch regression passed **170 tests**, with no skips and the same existing Starlette/httpx warning. Ruff, JavaScript syntax and Git whitespace checks passed. CLI and API tests cover omitted-image resume after retagging, and a fresh job manager reads the same saved ID from history. Chromium DOM-event checks confirmed that Continue clears the image override, submits `image: null`, restores the saved execution mode, and clears Host trust. Browser task submission was intercepted; no model provider was called.
