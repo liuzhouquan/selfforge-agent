@@ -27,9 +27,9 @@ and the Host bytecode-cache fix.
 - Docker is the default. Tests use `run_with_artifact` and fetch JUnit before container cleanup. The supplied executor retains its image and cancellation marker; a workspace/image mismatch is rejected. The container remains isolated, and source modifications are discarded.
 - Host tests require an explicitly trusted `HostExecutor` and run under the Agent's Python interpreter. The runner kills and reaps the test process group on timeout or Ctrl-C. Install project dependencies in the selected environment or use a prepared Docker image.
 - Executors without the supported evidence path cannot silently run tests using exit codes alone.
-- Verification events now include `evidence=junit-v1`. Old session messages stay readable, but old success booleans without this policy marker cannot restore completion. Resume and run tests again. Existing historical job records retain the status originally recorded; they are not retroactively rewritten.
+- Verification events now include `evidence=junit-workspace-v2` and `workspace_sha256`. Old session messages, including `junit-v1` evidence, stay readable but cannot restore completion without a content-bound successful test. Resume and run tests again. Existing historical job records retain the status originally recorded; they are not retroactively rewritten.
 
-This is an evidence-quality gate, not proof of adequate coverage or a defense against malicious test code forging reports. Evidence is not yet bound to a workspace fingerprint. Write-ahead invalidation and conservative pending-call recovery from PR #25 are included in the combined Runtime; see [integration checks](./runtime-integration.md).
+This is an evidence-quality gate, not proof of adequate coverage or a defense against malicious test code forging reports. General Coding now binds evidence to a bounded workspace content fingerprint before/after tests, before subsequent model requests and before final completion, including after resume. External changes revoke evidence; a failed/incomplete scan cannot establish it. See [workspace evidence](./workspace-evidence.md) for exclusions, limits, migration and race boundaries. Write-ahead invalidation and conservative pending-call recovery from PR #25 are included in the combined Runtime; see [integration checks](./runtime-integration.md).
 
 ## Reproduce and regress
 

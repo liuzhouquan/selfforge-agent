@@ -4,7 +4,7 @@
 
 selfForge Agent serves Python Git repositories. A user submits a development task through the local Web workbench or CLI. One Agent uses constrained tools in an independent worktree, runs tests in an isolated environment, and delivers a reviewable diff, trace, test evidence, and failure reason. Sessions can resume and workspaces can be inspected and cleaned up. PR import, review, differential testing, and repair are specialized workflows.
 
-Multi-agent orchestration, a general MCP platform, a cross-language IDE, and a large frontend are outside the current scope. `completed` means pytest succeeded after the Agent's last edit; it does not prove that every task requirement was verified.
+Multi-agent orchestration, a general MCP platform, a cross-language IDE, and a large frontend are outside the current scope. `completed` requires nonempty JUnit success, matching pre/post-test and current workspace fingerprints, and a nonempty final answer; it does not prove that every task requirement was verified.
 
 ## Acceptance gates
 

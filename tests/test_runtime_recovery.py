@@ -10,6 +10,7 @@ import pytest
 
 from selfforge_agent.runtime.agent import SYSTEM_PROMPT, CodingAgent
 from selfforge_agent.runtime.execution import HostExecutor
+from selfforge_agent.runtime.fingerprint import workspace_fingerprint
 from selfforge_agent.runtime.model import ModelTurn
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
@@ -133,7 +134,7 @@ def test_legacy_pending_calls_revoke_evidence_before_recovery_message(
     session = SessionStore(tmp_path)
     session.record_message({"role": "system", "content": SYSTEM_PROMPT})
     session.record_message({"role": "user", "content": "Verify app"})
-    session.record_verification(True)
+    session.record_verification(True, workspace_sha256=workspace_fingerprint(tmp_path))
     session.record_message(call(name, {}))  # Legacy interrupted log, no tool response.
     registry = ToolRegistry(tmp_path)
     for _ in range(2):  # Synthetic interruption replies must not hide stale evidence later.

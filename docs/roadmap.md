@@ -6,6 +6,7 @@ Development order and acceptance checks: [development guide](./development.md). 
 | --- | --- | --- |
 | 1 | Implemented | General Coding reuses JUnit runners with a nonempty-pass gate, preserves Docker cancellation, and requires retesting of legacy exit-code-only session evidence |
 | 1 | Implemented | Write-ahead verification invalidation for edits, persistent commands, test attempts and new tasks; conservative recovery of legacy pending calls, with abrupt-process-exit regression coverage |
+| 1 | Implemented | Bounded workspace content fingerprints bind nonempty JUnit evidence before/after tests, before reuse and final completion; external edits revoke evidence, unbound legacy sessions require retesting. Local regression: 274 passed / 11 Docker-dependent skips; remote integration status belongs to the delivery PR |
 | 1 | Implemented | General native tool-calling Runtime, validated file/search/bash/test tools, model fallback, step and time limits |
 | 1 | Implemented | Shared bounded JUnit failure feedback, opt-in private evaluation diagnostics, live-model failure/edit/retest demo, and fresh Host bytecode cache namespace for correct rapid retesting |
 | 1 | Implemented | Per-turn remaining-budget and verification feedback, near-cap verification guidance, context space reserved for transient controls, and metadata budget traces; no extra calls or relaxed completion gate |

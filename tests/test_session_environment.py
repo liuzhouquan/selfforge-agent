@@ -121,7 +121,8 @@ def test_legacy_binding_requires_fresh_test_and_recovers_torn_event(tmp_path, mo
     session = SessionStore(tmp_path)
     session.record_message({"role": "system", "content": SYSTEM_PROMPT})
     session.record_message({"role": "user", "content": "Verify environment"})
-    session.record_verification(True)
+    session._append(session.path, {"type": "verification", "passed": True,
+                                   "evidence": "junit-v1"})
     with session.path.open("ab") as handle:
         handle.write(b'{"type":"execution_environment"')
     monkeypatch.setattr(environment, "resolve_docker_image", lambda *_args: A)
