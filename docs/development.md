@@ -24,7 +24,7 @@
 | Web 任务持久化、锁、取消 | `api/coding_jobs.py`、`api/app.py` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py` |
 | 工作区及 Diff | `runtime/workspace.py`、`workspace_diff.py` | `test_workspace.py` |
 | 测试证据、诊断、修复与测试生成 | `verification/`、`coding/` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py` |
-| 独立评测、参考修复与私有快照 | `runtime/benchmark.py`、`evaluation.py`、`failure_artifacts.py` | `test_benchmark.py`、`test_reference_validation.py`、离线 Coding 演示 |
+| 独立评测、参考修复与私有快照 | `runtime/benchmark.py`、`evaluation.py`、`failure_artifacts.py` | `test_benchmark.py`、`test_benchmark_isolation.py`、`test_reference_validation.py`、离线 Coding 演示 |
 
 源码相对 `src/selfforge_agent/`，测试相对 `tests/`。新增能力先找现有模块的扩展点；只为已确认的问题增加抽象。
 
@@ -72,7 +72,7 @@ uv run --no-sync python examples/coding_demo.py
 | 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
 | 5 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，覆盖远端失败和恢复，不自动强推或合并 |
 
-只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。两道带参考修复的任务与既有候选重叠，不能额外计数。
+只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。现有[五题参考控制集](../benchmark/validated-candidates/iterator-traversal.md)跨三个仓库，全部通过 Docker 负例/参考正例；其中异步空输入、Unicode 分隔与零分块任务和早期候选重叠，不能额外计数。目录深度剪枝与替换回调停止涉及不同执行机制；前者保留边界目录匹配和忽略规则，后者是明确的功能扩展，不能宣称为上游确认的 bug。
 
 ## 尚需明确的可靠性边界
 

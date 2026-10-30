@@ -1,5 +1,51 @@
 # Evaluation record
 
+## Reference-qualified iterator/traversal tasks — 2026-10-30
+
+Five distinct project-authored tasks across PocketFlow, boltons and
+more-itertools passed Docker qualification: each pinned baseline has failing
+holdout assertions, and each external reference patch passes independent,
+nonempty visible and holdout selections. The original two-case manifest is
+unchanged. The new cumulative manifest is
+`benchmark/validated-candidates/suite-five-tasks.json`; this does not constitute
+a combined live score or the formal twenty-task acceptance set.
+
+A separate frozen three-case manifest ran DeepSeek `deepseek-flash` without
+fallback, three repeats each, 18 turns, 180 seconds/task, 30 seconds/test:
+
+| Case | Complete successes | Independent visible passes per attempt | Holdout passes per attempt |
+| --- | ---: | --- | --- |
+| boltons depth pruning | 3/3 | 16, 17, 19 | 8, 8, 8 |
+| more-itertools zero chunks | 3/3 | 25, 34, 39 | 14, 14, 14 |
+| more-itertools replacement predicate limit | 3/3 | 16, 16, 17 | 10, 10, 10 |
+
+Total **9/9**, no provider errors, test failures or collection errors. All
+attempts called the formal `run_tests` tool, changed only allowed files and
+reached `completed`. Total attempt duration **398.216 seconds**; reported tokens
+**560,626** (prompt 504,654 / completion 55,972). No prices are inferred. Optional
+private failure snapshots were enabled; no failures occurred to exercise them.
+
+Live manifest SHA-256:
+`225d271542b0387bf2c61008d7e8669fdb1a4b032b08b6e54e420c00567513e4`.
+All attempts used immutable Docker image
+`sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`.
+Contracts, source evidence, qualification counts, exact commands, per-attempt
+steps and report hash are in the [task record](../benchmark/validated-candidates/iterator-traversal.md).
+
+The zero-chunk contract overlaps an earlier pilot; it is not a new unique task.
+The other two are small explicit traversal/callback contracts, not upstream
+maintainer-confirmed bugs. The budget was selected in prior pilots; this result
+does not estimate general coding ability or show an improvement over historical
+5/6, 4/4 or 8/9 runs. Do not add these scores together. Two short local Host
+regression runs overlapped, so the duration is not a comparative benchmark.
+
+This Docker process started on Runtime baseline `c82ac70` before the separately
+reproduced Host visible/holdout contamination fix. Docker already discards test
+execution copies, so that Host path does not affect this result. New regression
+coverage verifies both false-success and false-failure cases on Host; see
+P1-09 in the [audit](./code-audit.md). Separate snapshots do not isolate trusted
+Host code from the rest of the host filesystem.
+
 ## Live generated-fixture test recovery — 2026-10-30
 
 `examples/test_recovery_demo.py` ran on the actual configured DeepSeek provider

@@ -1,0 +1,13 @@
+--- a/boltons/fileutils.py
++++ b/boltons/fileutils.py
+@@ -545,6 +545,10 @@
+                     filename = os.path.join(root, basename)
+                     yield filename
+ 
++        # Prune traversal after preserving boundary directory matches.
++        if max_depth is not None and depth >= max_depth:
++            dirs[:] = []
++
+         for basename in files:
+             if pats_re.match(basename):
+                 if ignored and ign_re.match(basename):

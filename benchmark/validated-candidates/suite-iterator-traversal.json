@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "boltons_depth_pruning",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "Make boltons.fileutils.iter_find_files honor max_depth as an actual traversal limit: do not scan descendants below the limit, rather than walking the whole tree and filtering results. Preserve current yielded file paths, pattern/ignored behavior, path-like and trailing-separator roots, unlimited max_depth=None, and include_dirs=True matches for child directory entries at the boundary. Ignored names must not become traversal exclusions. Add regression tests in tests/test_fileutils.py and run that file. This is a project-authored traversal efficiency fix.",
+      "allowed_changes": [
+        "boltons/fileutils.py",
+        "tests/test_fileutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_depth_pruning.py",
+      "agent_test_path": "tests/test_fileutils.py",
+      "reference_patch": "references/boltons_depth_pruning.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "more_itertools_zero_chunk_size",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "Extend more_itertools.chunked and sliced to reject n=0 with ValueError at call time (before iterator consumption), on empty and nonempty input, in both strict modes. Preserve positive-size lazy iteration, partial final chunks, strict divisibility errors, chunked(iterable, None), and existing negative-size error behavior. This intentionally tightens the current zero-size contract. Add regression methods to ChunkedTests and SlicedTests in tests/test_more.py. Run only those two classes; the full file has an unrelated 100-thread test exceeding the sandbox process limit.",
+      "allowed_changes": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_zero_chunks.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "ChunkedTests or SlicedTests",
+      "reference_patch": "references/more_itertools_zero_chunks.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "more_itertools_replace_limit",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "Extend more_itertools.replace with predicate short-circuiting: after count replacements have been made, stop calling pred and yield the unchanged remaining input. With count=0 never call pred. Preserve output values, single-use iterable/substitutes support, window_size overlap and short-tail behavior, unlimited count=None, invalid window_size errors, and callback/input exceptions before the limit (input errors must still propagate after the limit). This is an explicit callback-efficiency feature; do not change the documented windowing semantics or require new behavior for negative count. Add regression methods to ReplaceTests in tests/test_more.py and run that class. The broader file has an unrelated 100-thread test exceeding the sandbox process limit.",
+      "allowed_changes": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_replace_limit.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "ReplaceTests",
+      "reference_patch": "references/more_itertools_replace_limit.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
