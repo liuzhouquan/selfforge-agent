@@ -15,15 +15,19 @@ class ContextManager:
     def estimate(messages: list[dict]) -> int:
         return sum((len(json.dumps(item, ensure_ascii=False)) + 3) // 4 for item in messages)
 
-    def compact(self, messages: list[dict]) -> tuple[list[dict], bool]:
-        if self.estimate(messages) <= self.token_budget:
+    def compact(self, messages: list[dict], *, reserve_tokens: int = 0
+                ) -> tuple[list[dict], bool]:
+        if not 0 <= reserve_tokens < self.token_budget:
+            raise ValueError("Reserved tokens must leave a positive context budget")
+        budget = self.token_budget - reserve_tokens
+        if self.estimate(messages) <= budget:
             return messages, False
         system = next((item for item in messages if item.get("role") == "system"), None)
         users = [item for item in messages if item.get("role") == "user"]
         if system is None or not users:
             raise ValueError("Session lacks a system prompt or task")
         anchors = [system, *users]
-        if self.estimate(anchors) >= self.token_budget:
+        if self.estimate(anchors) >= budget:
             raise ValueError("Task and constraints exceed context budget")
         digest = []
         for item in messages:
@@ -41,16 +45,16 @@ class ContextManager:
             elif role == "assistant":
                 digest.append("Assistant: " + str(item.get("content", ""))[:300])
         summary_body = "\n".join(digest)
-        allowed = max(200, (self.token_budget - self.estimate(anchors)) * 3)
+        allowed = max(200, (budget - self.estimate(anchors)) * 3)
         def bounded_summary(limit: int) -> str:
             body_limit = max(0, limit - len(_SUMMARY_PREFIX))
             return _SUMMARY_PREFIX + (summary_body[-body_limit:] if body_limit else "")
 
         compacted = [anchors[0], {"role": "system", "content": bounded_summary(allowed)},
                      *anchors[1:]]
-        while self.estimate(compacted) > self.token_budget and allowed > 100:
+        while self.estimate(compacted) > budget and allowed > 100:
             allowed //= 2
             compacted[1]["content"] = bounded_summary(allowed)
-        if self.estimate(compacted) > self.token_budget:
+        if self.estimate(compacted) > budget:
             raise ValueError("Task and compressed history exceed context budget")
         return compacted, True

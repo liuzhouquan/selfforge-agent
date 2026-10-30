@@ -50,3 +50,23 @@ def test_compaction_fails_when_user_instructions_exceed_budget() -> None:
     ]
     with pytest.raises(ValueError, match="Task and constraints exceed context budget"):
         ContextManager(500).compact(messages)
+
+
+def test_compaction_reserves_request_overhead_and_preserves_constraints() -> None:
+    messages = [
+        {"role": "system", "content": "Coding agent"},
+        {"role": "user", "content": "Keep the public API"},
+        {"role": "assistant", "content": "x" * 1_400},
+    ]
+    manager = ContextManager(500)
+    assert manager.estimate(messages) < 500
+    compacted, changed = manager.compact(messages, reserve_tokens=200)
+    assert changed and manager.estimate(compacted) <= 300
+    assert [item for item in compacted if item["role"] == "user"] == [messages[1]]
+    assert messages[-1]["content"] == "x" * 1_400
+
+
+@pytest.mark.parametrize("reserved", [-1, 500])
+def test_compaction_rejects_invalid_reserved_budget(reserved: int) -> None:
+    with pytest.raises(ValueError, match="Reserved"):
+        ContextManager(500).compact([], reserve_tokens=reserved)

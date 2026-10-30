@@ -26,6 +26,14 @@ Docker command execution stages a temporary workspace copy that excludes `.env`,
 
 The Coding Web API also exposes a bounded, read-only diff against the worktree's base SHA. It includes committed, uncommitted, and untracked text changes and skips protected paths. Git patch output is read incrementally up to 96 KiB per file before the 24,000-character display cap; an oversized Git process is stopped and the response carries a truncation marker. Changed-path enumeration is capped at 256 KiB and fails explicitly if incomplete. The response includes at most 40 files. The diff does not mutate the worktree.
 
+Before each model call, `runtime.control` generates a transient system notice
+with remaining turns/time and current verification state. `ContextManager`
+reserves its estimated size before compacting durable history. The notice
+precedes task/history messages, does not split tool responses, and is regenerated
+on resume. Near exhaustion it prioritizes `run_tests` and a final answer, without
+changing evidence rules, tool permissions, or the call cap. `turn_budget` traces
+record only numeric/boolean state. See [runtime-budget.md](./runtime-budget.md).
+
 ## Existing specialized PR workflows
 
 The FastAPI app serves a PR workbench. `integrations.github_pr` reads PR metadata and patches with `gh api`, creates `PRContext`, and can clone the head into an editable checkout. `ReviewService` runs deterministic baseline findings. `ProviderReviewer` optionally calls configured models and validates findings against actual added lines; findings remain `suspected`. PR import/review never executes PR code.

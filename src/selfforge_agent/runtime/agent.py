@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from selfforge_agent.runtime.context import ContextManager
+from selfforge_agent.runtime.control import budget_notice
 from selfforge_agent.runtime.model import (
     ChatModel,
     ModelCallCancelled,
@@ -104,12 +105,31 @@ class CodingAgent:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return self._finish("timed_out", "", step - 1, tools_used)
-                messages, compacted = self.context.compact(messages)
+                final_only = step == self.max_steps and tests_passed
+                notice = budget_notice(step=step, max_steps=self.max_steps,
+                                       remaining_seconds=remaining, tests_passed=tests_passed)
+                messages, compacted = self.context.compact(
+                    messages, reserve_tokens=self.context.estimate([notice]))
                 if compacted:
                     self.session.record_compaction(messages)
+                # Keep generated controls outside durable conversation history:
+                # resumed runs receive fresh budgets, and compaction cannot retain
+                # stale state or discard the current notice. Prepend before tasks
+                # without disturbing assistant/tool adjacency or provider reasoning.
+                position = 1 if messages and messages[0].get("role") == "system" else 0
+                request_messages = messages[:position] + [notice] + messages[position:]
+                remaining = deadline - time.monotonic()
+                if self.cancel.is_set():
+                    return self._finish("cancelled", "", step - 1, tools_used)
+                if remaining <= 0:
+                    return self._finish("timed_out", "", step - 1, tools_used)
+                self.session.trace("turn_budget", step=step, max_steps=self.max_steps,
+                                   remaining_turns=self.max_steps - step + 1,
+                                   remaining_seconds=round(remaining, 3),
+                                   verification_passed=tests_passed, final_only=final_only)
                 started = time.monotonic()
-                final_only = step == self.max_steps and tests_passed
-                turn = self.model.complete(messages, [] if final_only else self.tools.schemas(),
+                turn = self.model.complete(request_messages,
+                                           [] if final_only else self.tools.schemas(),
                                            min(45, remaining))
                 self.session.trace("model_call", provider=turn.provider, model=turn.model,
                                    duration_seconds=round(time.monotonic() - started, 3),
