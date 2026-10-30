@@ -33,7 +33,7 @@ uv run python examples/coding_demo.py
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
-| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。另有九题候选通过基线检查，正式 20 题 × 3 次模型验收尚未完成 |
+| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。5 题通过参考预检；三题各 3 次 DeepSeek 运行 9/9，正式 20 题 × 3 次模型验收尚未完成 |
 
 失败测试会通过有界 JUnit 诊断回填给同一个 Coding Agent，它可读取相关代码、修复并重测。可运行真实模型演示（需配置供应商和 Docker 镜像）：
 
@@ -173,11 +173,13 @@ uv run ruff check .
 
 GitHub Actions 在推送 `main` 和提交 PR 时运行 Ruff、单元测试及 Docker 集成测试；[首次远端运行](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798)已通过（90 项单元测试、5 项 Docker 集成测试）。
 
-2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 旧门槛下三仓库三题各重复 3 次得到 **8/9**；唯一失败达到步数上限，虽然隐藏测试通过。加入独立可见测试门槛与大文件分块任务后，四题各运行 1 次得到 **4/4**，指定可见测试与隐藏测试均通过。2026-10-29 的 9 题候选清单通过了固定基线 holdout 与可见测试校验，但新增 5 题尚未运行模型，不能当作成功率。不同门槛和重复次数不能合并；正式 20 任务、每题 3 次验收仍未完成，详情见[评测记录](./docs/evaluation.md)。
+2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 旧门槛下三仓库三题各重复 3 次得到 **8/9**；唯一失败达到步数上限，虽然隐藏测试通过。加入独立可见测试门槛与大文件分块任务后，四题各运行 1 次得到 **4/4**，指定可见测试与隐藏测试均通过。2026-10-29 的 9 题候选清单通过了固定基线 holdout 与可见测试校验，但当时新增 5 题尚未运行模型，不能当作成功率。不同门槛和重复次数不能合并；正式 20 任务、每题 3 次验收仍未完成，详情见[评测记录](./docs/evaluation.md)。
 
-新增 `selfforge-agent eval-validate --manifest MANIFEST` 可在不配置模型的情况下检查任务的负例基线、允许修改范围与参考修复正例；已有清单可保持原格式。详见[任务预检](./docs/benchmark.md)与[两题参考控制集](./benchmark/validated-candidates/README.md)。预检通过表示参考补丁能通过这些测试，任务覆盖仍需人工审核。
+新增 `selfforge-agent eval-validate --manifest MANIFEST` 可在不配置模型的情况下检查任务的负例基线、允许修改范围与参考修复正例；已有清单可保持原格式。详见[任务预检](./docs/benchmark.md)与[参考控制集](./benchmark/validated-candidates/README.md)。预检通过表示参考补丁能通过这些测试，任务覆盖仍需人工审核。
 
 2026-10-30，两题参考控制集在相同预算下增加 Runtime 预算反馈后，DeepSeek 三次重复仍为 **5/6**，一次达到轮数上限且独立可见测试有失败。六次均调用了正式测试工具，但该小样本不能证明成功率提升，且不增加验收任务数。逐次数据与限制见[预算反馈复测](./docs/runtime-budget.md)。
+
+现有参考控制扩展到 **3 仓库 / 5 题**，五题均通过 Docker 负例与参考正例。另用固定预算对深度剪枝、零分块与替换回调停止三题各运行 3 次，DeepSeek `deepseek-flash` 得到 **9/9**，独立可见/隐藏测试全部通过。这是小规模项目自编任务结果，与历史 5/6 分开记录；不代表正式 20 题验收完成。契约、逐次结果与限制见[迭代器/遍历评测](./benchmark/validated-candidates/iterator-traversal.md)。
 
 ## Specialized Workflows：PR Review
 

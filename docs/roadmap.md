@@ -1,6 +1,6 @@
 # Roadmap
 
-Development order and acceptance checks: [development guide](./development.md). The [combined #24–#30 delivery](./runtime-integration.md) passed 257 local tests; branch counts are historical and not additive. Confirmed reliability fixes and evidence consistency precede expansion of acceptance task count.
+Development order and acceptance checks: [development guide](./development.md). The iterator/traversal delivery passed 259 local tests, including two new Host verification-snapshot regressions. The earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; branch counts are historical and not additive. Confirmed reliability fixes and evidence consistency precede expansion of acceptance task count.
 
 | Priority | Status | Work |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ Development order and acceptance checks: [development guide](./development.md). 
 | 2 | Implemented | Web Coding displays a bounded, read-only diff against the worktree base commit |
 | 2 | Implemented | Durable Web job records and history, explicit resume after server interruption, cross-process workspace locks and cancellation markers; active-job limit remains per process |
 | 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
-| 3 | In Progress | A tuned three-repository, four-task DeepSeek pilot scored 4/4 once each; an earlier three-task run scored 8/9 under the older gate. Two reference-qualified tasks scored 5/6; a separate budget-feedback follow-up also scored 5/6, with one step-limited visible-test failure. Improve failed-test diagnosis/recovery and qualify more distinct tasks before formal 20-task acceptance. Nine candidates passed baseline checks; five added cases lack live-model results under that manifest. Results are not combinable |
+| 3 | In Progress | Five distinct tasks across three repositories passed Docker reference qualification. A separate three-task iterator/traversal DeepSeek run scored 9/9 (three repeats each); prior 5/6, 4/4 and old-gate 8/9 results remain separate. Expand diverse contract-reviewed tasks before formal twenty-task acceptance; do not combine scores or count overlaps |
 | 3 | Implemented | GitHub Actions runs locked dependency installation, Ruff, unit tests, and Docker integration tests on pushes to main and pull requests; first remote run passed |
 | 3 | Planned | Automatic PR risk prioritization and risk-to-test causal investigation; calibrated monetary cost reporting when model prices are available |
 | 4 | Planned | More precise tokenization, richer compaction, interactive approval, and richer Coding UI controls |

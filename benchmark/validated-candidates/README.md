@@ -2,6 +2,14 @@
 
 This small set adds positive reference controls to two project-authored tasks. It does not increase the formal acceptance count: the async empty-batch mechanism overlaps a candidate in PR #24, and the Unicode feature appeared in earlier pilots. The goal here is stronger task qualification and public-lifecycle coverage. The twenty-task, three-repository acceptance set is still incomplete.
 
+**Current expansion:** the separate [iterator/traversal set](./iterator-traversal.md)
+qualifies five distinct tasks across three repositories. It adds depth pruning,
+zero-chunk validation (overlapping an earlier pilot) and replacement callback
+short-circuiting. [suite-five-tasks.json](./suite-five-tasks.json) is the cumulative
+qualification manifest; [suite-iterator-traversal.json](./suite-iterator-traversal.json)
+contains only the three new reference controls for live evaluation. The original
+two-case manifest and results below remain historical, frozen inputs.
+
 ## Contracts and classification
 
 | Case | Classification and contract | Fixed source evidence |

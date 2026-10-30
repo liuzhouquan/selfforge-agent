@@ -1,0 +1,11 @@
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -3498,7 +3498,7 @@
+         # For example, if the iterable is (0, 1, 2, 3, 4...)
+         # and the window size is 2, we have (0, 1), (1, 2), (2, 3)...
+         # If the predicate matches on (0, 1), we need to zap (0, 1) and (1, 2)
+-        if args and pred(*args):
++        if args and (count is None or n < count) and pred(*args):
+             if (count is None) or (n < count):
+                 n += 1
+                 yield from substitutes

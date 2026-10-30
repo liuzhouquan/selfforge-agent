@@ -432,7 +432,9 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
             else:
                 changed = _changed_files(workspace)
                 verification = root / "verification"
+                holdout_verification = root / "holdout"
                 _verification_copy(workspace, verification)
+                _verification_copy(workspace, holdout_verification)
                 visible_path = (verification / case.spec.agent_test_path).resolve()
                 if not visible_path.is_relative_to(verification) or not visible_path.exists():
                     visible_status = "missing"
@@ -444,9 +446,9 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                     visible_status = visible.status
                     visible_passed, visible_failed, visible_errors, visible_exit_code = (
                         visible.passed, visible.failed, visible.errors, visible.exit_code)
-                holdout_path = _install_holdout(verification, case)
+                holdout_path = _install_holdout(holdout_verification, case)
                 evidence = _runner(sandbox, image).run(
-                    verification, trusted=trusted_host,
+                    holdout_verification, trusted=trusted_host,
                     timeout=test_timeout, test_path=holdout_path)
                 holdout_status = evidence.status
                 passed, failed, errors, exit_code = (evidence.passed, evidence.failed,
