@@ -22,7 +22,12 @@ MAX_ARCHIVE_BYTES = 96 * 1024 * 1024
 _EXCLUDED = (
     ".git", ".venv", ".env", ".env.*", ".local", ".selfforge", ".workspaces",
     ".aws", ".ssh", ".npmrc", ".pypirc", ".netrc", "__pycache__", "node_modules",
+    ".pytest_cache", ".ruff_cache",
 )
+
+
+def workspace_entry_excluded(name: str) -> bool:
+    return any(fnmatch.fnmatch(name, pattern) for pattern in _EXCLUDED)
 
 
 class _StageTimedOut(Exception):
@@ -67,7 +72,7 @@ def _stage_workspace(root: Path, staged: Path, deadline: float,
         with os.scandir(source_dir) as listing:
             for entry in listing:
                 _check_staging(deadline, cancel)
-                if any(fnmatch.fnmatch(entry.name, pattern) for pattern in _EXCLUDED):
+                if workspace_entry_excluded(entry.name):
                     continue
                 entries += 1
                 if entries > MAX_STAGED_ENTRIES:

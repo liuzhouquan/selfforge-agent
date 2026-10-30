@@ -9,6 +9,7 @@ from typing import Literal
 from selfforge_agent.runtime.context import ContextManager
 from selfforge_agent.runtime.control import budget_notice
 from selfforge_agent.runtime.environment import bind_environment
+from selfforge_agent.runtime.fingerprint import WorkspaceSnapshotError, workspace_fingerprint
 from selfforge_agent.runtime.model import (
     ChatModel,
     ModelCallCancelled,
@@ -16,7 +17,7 @@ from selfforge_agent.runtime.model import (
     OpenAIChatAdapter,
 )
 from selfforge_agent.runtime.session import SessionStore
-from selfforge_agent.runtime.tools import ToolRegistry
+from selfforge_agent.runtime.tools import ToolOutcome, ToolRegistry
 
 Status = Literal["completed", "unverified", "failed", "max_steps", "timed_out", "cancelled"]
 
@@ -91,8 +92,22 @@ class CodingAgent:
                 self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),
                                         "content": "Previous run was interrupted before this tool completed"})
 
+    def _verification_current(self, snapshot: str | None, deadline: float) -> bool:
+        if snapshot is None:
+            return False
+        try:
+            current = workspace_fingerprint(self.tools.root, deadline=deadline, cancel=self.cancel)
+            valid = current == snapshot
+        except WorkspaceSnapshotError:
+            valid = False
+        if not valid:
+            self.session.record_verification(False)
+            self.session.trace("verification_invalidated", reason="workspace_changed_or_unreadable")
+        return valid
+
     def run(self, task: str = "", *, resume: bool = False) -> AgentResult:
         tests_passed = False
+        tested_snapshot = None
         if resume:
             messages, _ = self.session.load()
             self._resume_pending(messages)
@@ -100,7 +115,8 @@ class CodingAgent:
                 self.session.record_verification(False)
                 self._append(messages, {"role": "user", "content": task.strip()})
             else:
-                tests_passed = self.session.verification_passed()
+                tested_snapshot = self.session.verification_snapshot()
+                tests_passed = tested_snapshot is not None
         else:
             if not task.strip() or self.session.path.exists():
                 raise ValueError("New sessions need a task and unused session ID")
@@ -121,6 +137,8 @@ class CodingAgent:
             for step in range(1, self.max_steps + 1):
                 if self.cancel.is_set():
                     return self._finish("cancelled", "", step - 1, tools_used)
+                if tests_passed:
+                    tests_passed = self._verification_current(tested_snapshot, deadline)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return self._finish("timed_out", "", step - 1, tools_used)
@@ -169,6 +187,8 @@ class CodingAgent:
                     if not answer:
                         return self._finish("failed", "", step, tools_used,
                                             "Model returned an empty final answer")
+                    if tests_passed:
+                        tests_passed = self._verification_current(tested_snapshot, deadline)
                     status: Status = "completed" if tests_passed else "unverified"
                     return self._finish(status, answer, step, tools_used)
                 for call in calls:
@@ -186,21 +206,37 @@ class CodingAgent:
                             (name == "bash" and getattr(self.tools.executor,
                                                         "persists_writes", True))):
                         tests_passed = False
+                        tested_snapshot = None
                         self.session.record_verification(False)
                     try:
                         arguments = json.loads(function.get("arguments") or "{}")
                         if not isinstance(arguments, dict):
                             raise TypeError("Tool arguments must be an object")
+                        if name == "run_tests":
+                            before_tests = workspace_fingerprint(
+                                self.tools.root, deadline=deadline, cancel=self.cancel)
                         if name in {"bash", "run_tests"}:
-                            arguments["timeout"] = min(float(arguments.get("timeout", 20)), remaining)
+                            arguments["timeout"] = min(float(arguments.get("timeout", 20)),
+                                                       deadline - time.monotonic())
                         outcome = self.tools.execute(name, arguments)
+                        if name == "run_tests" and outcome.ok:
+                            after_tests = workspace_fingerprint(
+                                self.tools.root, deadline=deadline, cancel=self.cancel)
+                            if before_tests == after_tests:
+                                tested_snapshot = after_tests
+                            else:
+                                outcome = ToolOutcome(
+                                    "Workspace changed during test execution; verification "
+                                    "was revoked. Run tests again.", False, outcome.elapsed_seconds)
+                    except WorkspaceSnapshotError as exc:
+                        outcome = ToolOutcome(f"Workspace verification unavailable: {exc}", False)
                     except (ValueError, TypeError) as exc:
-                        from selfforge_agent.runtime.tools import ToolOutcome
                         outcome = ToolOutcome(f"Tool arguments error: {exc}", False)
                     tools_used += 1
                     if name == "run_tests":
                         tests_passed = outcome.ok
-                        self.session.record_verification(tests_passed)
+                        self.session.record_verification(tests_passed,
+                                                         workspace_sha256=tested_snapshot)
                     self.session.trace("tool", name=name, ok=outcome.ok,
                                        duration_seconds=round(outcome.elapsed_seconds, 3))
                     self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),

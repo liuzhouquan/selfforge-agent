@@ -79,4 +79,5 @@ def test_interrupted_edit_revokes_junit_evidence_and_resume_retests(tmp_path: Pa
                    for message in restored.load()[0])
     verification = [event for event in SessionStore._complete_events(restored.path)
                     if event.get("type") == "verification"]
-    assert verification and all(event["evidence"] == "junit-v1" for event in verification)
+    assert verification and all(event["evidence"] == "junit-workspace-v2" for event in verification)
+    assert all(len(event["workspace_sha256"]) == 64 for event in verification if event["passed"])

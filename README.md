@@ -28,7 +28,7 @@ uv run python examples/coding_demo.py
 | 工具与会话 | Implemented | read/edit/search/bash/run_tests；大文件有界分段读取、pytest `-k` 选择、工作区路径校验、JSONL 恢复与轨迹 |
 | Context 管理 | Implemented | 工具输出截断、近似 token 预算、保留任务约束的确定性摘要压缩 |
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
-| Self-Testing | Implemented | 退出码与 JUnit 共同验证；至少一项通过且无失败/错误，全部跳过不会标记完成 |
+| Self-Testing | Implemented | 非空 JUnit 成功与工作区内容指纹共同验证；外部改动撤销证据，旧证据需重测 |
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、跨进程取消、历史任务查询和会话续跑；服务中断的任务需手动续跑 |
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
@@ -122,7 +122,7 @@ uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task '修复回归' --sandbox host --trust-local-tests
 ```
 
-Agent 状态有 `completed`（最后修改后 pytest 成功）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。新会话与轨迹保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`，不会进入目标仓库；旧会话仍可通过 ID 恢复。`workspaces remove` 不使用强制删除；工作区有改动时会拒绝清理。运行中可用 Ctrl-C 中断；供应商回退共享一次模型调用的超时预算，取消会在供应商调用之间检查。正在进行的 HTTP 请求依赖传输层超时，返回后才会响应取消。
+Agent 状态有 `completed`（非空 JUnit 成功、工作区指纹匹配且有最终答复）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。新会话与轨迹保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`，不会进入目标仓库；旧会话仍可通过 ID 恢复。`workspaces remove` 不使用强制删除；工作区有改动时会拒绝清理。运行中可用 Ctrl-C 中断；供应商回退共享一次模型调用的超时预算，取消会在供应商调用之间检查。正在进行的 HTTP 请求依赖传输层超时，返回后才会响应取消。
 
 Runtime 每轮向模型提示剩余轮数、时间和当前 `run_tests` 验证状态；接近上限时提醒优先验证与收尾。提示会计入近似上下文预算，续跑时重新生成。轮数上限包含最终答复；提示不会增加调用次数、自动执行测试或把未完成任务改判为成功。见[预算反馈说明](./docs/runtime-budget.md)。
 
@@ -153,7 +153,7 @@ Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下�
 
 ## Verification 与 Evaluation
 
-通用 Coding 的 `run_tests` 复用 JUnit Runner：只有退出码为 0、至少一项测试通过且没有失败/错误时才建立证据；全部跳过、空选择、缺失或损坏的报告都不会使任务完成。工具会返回测试计数和错误原因。若最后一次编辑之后没有成功测试，则返回 `unverified`。旧版仅按退出码保存的会话成功状态需要重测；详情见[测试证据规则](./docs/test-evidence.md)。`eval` 还会独立重新运行夹具测试，并检查源文件确实发生变化，不采信模型口头结论。PR Repair 则要求 Base 测试通过、Head 出现断言失败、Repaired 测试通过，才输出已验证补丁；这证明现有测试的回归已修复，尚不证明某条审查发现的因果关系。
+通用 Coding 的 `run_tests` 复用 JUnit Runner：只有退出码为 0、至少一项测试通过且没有失败/错误时才建立证据；全部跳过、空选择、缺失或损坏的报告都不会使任务完成。工具会返回测试计数和错误原因。测试前后与完成时的工作区内容指纹必须一致；外部改动或无法完整扫描时不能建立完成证据，需重新测试。旧版未绑定工作区的会话证据也需重测，见[内容绑定规则](./docs/workspace-evidence.md)；详情见[测试证据规则](./docs/test-evidence.md)。`eval` 还会独立重新运行夹具测试，并检查源文件确实发生变化，不采信模型口头结论。PR Repair 则要求 Base 测试通过、Head 出现断言失败、Repaired 测试通过，才输出已验证补丁；这证明现有测试的回归已修复，尚不证明某条审查发现的因果关系。
 
 `generate-test` 默认生成一个 pytest 候选；`--max-candidates 2/3` 可根据上次 Base/Head 结果继续尝试，发现差异后提前停止，并跳过重复代码。多候选流程默认总时间预算为 300 秒，可用 `--time-budget` 调整，最高 600 秒。`--finding-index` 选取本地规则审查中的风险；Web 页面可选择已显示的规则或模型风险。服务端要求风险位置与实际 diff 的新增行一致。仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出被选中的测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。风险描述仍是假设，差异结果不能单独证明该风险的因果关系。
 

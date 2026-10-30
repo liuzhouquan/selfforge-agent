@@ -9,7 +9,7 @@
 - 已有：原生 Tool Calling、受限文件工具、Docker 执行、可恢复会话、Web 工作台、独立工作区、非空 JUnit 验证、预算反馈、参考修复预检与私有失败诊断；显式离线依赖镜像和会话环境绑定已接入同一 Runtime。
 - 尚未完成：自动依赖识别与更广的依赖配置、完整产品 PR 交付流程、20 题 × 每题 3 次的正式模型验收。Repair 的 proposer loop 仍独立。
 - 暂不增加：Multi-Agent、通用 MCP 平台、额外 RAG、大型前端或另一套 Runtime。
-- `completed` 要求最后一次可能持久写入后 `run_tests` 有非空 JUnit 通过证据，且模型给出非空最终答复；不代表需求全部满足，也不防恶意仓库伪造证据。正式评测还需独立可见/隐藏测试与允许修改路径检查。
+- `completed` 要求最后一次可能持久写入后 `run_tests` 有非空 JUnit 通过证据、测试前后和当前工作区指纹一致，且模型给出非空最终答复；不代表需求全部满足，也不防恶意仓库伪造证据。正式评测还需独立可见/隐藏测试与允许修改路径检查。
 
 七个 PR 的组合与验证记录见[Runtime 整合](./runtime-integration.md)。独立分支历史测试数不能相加，也不能用于替代组合版本的全量回归。
 
@@ -17,7 +17,7 @@
 
 | 责任 | 主要源码 | 相关回归 |
 | --- | --- | --- |
-| 工具循环、完成条件、中断恢复、预算 | `runtime/agent.py`、`session.py`、`context.py`、`control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_context.py`、`test_runtime_budget.py`、`test_runtime_composition.py` |
+| 工具循环、完成条件、中断恢复、预算 | `runtime/agent.py`、`session.py`、`fingerprint.py`、`context.py`、`control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_context.py`、`test_runtime_budget.py`、`test_runtime_composition.py`、`test_workspace_evidence.py`、`test_workspace_fingerprint.py` |
 | 依赖镜像与会话环境 | `runtime/images.py`、`environment.py` | `test_dependency_images.py`、`test_session_environment.py` |
 | 文件权限、编辑策略、命令与暂存限制 | `runtime/tools.py`、`execution.py` | `test_runtime.py`、`test_docker_staging.py` |
 | 模型协议、回退、配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py` | `test_model_deadline.py`、`test_providers.py` |
@@ -69,6 +69,7 @@ uv run --no-sync python examples/coding_demo.py
 | 已整合 | 中断后的验证状态恢复 | 写入前失效、未完成调用保守恢复；组合测试覆盖 JUnit 成功后中断写入，再续跑失败、编辑、重测成功 |
 | 已整合 | 通用 Coding 测试证据 | 共用非空 JUnit Runner；全部 skipped、空/损坏报告、超时和失败诊断均有回归，不弱化 Repair/benchmark 门槛 |
 | 已整合 | 显式可复现项目依赖环境 | 哈希锁定 wheels、离线安装和镜像 ID；会话模式/镜像不可静默更换；自动依赖识别仍未实现 |
+| 本轮实现 | 工作区与测试证据绑定 | 前后测试、后续模型请求和最终答复时校验内容；恢复/外部编辑撤销旧证据；有界扫描与 v2 迁移有回归，真实 Docker 用例需 daemon/镜像 |
 | 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
 | 5 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，覆盖远端失败和恢复，不自动强推或合并 |
 
@@ -77,7 +78,7 @@ uv run --no-sync python examples/coding_demo.py
 ## 尚需明确的可靠性边界
 
 - 文件工具限制路径，Docker 隔离命令；Host 显式信任后可写工作区。隔离副本中的命令修改不回写。
-- 测试成功与工作区内容还没有指纹绑定，外部编辑器改动不一定使证据失效；同一 workspace 的 CLI 并发使用也需进一步审查。
+- 测试证据已有[有界内容指纹绑定](./workspace-evidence.md)，能在执行/恢复时发现外部改动；它不是原子快照、持续文件监控或 CLI 工作区锁。最后检查后的竞态、排除路径与 Host 外部依赖不在保证范围内。
 - 会话支持进程中断恢复，不承诺断电后日志和文件写入的事务一致性。完整损坏记录仍明确报错。
 - Web 锁跨进程，活动任务数量限制仍按进程。取消不保证即时中止阻塞的 HTTP 请求。
 - 审计是分阶段检查，不能以全量 pytest 通过代替真实模型、外部 GitHub 故障或安全攻击链验证。

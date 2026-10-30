@@ -92,7 +92,7 @@ def test_session_recovers_torn_event_before_next_append(tmp_path: Path) -> None:
     session = SessionStore(tmp_path)
     session.record_message({"role": "user", "content": "Keep this task"})
     session.record_status("max_steps")
-    session.record_verification(True)
+    session.record_verification(True, workspace_sha256="1" * 64)
     with session.path.open("ab") as handle:
         handle.write(b'{"type":"message","content":"\xe4')
 

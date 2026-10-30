@@ -68,9 +68,17 @@ class SessionStore:
         self._append(self.path, {"type": "status", "status": status, "detail": detail})
         self.trace("status", status=status, detail=detail[:300])
 
-    def record_verification(self, passed: bool) -> None:
+    def record_verification(self, passed: bool, *, workspace_sha256: str | None = None) -> None:
+        if passed and workspace_sha256 is None:
+            raise ValueError("Successful verification needs a workspace fingerprint")
+        if workspace_sha256 is not None and (
+            not isinstance(workspace_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", workspace_sha256)
+        ):
+            raise ValueError("Invalid workspace fingerprint")
         self._append(self.path, {"type": "verification", "passed": passed,
-                                 "evidence": "junit-v1"})
+                                 "evidence": "junit-workspace-v2",
+                                 "workspace_sha256": workspace_sha256 if passed else None})
 
     @staticmethod
     def _environment(value: object) -> dict:
@@ -108,15 +116,20 @@ class SessionStore:
         self.trace("execution_environment", **environment)
 
     def verification_passed(self) -> bool:
+        return self.verification_snapshot() is not None
+
+    def verification_snapshot(self) -> str | None:
         if not self.path.is_file():
-            return False
-        passed = False
+            return None
+        snapshot = None
         for event in self._complete_events(self.path):
             if event.get("type") == "verification":
-                # Legacy success only checked exit=0, which includes all-skipped
-                # suites. Keep that history, but require a fresh verified run.
-                passed = event["passed"] is True and event.get("evidence") == "junit-v1"
-        return passed
+                candidate = event.get("workspace_sha256")
+                snapshot = (candidate if event.get("passed") is True
+                            and event.get("evidence") == "junit-workspace-v2"
+                            and isinstance(candidate, str)
+                            and re.fullmatch(r"[0-9a-f]{64}", candidate) else None)
+        return snapshot
 
     def trace(self, event: str, **fields: object) -> None:
         self._append(self.trace_path, {"event": event, **fields})
