@@ -1,8 +1,11 @@
 # Roadmap
 
+Development order and per-change acceptance checks: [development guide](./development.md). Confirmed reliability fixes and test-evidence consistency precede expansion of the acceptance task count.
+
 | Priority | Status | Work |
 | --- | --- | --- |
 | 1 | Implemented | General Coding reuses JUnit runners with a nonempty-pass gate, preserves Docker cancellation, and requires retesting of legacy exit-code-only session evidence |
+| 1 | Implemented | Write-ahead verification invalidation for edits, persistent commands, test attempts and new tasks; conservative recovery of legacy pending calls, with abrupt-process-exit regression coverage |
 | 2 | Planned | Reproducible project dependency images beyond the default Python/pytest sandbox |
 | 1 | Implemented | General native tool-calling Runtime, validated file/search/bash/test tools, model fallback, step and time limits |
 | 1 | Implemented | Shared bounded JUnit failure feedback, opt-in private evaluation diagnostics, live-model failure/edit/retest demo, and fresh Host bytecode cache namespace for correct rapid retesting |
