@@ -2,6 +2,7 @@
 
 import fnmatch
 import os
+import re
 import shutil
 import signal
 import stat
@@ -157,6 +158,21 @@ def _run(argv: list[str], cwd: Path | None, timeout: float) -> CommandResult:
     return CommandResult(result.returncode, (result.stdout + result.stderr)[-12_000:])
 
 
+def resolve_docker_image(image: str, timeout: float = 10) -> str:
+    """Resolve a local reference without pulling or running its code."""
+    if not image or image.startswith("-") or any(char.isspace() for char in image):
+        raise ValueError("Invalid Docker image reference")
+    if timeout <= 0:
+        raise TimeoutError("Docker image inspection timed out")
+    result = _run(["docker", "image", "inspect", "--format", "{{.Id}}", image], None, timeout)
+    if result.timed_out:
+        raise TimeoutError("Docker image inspection timed out")
+    image_id = result.output.strip()
+    if result.returncode != 0 or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise ValueError("Docker image is unavailable locally; restore the image before resuming")
+    return image_id
+
+
 class HostExecutor:
     persists_writes = True
 
@@ -187,9 +203,11 @@ class HostExecutor:
 class DockerExecutor:
     persists_writes = False
 
-    def __init__(self, root: Path, image: str = "selfforge-agent-sandbox:latest",
+    def __init__(self, root: Path, image: str | None = None,
                  *, cancel: Event | None = None) -> None:
         self.root = root.resolve()
+        self.image_explicit = image is not None
+        image = image if image is not None else "selfforge-agent-sandbox:latest"
         if not self.root.is_dir() or not image or any(char.isspace() for char in image):
             raise ValueError("A workspace directory and Docker image are required")
         self.image = image

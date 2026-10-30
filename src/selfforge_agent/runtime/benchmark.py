@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from selfforge_agent.runtime.agent import CodingAgent
-from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
+from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor, resolve_docker_image
 from selfforge_agent.runtime.failure_artifacts import prepare_artifacts, write_failure
 from selfforge_agent.runtime.model import ChatModel
 from selfforge_agent.runtime.session import SessionStore
@@ -229,14 +229,7 @@ def _checkout(case: PreparedCase, workspace: Path) -> None:
 
 
 def _image_id(image: str) -> str:
-    try:
-        result = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image],
-                                capture_output=True, text=True, timeout=10, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ValueError(f"Docker image inspection failed: {exc}") from exc
-    if result.returncode or not result.stdout.strip():
-        raise ValueError(f"Docker image is unavailable: {image}")
-    return result.stdout.strip()
+    return resolve_docker_image(image)
 
 
 def _verification_copy(workspace: Path, destination: Path) -> None:

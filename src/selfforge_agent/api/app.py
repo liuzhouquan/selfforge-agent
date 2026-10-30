@@ -178,6 +178,8 @@ class CodingTaskRequest(BaseModel):
     workspace: Literal["worktree", "direct"] = "worktree"
     confirm_direct: bool = False
     sandbox: Literal["docker", "host"] = "docker"
+    image: str | None = Field(default=None, min_length=1, max_length=256,
+                       pattern=r"^[^\s-][^\s]*$")
     trust_local: bool = False
     provider: Literal["auto", "deepseek", "openrouter"] = "auto"
     fallback: bool = True
@@ -193,6 +195,8 @@ class CodingJobResponse(BaseModel):
     steps: int
     tools_used: int
     error: str
+    sandbox: Literal["docker", "host"] | None = None
+    image_id: str | None = None
     cancel_requested: bool
     repository: str
     workspace_path: str
@@ -296,7 +300,7 @@ def start_coding_job(request: CodingTaskRequest, client: Request) -> dict:
                 created_workspace = workspace
         working_root = workspace.path if workspace else repository
         executor = (HostExecutor(working_root, trusted=True) if request.sandbox == "host"
-                    else DockerExecutor(working_root))
+                    else DockerExecutor(working_root, image=request.image))
         cancel = Event()
         agent = CodingAgent(model, ToolRegistry(working_root, executor),
                             session, max_steps=request.max_steps,
