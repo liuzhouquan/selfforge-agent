@@ -172,18 +172,19 @@ def _changed_files(workspace: Path) -> list[str]:
 
 
 def _usage(session: SessionStore) -> tuple[str, str, int, int, int]:
-    provider = model = ""
-    prompt = completion = total = 0
+    metrics = session.token_metrics()
+    provider = ""
     for event in session.trace_events():
-        if event.get("event") != "model_call":
-            continue
-        provider = str(event.get("provider") or provider)
-        model = str(event.get("model") or model)
-        usage = event.get("usage") or {}
-        prompt += int(usage.get("prompt_tokens") or 0)
-        completion += int(usage.get("completion_tokens") or 0)
-        total += int(usage.get("total_tokens") or 0)
-    return provider, model, prompt, completion, total
+        if event.get("event") == "model_call" and event.get("provider"):
+            provider = str(event["provider"])
+            break
+    return (
+        provider,
+        metrics.get("model") or "",
+        metrics["prompt_tokens"],
+        metrics["completion_tokens"],
+        metrics["total_tokens"],
+    )
 
 
 def _tool_trace(session: SessionStore) -> list[dict[str, str | bool]]:
