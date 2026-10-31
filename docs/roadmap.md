@@ -1,6 +1,6 @@
 # Roadmap
 
-Development order and acceptance checks: [development guide](./development.md). Historical PR #31 passed 259 local tests, and the earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; those counts describe their own commits. After PR #32, the merged-main CI passed all 274 unit and 11 Docker integration tests. The incoming branch baseline passed 319 local tests with 11 Docker-dependent skips. Review fixes and current validation are recorded in [delivery review](./pr-delivery-review.md). The next priority is formal evaluation coverage; automatic dependency installation, causal proof and model-specific exact tokenization remain open.
+This is a capability map, not a task queue. Take one bounded work unit from the [backlog](./backlog.md), use the [agent workflow](./agent-workflow.md), and verify through the [development guide](./development.md). Historical test counts and model results stay in their pinned [integration](./runtime-integration.md), [delivery review](./pr-delivery-review.md) and [evaluation](./evaluation.md) records. Formal evaluation coverage is the next product priority; automatic dependency installation, causal proof and model-specific exact tokenization remain open.
 
 | Priority | Status | Work |
 | --- | --- | --- |
@@ -16,7 +16,7 @@ Development order and acceptance checks: [development guide](./development.md). 
 | 1 | Implemented | Manifest-driven repeated Coding evaluation over pinned local Git commits, unseen pytest holdouts, baseline negative controls, per-case Docker images pinned to IDs, and aggregate reason/token/latency reports with sanitized tool-step diagnostics |
 | 2 | Implemented | Explicit offline dependency-image builder with hash-locked wheels, frozen base/result IDs, src-layout support and Web Coding image selection; pinned ItsDangerous suite passed 297 tests |
 | 2 | Implemented | Coding sessions persist execution mode and immutable Docker image ID; CLI/Web resume reuses it, rejects environment changes and exposes it in durable history |
-| 2 | Implemented | Automatic repository environment detection (layout, pyproject/requirements, lock files, test paths) and Web crash restart-recovery regression; source builds and OS dependencies remain operator-managed |
+| 2 | Implemented | Read-only repository environment discovery (layout, pyproject/requirements, lock files, test paths) and Web crash restart-recovery regression; automatic installation, source builds and OS dependencies remain operator-managed |
 | 2 | Implemented | Docker command executor and Docker-backed JUnit TestRunner; live daemon Base/Head/Repaired integration test |
 | 2 | Implemented | PR Repair shares the Docker executor and JSONL session trace while preserving Base/Head/Repaired evidence |
 | 2 | Implemented | PR Repair exact edits use the shared Tool Registry with a changed-source allowlist and size limit; model proposal remains specialized |

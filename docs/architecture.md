@@ -1,5 +1,7 @@
 # selfForge Agent architecture
 
+Contributor entry points and verification gates are in the [development guide](./development.md). Before changing a path below, read its [engineering invariants](./engineering-invariants.md) and use the [agent workflow](./agent-workflow.md) to define the task and handoff; this architecture overview is not a backlog.
+
 ## General Coding Runtime
 
 `cli code` resolves a provider (DeepSeek, OpenRouter, or a custom OpenAI-compatible endpoint), creates a `SessionStore` under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`, selects a command executor, and starts `CodingAgent`. For new tasks, `CodingWorkspaceManager` creates a persistent `selfforge/SESSION_ID` branch and Git worktree from committed HEAD. A resume validates repository ownership and branch before reopening the same worktree. Metadata is mode 0600 under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/worktrees/`; listing validates each record independently and warns with the metadata path when it skips a malformed or mismatched entry. The worktree stays there for review and commit. Cleanup uses plain `git worktree remove`, so modified or untracked files block removal, and the branch remains. Explicit `--workspace direct` uses the source checkout instead. Uncommitted source-checkout changes are not copied into a new worktree. CLI sessions formerly stored in a target repository's `.selfforge/` remain discoverable by ID when direct mode is selected.
