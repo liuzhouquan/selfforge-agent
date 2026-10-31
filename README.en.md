@@ -84,19 +84,21 @@ uv run selfforge-agent code --repo ./your-project --task 'Fix the add regression
 uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task 'Continue and verify'
 uv run selfforge-agent trace --repo ./your-project SESSION_ID
 
-# Review diffs, commit changes, and create a GitHub PR; cleanup preserves the branch
+# Review diffs, revert, commit changes, and create a GitHub PR; cleanup preserves the branch
 uv run selfforge-agent workspaces list --repo ./your-project
 uv run selfforge-agent workspaces diff SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces revert SESSION_ID --repo ./your-project
 uv run selfforge-agent workspaces commit SESSION_ID -m 'Fix add regression' --repo ./your-project
 uv run selfforge-agent workspaces pr SESSION_ID --title 'Fix add regression' --repo ./your-project
-uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project # Optional --force cleans modified/untracked worktrees
 
 # Explicitly edit the source checkout when needed
 uv run selfforge-agent code --repo ./your-project --workspace direct --task 'Fix add'
 # Also use --workspace direct to resume an older direct-edit session
 
-# Inspect repository dependencies and environment setup (layout, pyproject/requirements, tests)
+# Inspect repository dependencies, environment setup, or export hash-locked requirements from uv.lock
 uv run selfforge-agent sandbox detect --repo ./your-project
+uv run selfforge-agent sandbox export-lock --lock uv.lock --output requirements.lock
 
 # Run tests; Docker is the default
 uv run selfforge-agent test --repo ./your-project --path tests

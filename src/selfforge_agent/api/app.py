@@ -55,8 +55,10 @@ from selfforge_agent.runtime.delivery import (
     CommitResult,
     DeliveryError,
     PRResult,
+    RevertResult,
     commit_workspace,
     create_pull_request,
+    revert_workspace,
 )
 from selfforge_agent.runtime.environment import detect_repository_environment
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
@@ -143,6 +145,8 @@ class GitHubRepairRequest(BaseModel):
     task: str
     trust_local_tests: bool = False
     sandbox: Literal["docker", "host"] = "docker"
+    image: str | None = None
+    timeout: float = 60
     provider: Literal["auto", "deepseek", "openrouter"] = "auto"
     fallback: bool = True
 
@@ -381,6 +385,21 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
     return {"removed": str(workspace.path), "branch": workspace.branch}
 
 
+@app.post("/api/code/workspaces/{session_id}/revert", response_model=RevertResult)
+def revert_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
+                            client: Request) -> RevertResult:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    try:
+        workspace = _CODING_WORKSPACES.get(repository, session_id)
+        session_root = _CODING_WORKSPACES.session_root(repository, session_id)
+        session = SessionStore(session_root, session_id) if session_root.is_dir() else None
+        with _CODING_JOBS.workspace_guard(workspace.path):
+            return revert_workspace(workspace, session)
+    except (ValueError, OSError, WorktreeError, DeliveryError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/code/workspaces/{session_id}/diff", response_model=CodingDiffResponse)
 def coding_workspace_diff(session_id: str, repository: str, client: Request) -> dict:
     _require_local(client)
@@ -564,14 +583,26 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
         pr = load_pr(request.url)
         checkout = checkout_pr(pr.url, _WORKSPACES)
         model = FallbackCodingModel(candidates)
-        runner = TestRunner() if request.sandbox == "host" else DockerTestRunner()
-        report = RepairAgent(model, runner=runner,
-                             session=SessionStore(Path(checkout.path))).run(
+        runner = (TestRunner() if request.sandbox == "host"
+                  else DockerTestRunner(image=request.image or "selfforge-agent-sandbox:latest"))
+        agent = RepairAgent(model, runner=runner,
+                            session=SessionStore(Path(checkout.path)))
+        repair_kwargs: dict[str, object] = {
+            "trusted": request.trust_local_tests if request.sandbox == "host" else False,
+        }
+        try:
+            import inspect
+            sig = inspect.signature(agent.run)
+            if "timeout" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                repair_kwargs["timeout"] = request.timeout
+        except (ValueError, TypeError):
+            repair_kwargs["timeout"] = request.timeout
+        report = agent.run(
             Path(checkout.path),
             checkout.diff_base_sha,
             pr.context.head_sha,
             request.task,
-            trusted=request.trust_local_tests if request.sandbox == "host" else False,
+            **repair_kwargs,
         )
         return GitHubRepairResponse(
             checkout=checkout, report=report,

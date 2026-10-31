@@ -134,3 +134,55 @@ def bind_environment(executor: Executor | None, session: SessionStore, *,
         if resume:
             session.record_verification(False)
         session.record_environment({"version": 1, "sandbox": sandbox, "image_id": image_id})
+
+
+def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = None) -> str:
+    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from a uv.lock file."""
+    if not lock_path.is_file():
+        raise ValueError(f"Lock file does not exist: {lock_path}")
+    if lock_path.stat().st_size > 5 * 1024 * 1024:
+        raise ValueError("Lock file exceeds 5 MiB size limit")
+
+    content = lock_path.read_bytes()
+    try:
+        data = tomllib.loads(content.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Failed to parse lock file as TOML: {exc}") from exc
+
+    packages = data.get("package", [])
+    if not isinstance(packages, list) or not packages:
+        raise ValueError("Lock file contains no packages")
+
+    lines: list[str] = []
+    for pkg in packages:
+        if not isinstance(pkg, dict):
+            continue
+        name = pkg.get("name")
+        version = pkg.get("version")
+        if not name or not version:
+            continue
+
+        hashes: set[str] = set()
+        for wheel in pkg.get("wheels", []):
+            if isinstance(wheel, dict) and "hash" in wheel:
+                h = wheel["hash"]
+                if isinstance(h, str) and h.startswith("sha256:") and len(h) == 71:
+                    hashes.add(h)
+        sdist = pkg.get("sdist")
+        if isinstance(sdist, dict) and "hash" in sdist:
+            h = sdist["hash"]
+            if isinstance(h, str) and h.startswith("sha256:") and len(h) == 71:
+                hashes.add(h)
+
+        if hashes:
+            hash_str = "".join(f" --hash={h}" for h in sorted(hashes))
+            lines.append(f"{name}=={version}{hash_str}")
+
+    if not lines:
+        raise ValueError("No hashed requirements found in lock file")
+
+    lines.sort()
+    result = "\n".join(lines) + "\n"
+    if output_path is not None:
+        output_path.write_text(result, encoding="utf-8")
+    return result

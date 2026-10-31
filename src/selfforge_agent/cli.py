@@ -19,8 +19,12 @@ from selfforge_agent.runtime.delivery import (
     DeliveryError,
     commit_workspace,
     create_pull_request,
+    revert_workspace,
 )
-from selfforge_agent.runtime.environment import detect_repository_environment
+from selfforge_agent.runtime.environment import (
+    detect_repository_environment,
+    export_hash_locked_requirements,
+)
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.images import build_dependency_image
@@ -129,13 +133,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
     sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
-    sandbox.add_argument("action", choices=["build", "detect"])
+    sandbox.add_argument("action", choices=["build", "detect", "export-lock"])
     sandbox.add_argument("--repo", type=Path, default=Path.cwd())
+    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock file for export-lock action")
     sandbox.add_argument("--requirements", type=Path)
     sandbox.add_argument("--wheelhouse", type=Path)
     sandbox.add_argument("--tag")
     sandbox.add_argument("--base-image", default="selfforge-agent-sandbox:latest")
     sandbox.add_argument("--timeout", type=float, default=300)
+    sandbox.add_argument("--output", type=Path, help="Output path for export-lock")
     code = subcommands.add_parser("code", help="Run a general autonomous coding task")
     code.add_argument("--repo", type=Path, default=Path.cwd())
     code.add_argument("--task", help="Natural-language development task")
@@ -166,8 +172,8 @@ def main() -> int:
     trace.add_argument("session_id")
     trace.add_argument("--summary", action="store_true",
                        help="Print aggregate token usage and estimated cost")
-    workspaces = subcommands.add_parser("workspaces", help="Inspect, commit, or create PRs from Coding worktrees")
-    workspaces.add_argument("action", choices=["list", "remove", "diff", "commit", "pr"])
+    workspaces = subcommands.add_parser("workspaces", help="Inspect, commit, revert, or create PRs from Coding worktrees")
+    workspaces.add_argument("action", choices=["list", "remove", "diff", "commit", "pr", "revert"])
     workspaces.add_argument("session_id", nargs="?")
     workspaces.add_argument("--repo", type=Path, default=Path.cwd())
     workspaces.add_argument("--message", "-m", help="Commit message for 'commit' action")
@@ -178,6 +184,7 @@ def main() -> int:
     workspaces.add_argument("--base", help="Target base branch for 'pr' action")
     workspaces.add_argument("--remote", default="origin", help="Git remote for 'pr' action")
     workspaces.add_argument("--draft", action="store_true", help="Create draft PR")
+    workspaces.add_argument("--force", action="store_true", help="Force remove worktree even if modified or untracked files exist")
     evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
     evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
     evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
@@ -274,6 +281,18 @@ def main() -> int:
                 for w in env["warnings"]:
                     print(f"  - {w}")
             return 0
+        if args.action == "export-lock":
+            if not args.lock:
+                parser.error("sandbox export-lock requires --lock")
+            try:
+                content = export_hash_locked_requirements(args.lock, args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            if args.output:
+                print(f"Exported hash-locked requirements to {args.output}")
+            else:
+                print(content, end="")
+            return 0
         if not args.requirements or not args.wheelhouse or not args.tag:
             parser.error("sandbox build requires --requirements, --wheelhouse, and --tag")
         try:
@@ -329,7 +348,7 @@ def main() -> int:
             elif args.action == "remove":
                 if not args.session_id:
                     parser.error("workspaces remove requires a session ID")
-                workspace = manager.remove(args.repo, args.session_id)
+                workspace = manager.remove(args.repo, args.session_id, force=bool(getattr(args, "force", False)))
                 print(f"Removed worktree {workspace.path}; branch {workspace.branch} remains")
             elif args.action == "diff":
                 if not args.session_id:
@@ -377,6 +396,19 @@ def main() -> int:
                 print(f"Created Pull Request: {pr_res.pr_url}")
                 if pr_res.pr_number:
                     print(f"PR #{pr_res.pr_number} on {pr_res.branch} ({pr_res.commit_sha[:12]})")
+            elif args.action == "revert":
+                if not args.session_id:
+                    parser.error("workspaces revert requires a session ID")
+                workspace = manager.get(args.repo, args.session_id)
+                session_root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
+                session = SessionStore(session_root, args.session_id) if session_root.is_dir() else None
+                result = revert_workspace(workspace, session)
+                if result.reverted_files:
+                    print(f"Reverted {len(result.reverted_files)} files in workspace {workspace.path}:")
+                    for f in result.reverted_files:
+                        print(f"  - {f}")
+                else:
+                    print(f"Workspace {workspace.path} is clean; nothing to revert.")
         except (ValueError, RuntimeError, OSError, DeliveryError) as exc:
             parser.error(str(exc))
         return 0

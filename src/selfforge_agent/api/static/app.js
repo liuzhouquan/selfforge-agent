@@ -130,6 +130,7 @@ function renderCodingJob(job) {
   $("coding-cancel").hidden = !codingJobRunning;
   $("coding-cancel").disabled = job.cancel_requested;
   $("coding-resume-current").hidden = codingJobRunning || !job.can_resume;
+  $("coding-revert-workspace").hidden = codingJobRunning || !job.branch;
   $("coding-remove-workspace").hidden = codingJobRunning || !job.branch;
   $("coding-diff").hidden = !job.branch;
   $("coding-delivery").hidden = !job.branch || codingJobRunning;
@@ -293,6 +294,27 @@ $("coding-resume-current").addEventListener("click", () => {
   $("coding-trust").checked = false;
   refreshCodingAvailability();
   $("coding-task-text").focus();
+});
+
+$("coding-revert-workspace").addEventListener("click", async () => {
+  if (!currentCodingSession || !currentCodingRepo || !currentCodingBranch) return;
+  if (!confirm("确定要还原工作区的所有未提交改动吗？此操作将丢失当前未提交的代码和新建的文件。")) return;
+  showCodingError("");
+  const btn = $("coding-revert-workspace");
+  btn.disabled = true;
+  btn.textContent = "正在还原…";
+  try {
+    const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/revert`, {
+      repository: currentCodingRepo,
+    });
+    loadCodingDiff();
+    alert(`工作区已还原，共处理 ${res.reverted_files.length} 个文件。`);
+  } catch (error) {
+    showCodingError(`还原工作区失败: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "还原工作区改动";
+  }
 });
 
 $("coding-remove-workspace").addEventListener("click", async () => {

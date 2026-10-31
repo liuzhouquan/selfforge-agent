@@ -84,19 +84,21 @@ uv run selfforge-agent code --repo ./your-project --task '修复 add 的回归' 
 uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task '继续并验证'
 uv run selfforge-agent trace --repo ./your-project SESSION_ID
 
-# 检查工作区中的 Git diff、提交并创建 Pull Request；清理 worktree 时保留分支
+# 检查工作区中的 Git diff、还原、提交并创建 Pull Request；清理 worktree 时保留分支
 uv run selfforge-agent workspaces list --repo ./your-project
 uv run selfforge-agent workspaces diff SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces revert SESSION_ID --repo ./your-project
 uv run selfforge-agent workspaces commit SESSION_ID -m '修复 add 的回归' --repo ./your-project
 uv run selfforge-agent workspaces pr SESSION_ID --title 'Fix add regression' --repo ./your-project
-uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project # 可选 --force 强制清理未提交工作区
 
 # 只有明确需要时才直接修改原仓库
 uv run selfforge-agent code --repo ./your-project --workspace direct --task '修复 add'
 # 续跑旧版直接修改仓库的会话也需 --workspace direct
 
-# 识别项目依赖与环境配置（布局、pyproject/requirements、测试路径）
+# 识别项目依赖与环境配置（布局、pyproject/requirements、测试路径）或从 uv.lock 导出哈希锁定依赖
 uv run selfforge-agent sandbox detect --repo ./your-project
+uv run selfforge-agent sandbox export-lock --lock uv.lock --output requirements.lock
 
 # 单独运行测试，默认使用 Docker
 uv run selfforge-agent test --repo ./your-project --path tests

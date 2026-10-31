@@ -37,6 +37,12 @@ class PRResult(BaseModel):
     title: str
 
 
+class RevertResult(BaseModel):
+    session_id: str
+    branch: str
+    reverted_files: list[str] = Field(default_factory=list)
+
+
 def _paths(workspace: CodingWorkspace, *args: str) -> list[str]:
     try:
         output = git(workspace.path, *args)
@@ -106,6 +112,47 @@ def commit_workspace(
         commit_sha=commit_sha,
         message=message.strip(),
         files_committed=sorted(visible_to_commit),
+    )
+
+
+def revert_workspace(
+    workspace: CodingWorkspace,
+    session: SessionStore | None = None,
+) -> RevertResult:
+    """Discard all uncommitted changes and remove untracked files in the worktree."""
+    tracked = _paths(workspace, "diff", "--name-only", "-z", "HEAD")
+    untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
+    cached = _paths(workspace, "diff", "--cached", "--name-only", "-z")
+
+    visible_tracked = [p for p in set(tracked + cached) if _visible(p)]
+    visible_untracked = [p for p in untracked if _visible(p)]
+
+    reverted: list[str] = []
+    if visible_tracked:
+        try:
+            git(workspace.path, "reset", "HEAD", "--", *visible_tracked)
+            git(workspace.path, "checkout", "HEAD", "--", *visible_tracked)
+            reverted.extend(visible_tracked)
+        except WorktreeError as exc:
+            raise DeliveryError(f"Failed to revert tracked changes: {exc}") from exc
+
+    if visible_untracked:
+        for rel in visible_untracked:
+            target = (workspace.path / rel).resolve()
+            if target.is_relative_to(workspace.path) and target.is_file():
+                try:
+                    target.unlink(missing_ok=True)
+                    reverted.append(rel)
+                except OSError as exc:
+                    raise DeliveryError(f"Failed to delete untracked file {rel}: {exc}") from exc
+
+    if session is not None and reverted:
+        session.record_verification(False)
+
+    return RevertResult(
+        session_id=workspace.session_id,
+        branch=workspace.branch,
+        reverted_files=sorted(set(reverted)),
     )
 
 
