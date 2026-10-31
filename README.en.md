@@ -44,7 +44,7 @@ uv run python examples/test_recovery_demo.py --provider deepseek
 
 One DeepSeek run completed in 5 turns, kept the original tests unchanged, and passed all 4 independent checks. This is a generated-fixture demonstration, separate from formal task evaluation. See [test diagnostics](./docs/test-diagnostics.md) for private snapshots, bounds and reproduction.
 
-The combined version passed **257 local tests**, including interactions between recovery, JUnit, environment binding, budgets, reference fixes and diagnostics. See the [Runtime integration record](./docs/runtime-integration.md) for the seven-PR mapping, installation checks and historical-result boundaries. This is not a model success rate.
+The PR #30 combined version passed **257 local tests** at that time; this is historical. After PR #32, the latest local full suite reported **274 passed / 11 skipped** (the skipped tests require local Docker). The corresponding GitHub main-branch CI ran **274 unit tests and 11 Docker integration tests, all passing**. This is not a model success rate; see the [workspace-evidence contract](./docs/workspace-evidence.md).
 
 ## Quick Start
 
@@ -171,7 +171,7 @@ uv run ruff check .
 
 `eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed files change, the Agent verifies its edits, the evaluator independently reruns the specified visible tests, and an unseen test passes. `agent_test_keyword` can select relevant pytest tests explicitly. Cases can select their own Docker image; its ID is pinned before evaluation. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) and [three-repository pilot](./benchmark/real-pilot/README.md) for reproduction steps.
 
-GitHub Actions runs Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests. Its [first hosted run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798) passed (90 unit tests and 5 Docker integration tests).
+GitHub Actions runs locked dependency installation, Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests. The [PR #32 exact-head run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41031573755) and the [post-merge main run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41032250484) both passed; the latter ran 274 unit tests and 11 Docker integration tests. The earlier first-run result remains in the [evaluation history](./docs/evaluation.md).
 
 On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. On 2026-10-27, three project-authored tasks across PocketFlow, boltons, and more-itertools scored **8/9** with three repeats each under the earlier gate; one attempt hit the step cap despite passing its holdout. After adding independent visible-test reruns and a large-file chunking task, four tasks scored **4/4** in one run each, with selected visible and unseen tests passing. On 2026-10-29, all nine cases in a candidate manifest passed the baseline-validity and visible-test checks; at that time its five new cases had not been run with a model. These observations use different gates and repeat counts and cannot be combined into a success rate. The 18-step limit came from earlier trials. The formal 20-task, three-repeat set remains open. See [evaluation notes](./docs/evaluation.md).
 
@@ -187,4 +187,4 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, improve real-task recovery and automatic environment detection, then expand the distinct reference-qualified 20-task acceptance set. See [product scope](./docs/product-scope.en.md), [roadmap](./docs/roadmap.md), and the [development guide](./docs/development.md).
+Next, expand and freeze the reference-qualified 20-task acceptance set, then complete the product delivery flow from worktree diff through commit and PR creation. Automatic dependency detection and broader environment profiles also remain open. See the [development guide](./docs/development.md) for acceptance order.

@@ -1,12 +1,12 @@
 # Roadmap
 
-Development order and acceptance checks: [development guide](./development.md). The iterator/traversal delivery passed 259 local tests, including two new Host verification-snapshot regressions. The earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; branch counts are historical and not additive. Confirmed reliability fixes and evidence consistency precede expansion of acceptance task count.
+Development order and acceptance checks: [development guide](./development.md). Historical PR #31 passed 259 local tests, and the earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; those counts describe their own commits. After PR #32, the latest local full suite passed 274 tests and skipped 11 Docker-dependent tests; merged-main CI passed all 274 unit and 11 Docker integration tests. Current reliability fixes are integrated; the next priorities are formal evaluation coverage and the product PR-delivery flow.
 
 | Priority | Status | Work |
 | --- | --- | --- |
 | 1 | Implemented | General Coding reuses JUnit runners with a nonempty-pass gate, preserves Docker cancellation, and requires retesting of legacy exit-code-only session evidence |
 | 1 | Implemented | Write-ahead verification invalidation for edits, persistent commands, test attempts and new tasks; conservative recovery of legacy pending calls, with abrupt-process-exit regression coverage |
-| 1 | Implemented | Bounded workspace content fingerprints bind nonempty JUnit evidence before/after tests, before reuse and final completion; external edits revoke evidence, unbound legacy sessions require retesting. Local regression: 274 passed / 11 Docker-dependent skips; remote integration status belongs to the delivery PR |
+| 1 | Implemented | Bounded workspace content fingerprints bind nonempty JUnit evidence before/after tests, before reuse and final completion; external edits revoke evidence, unbound legacy sessions require retesting. Local: 274 passed / 11 Docker-dependent skips; PR #32 and merged-main Docker CI passed |
 | 1 | Implemented | General native tool-calling Runtime, validated file/search/bash/test tools, model fallback, step and time limits |
 | 1 | Implemented | Shared bounded JUnit failure feedback, opt-in private evaluation diagnostics, live-model failure/edit/retest demo, and fresh Host bytecode cache namespace for correct rapid retesting |
 | 1 | Implemented | Per-turn remaining-budget and verification feedback, near-cap verification guidance, context space reserved for transient controls, and metadata budget traces; no extra calls or relaxed completion gate |
