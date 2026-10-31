@@ -17,6 +17,7 @@ from selfforge_agent.runtime.model import (
     ModelCallTimedOut,
     OpenAIChatAdapter,
 )
+from selfforge_agent.runtime.pricing import MonetaryCost
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolOutcome, ToolRegistry
 
@@ -44,6 +45,8 @@ class AgentResult:
     steps: int
     tools_used: int
     error: str = ""
+    total_tokens: int = 0
+    monetary_cost: MonetaryCost | None = None
 
 
 class CodingAgent:
@@ -72,7 +75,15 @@ class CodingAgent:
     def _finish(self, status: Status, answer: str, steps: int, tools_used: int,
                 error: str = "") -> AgentResult:
         self.session.record_status(status, detail=error)
-        return AgentResult(self.session.session_id, status, answer, steps, tools_used, error)
+        metrics = self.session.token_metrics()
+        cost = None
+        if metrics.get("cost"):
+            cost = MonetaryCost(**metrics["cost"])
+        return AgentResult(
+            self.session.session_id, status, answer, steps, tools_used, error,
+            total_tokens=metrics.get("total_tokens", 0),
+            monetary_cost=cost,
+        )
 
     def _resume_pending(self, messages: list[dict]) -> None:
         last_assistant = next((index for index in range(len(messages) - 1, -1, -1)

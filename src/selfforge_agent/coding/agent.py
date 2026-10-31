@@ -229,5 +229,32 @@ class RepairAgent:
             return report
         finally:
             report.finished_at = datetime.now(UTC)
+            prompt_tokens = 0
+            completion_tokens = 0
+            model_name = getattr(self.model, "model", None) or getattr(self.model, "selected_provider", None)
+            attempts = getattr(self.model, "attempts", None)
+            if isinstance(attempts, list):
+                for att in attempts:
+                    if getattr(att, "usage", None):
+                        prompt_tokens += att.usage.prompt_tokens
+                        completion_tokens += att.usage.completion_tokens
+                    if not model_name and getattr(att, "model", None):
+                        model_name = att.model
+            last_usage = getattr(self.model, "last_usage", None)
+            if last_usage and not prompt_tokens and not completion_tokens:
+                prompt_tokens = last_usage.prompt_tokens
+                completion_tokens = last_usage.completion_tokens
+            report.total_tokens = prompt_tokens + completion_tokens
+            if model_name and report.total_tokens > 0:
+                from selfforge_agent.providers import TokenUsage
+                from selfforge_agent.runtime.pricing import estimate_monetary_cost
+                report.monetary_cost = estimate_monetary_cost(
+                    model_name,
+                    TokenUsage(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=report.total_tokens,
+                    ),
+                )
             if self.session:
                 self.session.record_status(report.status)

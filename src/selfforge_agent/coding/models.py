@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from selfforge_agent.models import Finding, PRContext, TestResult
+from selfforge_agent.runtime.pricing import MonetaryCost
 
 
 class SourceFile(BaseModel):
@@ -61,5 +62,7 @@ class RepairReport(BaseModel):
     attempts: list[RepairAttempt] = Field(default_factory=list)
     verified_patch: str = ""
     errors: list[str] = Field(default_factory=list)
+    total_tokens: int = 0
+    monetary_cost: MonetaryCost | None = None
     started_at: datetime
     finished_at: datetime

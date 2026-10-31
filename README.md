@@ -26,7 +26,7 @@ uv run python examples/coding_demo.py
 | --- | --- | --- |
 | Coding Agent Runtime | Implemented | OpenAI-compatible 原生工具调用，多轮执行，步数/时间限制、动态预算与验证状态提示，供应商回退 |
 | 工具与会话 | Implemented | read/edit/search/bash/run_tests；大文件有界分段读取、pytest `-k` 选择、工作区路径校验、JSONL 恢复与轨迹 |
-| Context 管理与审批 | Implemented | 工具输出截断、语法与 CJK 敏感精确 token 估算、结构化操作摘要与保留近期交互轮次压缩、交互式工具审批 Hook |
+| Context 管理与审批 | Implemented | 工具输出截断、语法与 CJK 敏感精确 token 估算、结构化操作摘要与保留近期交互轮次压缩、交互式工具审批 Hook 与全链路成本核算 |
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 非空 JUnit 成功与工作区内容指纹共同验证；外部改动撤销证据，旧证据需重测 |
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、跨进程取消、历史任务查询和会话续跑；服务中断的任务需手动续跑 |
@@ -44,7 +44,7 @@ uv run python examples/test_recovery_demo.py --provider deepseek
 
 一次 DeepSeek 运行以 5 轮完成，原测试未改，独立验证 4 项通过。这是生成夹具演示，不计入正式任务评测。失败快照、边界与复现条件见[测试诊断](./docs/test-diagnostics.md)。
 
-PR #32 合并后的本地全量验证为 **274 passed / 11 skipped**（跳过项依赖本机 Docker）；对应的 GitHub 主分支 CI 已运行 **274 项单元测试和 11 项 Docker 集成测试，全部通过**。当前本地非集成测试全量验证为 **307 passed / 11 skipped**。这不是正式模型成功率；工作区证据的验证边界见[说明](./docs/workspace-evidence.md)。
+PR #32 合并后的本地全量验证为 **274 passed / 11 skipped**（跳过项依赖本机 Docker）；对应的 GitHub 主分支 CI 已运行 **274 项单元测试和 11 项 Docker 集成测试，全部通过**。当前本地非集成测试全量验证为 **315 passed / 11 skipped**。这不是正式模型成功率；工作区证据的验证边界见[说明](./docs/workspace-evidence.md)。
 
 ## Quick Start
 

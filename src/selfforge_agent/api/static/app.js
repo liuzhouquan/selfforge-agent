@@ -101,15 +101,31 @@ function renderCodingJob(job) {
     ? `独立工作区：${job.workspace_path} · 分支 ${job.branch} · 基于 ${job.base_sha.slice(0, 12)}`
     : `直接修改：${job.workspace_path}`;
   $("coding-answer").textContent = job.error || job.answer || "Agent 正在处理任务…";
-  const modelCalls = (job.trace || []).filter((e) => e.event === "model_call" && e.usage);
-  if (modelCalls.length) {
-    const promptTokens = modelCalls.reduce((s, e) => s + (e.usage.prompt_tokens || 0), 0);
-    const completionTokens = modelCalls.reduce((s, e) => s + (e.usage.completion_tokens || 0), 0);
-    $("metric-tokens").textContent = `${promptTokens + completionTokens} (P: ${promptTokens} / C: ${completionTokens})`;
+  const tokenMetrics = job.token_metrics;
+  if (tokenMetrics && tokenMetrics.total_tokens > 0) {
+    const p = tokenMetrics.prompt_tokens || 0;
+    const c = tokenMetrics.completion_tokens || 0;
+    $("metric-tokens").textContent = `${tokenMetrics.total_tokens.toLocaleString()} (P: ${p.toLocaleString()} / C: ${c.toLocaleString()})`;
+    if (tokenMetrics.cost) {
+      $("metric-cost").textContent = `$${tokenMetrics.cost.total_cost_usd.toFixed(4)}`;
+      $("metric-cost-box").hidden = false;
+    } else {
+      $("metric-cost-box").hidden = true;
+    }
     $("metric-verification").textContent = job.verification_passed ? "已通过 JUnit 验证" : (job.state === "completed" ? "已完成" : "未通过/待验证");
     $("coding-metrics-bar").hidden = false;
   } else {
-    $("coding-metrics-bar").hidden = true;
+    const modelCalls = (job.trace || []).filter((e) => e.event === "model_call" && e.usage);
+    if (modelCalls.length) {
+      const promptTokens = modelCalls.reduce((s, e) => s + (e.usage.prompt_tokens || 0), 0);
+      const completionTokens = modelCalls.reduce((s, e) => s + (e.usage.completion_tokens || 0), 0);
+      $("metric-tokens").textContent = `${(promptTokens + completionTokens).toLocaleString()} (P: ${promptTokens.toLocaleString()} / C: ${completionTokens.toLocaleString()})`;
+      $("metric-cost-box").hidden = true;
+      $("metric-verification").textContent = job.verification_passed ? "已通过 JUnit 验证" : (job.state === "completed" ? "已完成" : "未通过/待验证");
+      $("coding-metrics-bar").hidden = false;
+    } else {
+      $("coding-metrics-bar").hidden = true;
+    }
   }
   $("coding-cancel").hidden = !codingJobRunning;
   $("coding-cancel").disabled = job.cancel_requested;

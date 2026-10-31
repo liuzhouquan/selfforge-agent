@@ -65,17 +65,37 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         working_root = workspace.path if workspace else root
         executor = (HostExecutor(working_root, trusted=True) if args.sandbox == "host"
                     else DockerExecutor(working_root, image=args.image))
+        approval_hook = None
+        if getattr(args, "interactive", False):
+            def cli_approval_hook(name: str, arguments: dict) -> bool:
+                print(f"\n[APPROVAL REQUIRED] Tool: {name}")
+                for k, v in arguments.items():
+                    val_str = str(v)
+                    if len(val_str) > 120:
+                        val_str = val_str[:117] + "..."
+                    print(f"  {k}: {val_str}")
+                try:
+                    choice = input(f"Execute {name}? [y/N]: ").strip().lower()
+                    return choice in {"y", "yes"}
+                except (EOFError, KeyboardInterrupt):
+                    print("\nAction denied by operator.")
+                    return False
+            approval_hook = cli_approval_hook
+
         agent = CodingAgent(model, ToolRegistry(working_root, executor),
                             session, max_steps=args.max_steps,
-                            time_budget=args.time_budget, context_budget=args.context_tokens)
+                            time_budget=args.time_budget, context_budget=args.context_tokens,
+                            approval_hook=approval_hook)
         if workspace:
             print(f"Workspace: {workspace.path} (branch {workspace.branch}, "
                   f"base {workspace.base_sha[:12]})")
         result = agent.run(args.task or "", resume=bool(args.resume))
     except (ValueError, RuntimeError, OSError) as exc:
         parser.error(str(exc))
+    cost_str = f", {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
+    token_str = f", {result.total_tokens} tokens" if result.total_tokens else ""
     print(f"Session {result.session_id}: {result.status} ({result.steps} steps, "
-          f"{result.tools_used} tools)")
+          f"{result.tools_used} tools{token_str}{cost_str})")
     if result.answer:
         print(result.answer)
     if result.error:
@@ -132,6 +152,8 @@ def main() -> int:
     code.add_argument("--max-steps", type=int, default=12)
     code.add_argument("--time-budget", type=float, default=300)
     code.add_argument("--context-tokens", type=int, default=8_000)
+    code.add_argument("--interactive", action="store_true",
+                      help="Prompt operator for approval before running tools")
     testing = subcommands.add_parser("test", help="Run pytest with Docker or explicit host trust")
     testing.add_argument("--repo", type=Path, default=Path.cwd())
     testing.add_argument("--path", default="tests")
@@ -142,6 +164,8 @@ def main() -> int:
     trace = subcommands.add_parser("trace", help="Show a session's structured trace")
     trace.add_argument("--repo", type=Path, default=Path.cwd())
     trace.add_argument("session_id")
+    trace.add_argument("--summary", action="store_true",
+                       help="Print aggregate token usage and estimated cost")
     workspaces = subcommands.add_parser("workspaces", help="Inspect, commit, or create PRs from Coding worktrees")
     workspaces.add_argument("action", choices=["list", "remove", "diff", "commit", "pr"])
     workspaces.add_argument("session_id", nargs="?")
@@ -279,9 +303,18 @@ def main() -> int:
         try:
             manager = CodingWorkspaceManager()
             root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
-            events = SessionStore(root, args.session_id).trace_events()
+            store = SessionStore(root, args.session_id)
+            events = store.trace_events()
         except ValueError as exc:
             parser.error(str(exc))
+        if getattr(args, "summary", False):
+            metrics = store.token_metrics()
+            cost_str = (f" · Estimated cost: ${metrics['cost']['total_cost_usd']:.4f} ({metrics.get('model') or 'calibrated'})"
+                        if metrics.get("cost") else "")
+            print(f"Summary for session {args.session_id}:")
+            print(f"  Total tokens: {metrics['total_tokens']:,} "
+                  f"(Prompt: {metrics['prompt_tokens']:,}, Completion: {metrics['completion_tokens']:,}){cost_str}")
+            return 0
         for event in events:
             print(json.dumps(event, ensure_ascii=False))
         return 0
@@ -492,7 +525,9 @@ def main() -> int:
             args.output.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
         if result.status == "verified" and args.patch_output:
             args.patch_output.write_text(result.verified_patch, encoding="utf-8")
-        print(f"Run {result.run_id}: {result.status}")
+        cost_str = f" · {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
+        token_str = f" ({result.total_tokens} tokens{cost_str})" if result.total_tokens else ""
+        print(f"Run {result.run_id}: {result.status}{token_str}")
         if result.base_test and result.head_test:
             print(f"Base tests: {result.base_test.status}; Head tests: {result.head_test.status}")
         for attempt in result.attempts:

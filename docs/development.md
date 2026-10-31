@@ -17,7 +17,7 @@
 
 | 责任 | 主要源码 | 相关回归 |
 | --- | --- | --- |
-| 工具循环、完成条件、中断恢复、预算、上下文与审批 | `runtime/agent.py`、`session.py`、`fingerprint.py`、`context.py`、`control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_context.py`、`test_context_precision.py`、`test_runtime_budget.py`、`test_runtime_composition.py`、`test_workspace_evidence.py`、`test_workspace_fingerprint.py` |
+| 工具循环、完成条件、中断恢复、预算、上下文与审批 | `runtime/agent.py`、`session.py`、`fingerprint.py`、`context.py`、`control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_context.py`、`test_context_precision.py`、`test_session_metrics.py`、`test_runtime_budget.py`、`test_runtime_composition.py`、`test_workspace_evidence.py`、`test_workspace_fingerprint.py` |
 | 依赖镜像与会话环境 | `runtime/images.py`、`environment.py` | `test_dependency_images.py`、`test_session_environment.py`、`test_environment_detection.py` |
 | 文件权限、编辑策略、命令与暂存限制 | `runtime/tools.py`、`execution.py` | `test_runtime.py`、`test_docker_staging.py` |
 | 模型协议、回退、配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py` | `test_model_deadline.py`、`test_providers.py` |
@@ -73,7 +73,7 @@ uv run --no-sync python examples/coding_demo.py
 | 本轮实现 | 依赖环境识别与 Web 重启恢复验证 | 识别 src/flat 布局、pyproject/requirements、锁文件及 pytest 目录；回归覆盖异常退出后重启续跑至完成 |
 | 本轮实现 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，排除受保护文件，附带测试验证状态，覆盖远端与 gh 失败恢复，不自动强推或合并 |
 | 本轮实现 | 风险自动排序、因果归因与成本核算 | 依据严重度、类别与代码特征排序风险假设；差异测试失败因果回溯至目标行/文件；校准模型计费与总成本核算；单测覆盖全链路 |
-| 本轮实现 | 精确 Token 估算、结构化压缩与交互审批 | 覆盖代码语法与 CJK 的精确 Token 估算；结构化操作摘要与保留近期交互轮次；Agent 级交互审批 Hook；前端实时展示 Token 与 JUnit 通过指标 |
+| 本轮实现 | 精确 Token 估算、结构化压缩、全链路成本与交互审批 | 覆盖代码语法与 CJK 的精确 Token 估算；结构化操作摘要与保留近期交互轮次；Agent/Repair/CLI/Web 全链路 Token 与校准成本追踪；CLI 交互式审批 `--interactive` 与 `--summary` 诊断 |
 | 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
 
 只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。现有[五题参考控制集](../benchmark/validated-candidates/iterator-traversal.md)跨三个仓库，全部通过 Docker 负例/参考正例；其中异步空输入、Unicode 分隔与零分块任务和早期候选重叠，不能额外计数。目录深度剪枝与替换回调停止涉及不同执行机制；前者保留边界目录匹配和忽略规则，后者是明确的功能扩展，不能宣称为上游确认的 bug。
