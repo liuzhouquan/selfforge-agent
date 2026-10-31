@@ -356,12 +356,48 @@ $("coding-pr-form").addEventListener("submit", async (event) => {
   }
 });
 
+async function loadRepoEnvironment() {
+  const repo = $("coding-repo").value.trim();
+  const infoEl = $("coding-env-info");
+  if (!repo) {
+    infoEl.hidden = true;
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ repository: repo });
+    const response = await fetch(`/api/code/environment?${params}`);
+    if (!response.ok) {
+      infoEl.hidden = true;
+      return;
+    }
+    const env = await response.json();
+    const details = [
+      `布局: ${env.layout === "src" ? "src 结构" : "扁平结构"}`,
+      `测试: ${env.test_framework} (${env.test_paths.join(", ") || "默认"})`,
+    ];
+    if (env.dependency_files.length) details.push(`依赖: ${env.dependency_files.join(", ")}`);
+    if (env.lock_files.length) details.push(`锁定: ${env.lock_files.join(", ")}`);
+    if (env.suggested_image && !$("coding-image").value) {
+      details.push(`推荐镜像: ${env.suggested_image}`);
+    }
+    infoEl.textContent = `已识别环境：${details.join(" · ")}`;
+    infoEl.hidden = false;
+  } catch (_e) {
+    infoEl.hidden = true;
+  }
+}
+
+$("coding-repo").addEventListener("change", loadRepoEnvironment);
+$("coding-repo").addEventListener("blur", loadRepoEnvironment);
 $("coding-workspace").addEventListener("change", refreshCodingAvailability);
 $("coding-confirm-direct").addEventListener("change", refreshCodingAvailability);
 $("coding-sandbox").addEventListener("change", refreshCodingAvailability);
 $("coding-trust").addEventListener("change", refreshCodingAvailability);
 const savedCodingRepo = localStorage.getItem("selfforge-coding-repo");
-if (savedCodingRepo) $("coding-repo").value = savedCodingRepo;
+if (savedCodingRepo) {
+  $("coding-repo").value = savedCodingRepo;
+  loadRepoEnvironment();
+}
 const savedCodingJob = localStorage.getItem("selfforge-coding-job") ||
   sessionStorage.getItem("selfforge-coding-job");
 if (savedCodingJob) pollCodingJob(savedCodingJob);

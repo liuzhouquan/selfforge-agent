@@ -21,4 +21,4 @@ These numbers are project acceptance targets, not achieved results. A useful mod
 ## Near-term order
 
 1. Expand and freeze at least 20 distinct tasks from 3 or more real repositories, each with a behavior contract and reference fix; run each at least three times under a fixed provider policy and report failure categories.
-2. Broaden dependency environment detection and Web restart-recovery validation. Existing reliability fixes, delivery workflow, and CI status are recorded in the [development guide (Chinese)](./development.md) and [roadmap](./roadmap.md).
+2. Completed worktree delivery loop (diff review, commit, PR creation), dependency environment detection, and Web crash restart/resume regression. Next work focuses on the formal 20-task model evaluation suite. Existing reliability fixes and CI status are recorded in the [development guide (Chinese)](./development.md) and [roadmap](./roadmap.md).

@@ -57,6 +57,7 @@ from selfforge_agent.runtime.delivery import (
     commit_workspace,
     create_pull_request,
 )
+from selfforge_agent.runtime.environment import detect_repository_environment
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
@@ -272,6 +273,16 @@ def home() -> FileResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/code/environment")
+def repository_environment(repository: str, client: Request) -> dict:
+    _require_local(client)
+    repo = Path(repository).expanduser().resolve()
+    try:
+        return detect_repository_environment(repo)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/config", response_model=AppConfig)

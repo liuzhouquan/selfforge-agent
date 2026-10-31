@@ -19,6 +19,7 @@ from selfforge_agent.runtime.delivery import (
     commit_workspace,
     create_pull_request,
 )
+from selfforge_agent.runtime.environment import detect_repository_environment
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.images import build_dependency_image
@@ -105,11 +106,12 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
-    sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image")
-    sandbox.add_argument("action", choices=["build"])
-    sandbox.add_argument("--requirements", type=Path, required=True)
-    sandbox.add_argument("--wheelhouse", type=Path, required=True)
-    sandbox.add_argument("--tag", required=True)
+    sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
+    sandbox.add_argument("action", choices=["build", "detect"])
+    sandbox.add_argument("--repo", type=Path, default=Path.cwd())
+    sandbox.add_argument("--requirements", type=Path)
+    sandbox.add_argument("--wheelhouse", type=Path)
+    sandbox.add_argument("--tag")
     sandbox.add_argument("--base-image", default="selfforge-agent-sandbox:latest")
     sandbox.add_argument("--timeout", type=float, default=300)
     code = subcommands.add_parser("code", help="Run a general autonomous coding task")
@@ -225,6 +227,27 @@ def main() -> int:
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
     if args.command == "sandbox":
+        if args.action == "detect":
+            try:
+                env = detect_repository_environment(args.repo)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            print(f"Repository: {env['repository']}")
+            print(f"Layout: {env['layout']}")
+            print(f"Test framework: {env['test_framework']} ({', '.join(env['test_paths']) or 'none found'})")
+            print(f"Dependency files: {', '.join(env['dependency_files']) or 'none'}")
+            print(f"Lock files: {', '.join(env['lock_files']) or 'none'} (hash-locked: {env['has_hash_lock']})")
+            if env.get("python_requires"):
+                print(f"Python required: {env['python_requires']}")
+            if env.get("suggested_image"):
+                print(f"Suggested profile image: {env['suggested_image']}")
+            if env.get("warnings"):
+                print("Warnings:")
+                for w in env["warnings"]:
+                    print(f"  - {w}")
+            return 0
+        if not args.requirements or not args.wheelhouse or not args.tag:
+            parser.error("sandbox build requires --requirements, --wheelhouse, and --tag")
         try:
             report = build_dependency_image(args.requirements, args.wheelhouse, tag=args.tag,
                                             base_image=args.base_image, timeout=args.timeout)

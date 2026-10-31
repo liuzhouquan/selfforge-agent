@@ -176,3 +176,70 @@ os._exit(0)
     assert recovered["state"] == "failed"
     assert not recovered["can_resume"]
     assert "start a new task" in recovered["error"]
+
+
+def test_crashed_process_resumes_and_completes_in_fresh_server(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = tmp_path / "jobs"
+    script = r'''
+import os, sys, time
+from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
+from selfforge_agent.api.coding_jobs import CodingJobManager
+from selfforge_agent.runtime.session import SessionStore
+
+workspace, root = map(Path, sys.argv[1:])
+class Agent:
+    def __init__(self):
+        self.tools = SimpleNamespace(root=workspace)
+        self.session = SessionStore(root / "sessions")
+        self.cancel = Event()
+    def run(self, task, *, resume=False):
+        self.session.record_message({"role": "system", "content": "coding"})
+        self.session.record_message({"role": "user", "content": task})
+        self.session.record_status("running")
+        time.sleep(30)
+
+manager = CodingJobManager(root=root)
+job = manager.start(Agent(), "Step 1 before crash")
+for _ in range(100):
+    if job.session.path.exists() and manager.get(job.job_id)["state"] == "running":
+        break
+    time.sleep(0.01)
+print(job.job_id, flush=True)
+os._exit(0)
+'''
+    process = subprocess.run([sys.executable, "-c", script, str(workspace), str(root)],
+                             capture_output=True, text=True, timeout=10, check=True)
+    crashed_job_id = process.stdout.strip()
+    assert len(crashed_job_id) == 12
+
+    # Simulate fresh server start
+    fresh_manager = CodingJobManager(root=root)
+    recovered = fresh_manager.get(crashed_job_id)
+    assert recovered["state"] == "interrupted"
+    assert recovered["can_resume"] is True
+
+    # Resume the session
+    session = SessionStore(root / "sessions", recovered["session_id"])
+    class ResumedAgent:
+        def __init__(self):
+            self.tools = SimpleNamespace(root=workspace)
+            self.session = session
+            self.cancel = Event()
+        def run(self, task, *, resume=False):
+            assert resume is True
+            self.session.record_message({"role": "user", "content": task})
+            self.session.record_verification(True, workspace_sha256="c" * 64)
+            self.session.record_status("completed")
+            return AgentResult(self.session.session_id, "completed", "Finished successfully after crash", 2, 1)
+
+    resumed_job = fresh_manager.start(ResumedAgent(), "Step 2 after crash", resume=True)
+    done = _finished(fresh_manager, resumed_job.job_id)
+    assert done["state"] == "completed"
+    assert done["session_id"] == recovered["session_id"]
+    assert done["answer"] == "Finished successfully after crash"
+    assert fresh_manager.get(crashed_job_id)["state"] == "interrupted"
+    assert fresh_manager.get(resumed_job.job_id)["state"] == "completed"
