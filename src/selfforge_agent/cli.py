@@ -8,19 +8,32 @@ from pathlib import Path
 
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel, OpenAICompatibleCodingModel
+from selfforge_agent.coding.risk_prioritization import prioritize_risks
 from selfforge_agent.coding.test_generation import DifferentialTestGenerator, RiskTarget
 from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
+from selfforge_agent.runtime.delivery import (
+    DeliveryError,
+    commit_workspace,
+    create_pull_request,
+    revert_workspace,
+)
+from selfforge_agent.runtime.environment import (
+    detect_repository_environment,
+    export_hash_locked_requirements,
+)
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.images import build_dependency_image
 from selfforge_agent.runtime.model import OpenAIChatAdapter
+from selfforge_agent.runtime.pricing import format_monetary_cost
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
+from selfforge_agent.runtime.workspace_diff import workspace_diff
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.feedback import failure_feedback
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
@@ -56,17 +69,37 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         working_root = workspace.path if workspace else root
         executor = (HostExecutor(working_root, trusted=True) if args.sandbox == "host"
                     else DockerExecutor(working_root, image=args.image))
+        approval_hook = None
+        if getattr(args, "interactive", False):
+            def cli_approval_hook(name: str, arguments: dict) -> bool:
+                print(f"\n[APPROVAL REQUIRED] Tool: {name}")
+                for k, v in arguments.items():
+                    val_str = str(v)
+                    if len(val_str) > 120:
+                        val_str = val_str[:117] + "..."
+                    print(f"  {k}: {val_str}")
+                try:
+                    choice = input(f"Execute {name}? [y/N]: ").strip().lower()
+                    return choice in {"y", "yes"}
+                except (EOFError, KeyboardInterrupt):
+                    print("\nAction denied by operator.")
+                    return False
+            approval_hook = cli_approval_hook
+
         agent = CodingAgent(model, ToolRegistry(working_root, executor),
                             session, max_steps=args.max_steps,
-                            time_budget=args.time_budget, context_budget=args.context_tokens)
+                            time_budget=args.time_budget, context_budget=args.context_tokens,
+                            approval_hook=approval_hook)
         if workspace:
             print(f"Workspace: {workspace.path} (branch {workspace.branch}, "
                   f"base {workspace.base_sha[:12]})")
         result = agent.run(args.task or "", resume=bool(args.resume))
     except (ValueError, RuntimeError, OSError) as exc:
         parser.error(str(exc))
+    cost_str = f", {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
+    token_str = f", {result.total_tokens} tokens" if result.total_tokens else ""
     print(f"Session {result.session_id}: {result.status} ({result.steps} steps, "
-          f"{result.tools_used} tools)")
+          f"{result.tools_used} tools{token_str}{cost_str})")
     if result.answer:
         print(result.answer)
     if result.error:
@@ -99,13 +132,16 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
-    sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image")
-    sandbox.add_argument("action", choices=["build"])
-    sandbox.add_argument("--requirements", type=Path, required=True)
-    sandbox.add_argument("--wheelhouse", type=Path, required=True)
-    sandbox.add_argument("--tag", required=True)
+    sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
+    sandbox.add_argument("action", choices=["build", "detect", "export-lock"])
+    sandbox.add_argument("--repo", type=Path, default=Path.cwd())
+    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock file for export-lock action")
+    sandbox.add_argument("--requirements", type=Path)
+    sandbox.add_argument("--wheelhouse", type=Path)
+    sandbox.add_argument("--tag")
     sandbox.add_argument("--base-image", default="selfforge-agent-sandbox:latest")
     sandbox.add_argument("--timeout", type=float, default=300)
+    sandbox.add_argument("--output", type=Path, help="Output path for export-lock")
     code = subcommands.add_parser("code", help="Run a general autonomous coding task")
     code.add_argument("--repo", type=Path, default=Path.cwd())
     code.add_argument("--task", help="Natural-language development task")
@@ -122,6 +158,8 @@ def main() -> int:
     code.add_argument("--max-steps", type=int, default=12)
     code.add_argument("--time-budget", type=float, default=300)
     code.add_argument("--context-tokens", type=int, default=8_000)
+    code.add_argument("--interactive", action="store_true",
+                      help="Prompt operator for approval before running tools")
     testing = subcommands.add_parser("test", help="Run pytest with Docker or explicit host trust")
     testing.add_argument("--repo", type=Path, default=Path.cwd())
     testing.add_argument("--path", default="tests")
@@ -132,10 +170,20 @@ def main() -> int:
     trace = subcommands.add_parser("trace", help="Show a session's structured trace")
     trace.add_argument("--repo", type=Path, default=Path.cwd())
     trace.add_argument("session_id")
-    workspaces = subcommands.add_parser("workspaces", help="Inspect or remove Coding worktrees")
-    workspaces.add_argument("action", choices=["list", "remove"])
+    trace.add_argument("--summary", action="store_true",
+                       help="Print aggregate token usage and estimated cost")
+    workspaces = subcommands.add_parser("workspaces", help="Inspect, commit, revert, or create PRs from Coding worktrees")
+    workspaces.add_argument("action", choices=["list", "remove", "diff", "commit", "pr", "revert"])
     workspaces.add_argument("session_id", nargs="?")
     workspaces.add_argument("--repo", type=Path, default=Path.cwd())
+    workspaces.add_argument("--message", "-m", help="Commit message for 'commit' action")
+    workspaces.add_argument("--author-name", help="Author name for 'commit' action")
+    workspaces.add_argument("--author-email", help="Author email for 'commit' action")
+    workspaces.add_argument("--title", help="PR title for 'pr' action")
+    workspaces.add_argument("--body", default="", help="PR body for 'pr' action")
+    workspaces.add_argument("--base", help="Target base branch for 'pr' action")
+    workspaces.add_argument("--remote", default="origin", help="Git remote for 'pr' action")
+    workspaces.add_argument("--draft", action="store_true", help="Create draft PR")
     evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
     evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
     evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
@@ -207,10 +255,45 @@ def main() -> int:
                           help="Try up to this many distinct tests; stop at the first differential result")
     generate.add_argument("--finding-index", type=int,
                           help="Zero-based index from local rule review of this Base/Head diff")
+    generate.add_argument("--auto-target", action="store_true",
+                          help="Automatically prioritize risk hypotheses from the diff")
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
     if args.command == "sandbox":
+        if args.action == "detect":
+            try:
+                env = detect_repository_environment(args.repo)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            print(f"Repository: {env['repository']}")
+            print(f"Layout: {env['layout']}")
+            print(f"Test framework: {env['test_framework']} ({', '.join(env['test_paths']) or 'none found'})")
+            print(f"Dependency files: {', '.join(env['dependency_files']) or 'none'}")
+            print(f"Lock files: {', '.join(env['lock_files']) or 'none'} (hash-locked: {env['has_hash_lock']})")
+            if env.get("python_requires"):
+                print(f"Python required: {env['python_requires']}")
+            if env.get("suggested_image"):
+                print(f"Suggested profile image: {env['suggested_image']}")
+            if env.get("warnings"):
+                print("Warnings:")
+                for w in env["warnings"]:
+                    print(f"  - {w}")
+            return 0
+        if args.action == "export-lock":
+            if not args.lock:
+                parser.error("sandbox export-lock requires --lock")
+            try:
+                content = export_hash_locked_requirements(args.lock, args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            if args.output:
+                print(f"Exported hash-locked requirements to {args.output}")
+            else:
+                print(content, end="")
+            return 0
+        if not args.requirements or not args.wheelhouse or not args.tag:
+            parser.error("sandbox build requires --requirements, --wheelhouse, and --tag")
         try:
             report = build_dependency_image(args.requirements, args.wheelhouse, tag=args.tag,
                                             base_image=args.base_image, timeout=args.timeout)
@@ -238,9 +321,18 @@ def main() -> int:
         try:
             manager = CodingWorkspaceManager()
             root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
-            events = SessionStore(root, args.session_id).trace_events()
+            store = SessionStore(root, args.session_id)
+            events = store.trace_events()
         except ValueError as exc:
             parser.error(str(exc))
+        if getattr(args, "summary", False):
+            metrics = store.token_metrics()
+            cost_str = (f" · Estimated cost: ${metrics['cost']['total_cost_usd']:.4f} ({metrics.get('model') or 'calibrated'})"
+                        if metrics.get("cost") else "")
+            print(f"Summary for session {args.session_id}:")
+            print(f"  Total tokens: {metrics['total_tokens']:,} "
+                  f"(Prompt: {metrics['prompt_tokens']:,}, Completion: {metrics['completion_tokens']:,}){cost_str}")
+            return 0
         for event in events:
             print(json.dumps(event, ensure_ascii=False))
         return 0
@@ -252,12 +344,71 @@ def main() -> int:
                     parser.error("workspaces list does not take a session ID")
                 for workspace in manager.list(args.repo):
                     print(f"{workspace.session_id}  {workspace.branch}  {workspace.path}")
-            else:
+            elif args.action == "remove":
                 if not args.session_id:
                     parser.error("workspaces remove requires a session ID")
                 workspace = manager.remove(args.repo, args.session_id)
                 print(f"Removed worktree {workspace.path}; branch {workspace.branch} remains")
-        except (ValueError, RuntimeError, OSError) as exc:
+            elif args.action == "diff":
+                if not args.session_id:
+                    parser.error("workspaces diff requires a session ID")
+                workspace = manager.get(args.repo, args.session_id)
+                data = workspace_diff(workspace)
+                if not data["files"]:
+                    print("No visible changes in workspace.")
+                for f in data["files"]:
+                    print(f"=== {f['status']}: {f['path']} ===")
+                    if f.get("patch"):
+                        print(f["patch"])
+            elif args.action == "commit":
+                if not args.session_id:
+                    parser.error("workspaces commit requires a session ID")
+                if not args.message:
+                    parser.error("workspaces commit requires --message")
+                workspace = manager.get(args.repo, args.session_id)
+                res = commit_workspace(
+                    workspace,
+                    args.message,
+                    author_name=args.author_name,
+                    author_email=args.author_email,
+                )
+                print(f"Committed {res.commit_sha[:12]} on {res.branch}: {res.message}")
+                for path in res.files_committed:
+                    print(f"  {path}")
+            elif args.action == "pr":
+                if not args.session_id:
+                    parser.error("workspaces pr requires a session ID")
+                if not args.title:
+                    parser.error("workspaces pr requires --title")
+                workspace = manager.get(args.repo, args.session_id)
+                session_root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
+                session = SessionStore(session_root, args.session_id)
+                pr_res = create_pull_request(
+                    workspace,
+                    args.title,
+                    body=args.body,
+                    base_branch=args.base,
+                    remote=args.remote,
+                    draft=args.draft,
+                    session_store=session,
+                )
+                print(f"Created Pull Request: {pr_res.pr_url}")
+                if pr_res.pr_number:
+                    print(f"PR #{pr_res.pr_number} on {pr_res.branch} ({pr_res.commit_sha[:12]})")
+            elif args.action == "revert":
+                if not args.session_id:
+                    parser.error("workspaces revert requires a session ID")
+                workspace = manager.get(args.repo, args.session_id)
+                session_root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
+                session = SessionStore(session_root, args.session_id) if session_root.is_dir() else None
+                result = revert_workspace(workspace, session)
+                if result.reverted_files:
+                    print(f"Reverted {len(result.reverted_files)} files in workspace {workspace.path}:")
+                    for f in result.reverted_files:
+                        print(f"  - {f}")
+                else:
+                    print(f"Workspace {workspace.path} is clean; nothing to revert.")
+        except (ValueError, RuntimeError, OSError, DeliveryError) as exc:
             parser.error(str(exc))
         return 0
     if args.command == "eval":
@@ -323,6 +474,15 @@ def main() -> int:
                     "description": finding.description, "evidence": finding.evidence,
                     "category": finding.category,
                 }
+            elif args.auto_target:
+                context = build_context(args.repo, args.base, args.head)
+                prioritized = prioritize_risks(context)
+                if not prioritized:
+                    parser.error("No candidate added lines found to prioritize in this Base/Head diff")
+                top = prioritized[0]
+                target = top.to_risk_target().model_dump()
+                print(f"Auto-selected risk target (rank {top.rank}, score {top.score:.0f}): "
+                      f"{top.file_path}:{top.line_number} [{top.category}]")
             if args.max_candidates > 1 or target is not None:
                 batch = generator.run_many(
                     args.repo.resolve(), args.base, args.head, args.task,
@@ -357,6 +517,12 @@ def main() -> int:
         if result.base_test and result.head_test:
             print(f"Base: {result.base_test.status} ({result.base_test.passed} passed); "
                   f"Head: {result.head_test.status} ({result.head_test.failed} failed)")
+        inv = (batch.selected_causal_investigation if batch else None) or result.causal_investigation
+        if inv:
+            print(f"Trace association: {inv.confidence} ({inv.explanation})")
+        cost = (batch.total_cost if batch else None) or result.cost
+        if cost:
+            print(f"Cost: {format_monetary_cost(cost)}")
         for error in result.errors:
             print(error, file=sys.stderr)
         return 0 if result.status == "differential" else 1
@@ -390,7 +556,9 @@ def main() -> int:
             args.output.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
         if result.status == "verified" and args.patch_output:
             args.patch_output.write_text(result.verified_patch, encoding="utf-8")
-        print(f"Run {result.run_id}: {result.status}")
+        cost_str = f" · {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
+        token_str = f" ({result.total_tokens} tokens{cost_str})" if result.total_tokens else ""
+        print(f"Run {result.run_id}: {result.status}{token_str}")
         if result.base_test and result.head_test:
             print(f"Base tests: {result.base_test.status}; Head tests: {result.head_test.status}")
         for attempt in result.attempts:

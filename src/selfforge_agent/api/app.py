@@ -17,6 +17,7 @@ from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel
 from selfforge_agent.coding.models import RepairReport
+from selfforge_agent.coding.risk_prioritization import PrioritizedRisk, prioritize_risks
 from selfforge_agent.coding.test_generation import (
     DifferentialTestGenerator,
     DifferentialTestReport,
@@ -50,6 +51,16 @@ from selfforge_agent.providers import (
 )
 from selfforge_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
 from selfforge_agent.runtime.agent import CodingAgent
+from selfforge_agent.runtime.delivery import (
+    CommitResult,
+    DeliveryError,
+    PRResult,
+    RevertResult,
+    commit_workspace,
+    create_pull_request,
+    revert_workspace,
+)
+from selfforge_agent.runtime.environment import detect_repository_environment
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
@@ -134,6 +145,9 @@ class GitHubRepairRequest(BaseModel):
     task: str
     trust_local_tests: bool = False
     sandbox: Literal["docker", "host"] = "docker"
+    image: str | None = Field(default=None, min_length=1, max_length=256,
+                              pattern=r"^[^\s-][^\s]*$")
+    timeout: float = Field(default=60, gt=0, le=300, allow_inf_nan=False)
     provider: Literal["auto", "deepseek", "openrouter"] = "auto"
     fallback: bool = True
 
@@ -159,11 +173,22 @@ class GitHubGenerateTestsRequest(GitHubGenerateTestRequest):
     max_candidates: int = Field(default=2, ge=1, le=3)
     time_budget: float = Field(default=300, gt=0, le=600)
     target: RiskTarget | None = None
+    auto_target: bool = False
 
 
 class GitHubGenerateTestsResponse(BaseModel):
     checkout: CheckoutResult
     batch: TestGenerationBatchReport
+
+
+class GitHubPrioritizeRisksRequest(BaseModel):
+    url: str
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class GitHubPrioritizeRisksResponse(BaseModel):
+    checkout: CheckoutResult
+    risks: list[PrioritizedRisk]
 
 
 class AppConfig(BaseModel):
@@ -204,10 +229,27 @@ class CodingJobResponse(BaseModel):
     base_sha: str
     can_resume: bool
     trace: list[dict]
+    token_metrics: dict = Field(default_factory=dict)
 
 
 class CodingWorkspaceRequest(BaseModel):
     repository: str = Field(min_length=1)
+
+
+class CodingCommitRequest(BaseModel):
+    repository: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=5000)
+    author_name: str | None = Field(default=None, max_length=128)
+    author_email: str | None = Field(default=None, max_length=128)
+
+
+class CodingPRRequest(BaseModel):
+    repository: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=256)
+    body: str = Field(default="", max_length=20000)
+    base_branch: str | None = Field(default=None, max_length=128)
+    remote: str = Field(default="origin", max_length=64)
+    draft: bool = False
 
 
 class CodingDiffFile(BaseModel):
@@ -249,6 +291,16 @@ def home() -> FileResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/code/environment")
+def repository_environment(repository: str, client: Request) -> dict:
+    _require_local(client)
+    repo = Path(repository).expanduser().resolve()
+    try:
+        return detect_repository_environment(repo)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/config", response_model=AppConfig)
@@ -335,6 +387,21 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
     return {"removed": str(workspace.path), "branch": workspace.branch}
 
 
+@app.post("/api/code/workspaces/{session_id}/revert", response_model=RevertResult)
+def revert_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
+                            client: Request) -> RevertResult:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    try:
+        workspace = _CODING_WORKSPACES.get(repository, session_id)
+        session_root = _CODING_WORKSPACES.session_root(repository, session_id)
+        session = SessionStore(session_root, session_id) if session_root.is_dir() else None
+        with _CODING_JOBS.workspace_guard(workspace.path):
+            return revert_workspace(workspace, session)
+    except (ValueError, OSError, WorktreeError, DeliveryError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/code/workspaces/{session_id}/diff", response_model=CodingDiffResponse)
 def coding_workspace_diff(session_id: str, repository: str, client: Request) -> dict:
     _require_local(client)
@@ -345,6 +412,62 @@ def coding_workspace_diff(session_id: str, repository: str, client: Request) -> 
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/code/workspaces/{session_id}/commit", response_model=CommitResult)
+def commit_coding_workspace(
+    session_id: str, request: CodingCommitRequest, client: Request
+) -> CommitResult:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    try:
+        workspace = _CODING_WORKSPACES.get(repository, session_id)
+        with _CODING_JOBS.workspace_guard(workspace.path):
+            return commit_workspace(
+                workspace,
+                request.message,
+                author_name=request.author_name,
+                author_email=request.author_email,
+            )
+    except DeliveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(
+            status_code=409 if "already running" in str(exc) else 400,
+            detail=str(exc),
+        ) from exc
+
+
+@app.post("/api/code/workspaces/{session_id}/pr", response_model=PRResult)
+def create_coding_pr(
+    session_id: str, request: CodingPRRequest, client: Request
+) -> PRResult:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    try:
+        workspace = _CODING_WORKSPACES.get(repository, session_id)
+        session_root = _CODING_WORKSPACES.session_root(
+            repository, session_id,
+            legacy_roots=(_coding_session_root(repository), repository),
+        )
+        session = SessionStore(session_root, session_id)
+        with _CODING_JOBS.workspace_guard(workspace.path):
+            return create_pull_request(
+                workspace,
+                request.title,
+                body=request.body,
+                base_branch=request.base_branch,
+                remote=request.remote,
+                draft=request.draft,
+                session_store=session,
+            )
+    except DeliveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(
+            status_code=409 if "already running" in str(exc) else 400,
+            detail=str(exc),
+        ) from exc
 
 
 @app.get("/api/code/jobs", response_model=list[CodingJobResponse])
@@ -462,14 +585,17 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
         pr = load_pr(request.url)
         checkout = checkout_pr(pr.url, _WORKSPACES)
         model = FallbackCodingModel(candidates)
-        runner = TestRunner() if request.sandbox == "host" else DockerTestRunner()
-        report = RepairAgent(model, runner=runner,
-                             session=SessionStore(Path(checkout.path))).run(
+        runner = (TestRunner() if request.sandbox == "host"
+                  else DockerTestRunner(image=request.image or "selfforge-agent-sandbox:latest"))
+        agent = RepairAgent(model, runner=runner,
+                            session=SessionStore(Path(checkout.path)))
+        report = agent.run(
             Path(checkout.path),
             checkout.diff_base_sha,
             pr.context.head_sha,
             request.task,
             trusted=request.trust_local_tests if request.sandbox == "host" else False,
+            timeout=request.timeout,
         )
         return GitHubRepairResponse(
             checkout=checkout, report=report,
@@ -504,10 +630,15 @@ def _prepare_test_generation(request: GitHubGenerateTestRequest, client: Request
     try:
         pr = load_pr(request.url)
         if isinstance(request, GitHubGenerateTestsRequest):
+            if request.target is None and request.auto_target:
+                risks = prioritize_risks(pr.context)
+                if risks:
+                    request.target = risks[0].to_risk_target()
             validate_risk_target(pr.context, request.target)
         checkout = checkout_pr(pr.url, _WORKSPACES)
         repository = Path(checkout.path)
-        runner = TestRunner() if request.sandbox == "host" else DockerTestRunner()
+        runner = (TestRunner() if request.sandbox == "host" else
+                  DockerTestRunner(image=request.image or "selfforge-agent-sandbox:latest"))
         session = SessionStore(_CODING_WORKSPACES.session_root(repository))
         generator = DifferentialTestGenerator(
             OpenAIChatAdapter(candidates), runner=runner, session=session,
@@ -530,6 +661,19 @@ def github_generate_tests(request: GitHubGenerateTestsRequest, client: Request
         )
         return GitHubGenerateTestsResponse(checkout=checkout, batch=batch)
     except (GitContextError, WorktreeError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/github/prioritize-risks", response_model=GitHubPrioritizeRisksResponse)
+def github_prioritize_risks(request: GitHubPrioritizeRisksRequest, client: Request
+                            ) -> GitHubPrioritizeRisksResponse:
+    _require_local(client)
+    try:
+        pr = load_pr(request.url)
+        checkout = checkout_pr(pr.url, _WORKSPACES)
+        risks = prioritize_risks(pr.context, top_k=request.top_k)
+        return GitHubPrioritizeRisksResponse(checkout=checkout, risks=risks)
+    except (GitHubPRError, GitContextError, WorktreeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

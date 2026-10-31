@@ -35,6 +35,7 @@
           <form id="coding-form" class="coding-form">
             <label for="coding-repo">Git 仓库绝对路径</label>
             <input id="coding-repo" type="text" required placeholder="/home/user/projects/my-repo" autocomplete="off" />
+            <div id="coding-env-info" class="model-state" style="margin-top:4px;" hidden></div>
             <label for="coding-task-text">开发任务</label>
             <textarea id="coding-task-text" rows="4" placeholder="例如：修复 add 函数的失败测试，完成后运行 pytest"></textarea>
             <div class="coding-options">
@@ -59,13 +60,42 @@
           </div>
           <div id="coding-error" class="alert coding-error" hidden role="alert"></div>
           <div id="coding-job" class="coding-job" hidden>
-            <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-remove-workspace" type="button" hidden>清理已提交的工作区</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>
-            <p id="coding-job-meta"></p><p id="coding-workspace-info"></p><p id="coding-answer"></p><pre id="coding-trace"></pre>
+            <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-revert-workspace" type="button" hidden>还原工作区改动</button> <button id="coding-remove-workspace" type="button" hidden>清理已提交的工作区</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>
+            <p id="coding-job-meta"></p><p id="coding-workspace-info"></p><p id="coding-answer"></p>
+            <div id="coding-metrics-bar" class="metrics" style="margin: 10px 0;" hidden>
+              <div><small>Token 消耗</small><strong id="metric-tokens">-</strong></div>
+              <div id="metric-cost-box" hidden><small>预计费用</small><strong id="metric-cost">-</strong></div>
+              <div><small>测试验证</small><strong id="metric-verification">待验证</strong></div>
+            </div>
+            <pre id="coding-trace"></pre>
             <div id="coding-diff" class="coding-diff" hidden>
               <div class="coding-diff-head"><strong>工作区改动</strong><button id="coding-diff-refresh" type="button">刷新 Diff</button></div>
               <p id="coding-diff-state">正在读取改动…</p>
               <div id="coding-diff-files" class="coding-diff-files"></div>
               <pre id="coding-diff-patch" hidden></pre>
+            </div>
+            <div id="coding-delivery" class="coding-diff" hidden>
+              <div class="coding-diff-head"><strong>交付工作流</strong></div>
+              <form id="coding-commit-form" style="margin-top:10px;">
+                <label for="coding-commit-msg">提交说明 (Commit Message)</label>
+                <div class="import-row">
+                  <input id="coding-commit-msg" type="text" placeholder="例如：fix: resolve calculator add regression" autocomplete="off" />
+                  <button id="coding-commit-btn" type="submit">提交改动</button>
+                </div>
+              </form>
+              <div id="coding-commit-status" class="model-state" hidden></div>
+              <form id="coding-pr-form" style="margin-top:14px;">
+                <label for="coding-pr-title">PR 标题 (Pull Request Title)</label>
+                <input id="coding-pr-title" type="text" placeholder="例如：Fix add() return value and verify with pytest" autocomplete="off" />
+                <label for="coding-pr-body" style="margin-top:8px;display:block;">PR 详细描述 (可选，会自动附带测试验证状态)</label>
+                <textarea id="coding-pr-body" rows="3" placeholder="例如：由 selfForge Agent 修复并通过非空 JUnit 测试验证。"></textarea>
+                <div class="coding-options" style="margin-top:8px;">
+                  <label>目标基线分支 (Base)<input id="coding-pr-base" type="text" placeholder="留空则使用默认分支 (main)" /></label>
+                  <label>Git Remote<input id="coding-pr-remote" type="text" value="origin" /></label>
+                </div>
+                <button id="coding-pr-btn" type="submit" style="margin-top:10px;">推送并创建 Pull Request</button>
+              </form>
+              <div id="coding-pr-status" class="model-state" hidden></div>
             </div>
           </div>
         </section>
@@ -150,7 +180,10 @@
             <div><div class="section-kicker">SELF-TESTING</div><h3>生成回归测试</h3><p>可选择一条审查风险作为生成目标，最多尝试 3 个不同的 pytest 候选。每个候选分别在 Base 和 Head 验证，找到 Base 通过且 Head 断言失败的测试即停止。风险仍是待验证假设；差异结果不能单独证明它的因果关系。默认使用无网络 Docker。</p></div>
             <form id="testgen-form">
               <label for="testgen-risk">关联审查风险</label>
-              <select id="testgen-risk"><option value="">不关联，手动描述行为</option></select>
+              <select id="testgen-risk">
+                <option value="">不关联，手动描述行为</option>
+                <option value="auto">自动选择最高优先级风险 (Auto-prioritize risks)</option>
+              </select>
               <label for="testgen-task">要检验的行为</label>
               <input id="testgen-task" required placeholder="例如：add(2, 3) 应返回 5" />
               <label for="testgen-count">最多尝试</label>

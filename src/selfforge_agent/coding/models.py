@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from selfforge_agent.models import Finding, PRContext, TestResult
+from selfforge_agent.runtime.pricing import MonetaryCost
 
 
 class SourceFile(BaseModel):
@@ -18,6 +19,16 @@ class CodeEdit(BaseModel):
     old_text: str = Field(min_length=1)
     new_text: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
+
+
+class RiskTarget(BaseModel):
+    """A review hypothesis anchored to an actual added line, not a verified defect."""
+
+    file_path: str = Field(min_length=1, max_length=500)
+    line_number: int = Field(ge=1)
+    description: str = Field(min_length=1, max_length=1_000)
+    evidence: str = Field(min_length=1, max_length=2_000)
+    category: str = Field(default="", max_length=100)
 
 
 class RepairObservation(BaseModel):
@@ -51,5 +62,7 @@ class RepairReport(BaseModel):
     attempts: list[RepairAttempt] = Field(default_factory=list)
     verified_patch: str = ""
     errors: list[str] = Field(default_factory=list)
+    total_tokens: int = 0
+    monetary_cost: MonetaryCost | None = None
     started_at: datetime
     finished_at: datetime

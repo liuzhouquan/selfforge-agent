@@ -268,6 +268,7 @@ class CodingJobManager:
             "branch": record["branch"], "base_sha": record["base_sha"],
             "can_resume": session.path.is_file() and Path(record["workspace_path"]).is_dir(),
             "trace": session.trace_events(limit=30),
+            "token_metrics": session.token_metrics(),
         }
 
     def list_jobs(self, repository: Path | None = None) -> list[dict]:

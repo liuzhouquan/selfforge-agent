@@ -37,6 +37,32 @@ class FixedModel:
         )
 
 
+def test_direct_repair_counts_all_attempts_and_excludes_prior_runs(
+    demo_repo: tuple[Path, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def response(*args, **kwargs):
+        nonlocal calls
+        retry = calls % 2 == 1
+        calls += 1
+        edit = {"path": "calculator.py", "rationale": "repair",
+                "old_text": "return a * b" if retry else "return a - b",
+                "new_text": "return a + b" if retry else "return a * b"}
+        return {"choices": [{"message": {"content": json.dumps(edit)}}],
+                "usage": {"prompt_tokens": 1_000, "completion_tokens": 500, "total_tokens": 1_500}}
+
+    monkeypatch.setattr("selfforge_agent.coding.model_client.request_json", response)
+    model = OpenAICompatibleCodingModel(model="custom-model", base_url="http://localhost:9999")
+    repo, base, head = demo_repo
+    for _ in range(2):
+        report = RepairAgent(model).run(repo, base, head, "Fix add", trusted=True)
+        assert report.status == "verified"
+        assert len(report.attempts) == 2
+        assert report.total_tokens == 3_000
+        assert report.monetary_cost is None
+
+
 def test_verified_repair_keeps_original_tree_untouched(
     demo_repo: tuple[Path, str, str]
 ) -> None:

@@ -88,6 +88,7 @@ class BenchmarkOutcome:
     visible_exit_code: int | None = None
     failure_artifact_id: str = ""
     failure_artifact_error: str = ""
+    cost_usd: float | None = None
 
 
 def _git(*args: str, cwd: Path | None = None, timeout: float = 120) -> str:
@@ -169,18 +170,16 @@ def _changed_files(workspace: Path) -> list[str]:
 
 
 def _usage(session: SessionStore) -> tuple[str, str, int, int, int]:
-    provider = model = ""
-    prompt = completion = total = 0
-    for event in session.trace_events():
-        if event.get("event") != "model_call":
-            continue
-        provider = str(event.get("provider") or provider)
-        model = str(event.get("model") or model)
-        usage = event.get("usage") or {}
-        prompt += int(usage.get("prompt_tokens") or 0)
-        completion += int(usage.get("completion_tokens") or 0)
-        total += int(usage.get("total_tokens") or 0)
-    return provider, model, prompt, completion, total
+    metrics = session.token_metrics()
+    providers = metrics["providers"]
+    provider = providers[0] if len(providers) == 1 else "mixed" if providers else ""
+    return (
+        provider,
+        metrics.get("model") or ("mixed" if metrics["models"] else ""),
+        metrics["prompt_tokens"],
+        metrics["completion_tokens"],
+        metrics["total_tokens"],
+    )
 
 
 def _tool_trace(session: SessionStore) -> list[dict[str, str | bool]]:
@@ -464,13 +463,15 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                                         reason=reason, visible=visible, holdout=evidence)
         except (OSError, ValueError):
             artifact_error = "artifact_write_failed"
+    cost = session.token_metrics()["cost"]
+    cost_usd = cost["total_cost_usd"] if cost else None
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
                             prompt, completion, total, agent_error_code,
                             agent_steps, tools_used, tool_trace, visible_status,
                             visible_passed, visible_failed, visible_errors, visible_exit_code,
-                            artifact_id, artifact_error)
+                            artifact_id, artifact_error, cost_usd)
 
 
 def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], ChatModel], *,
@@ -517,5 +518,10 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
         "prompt_tokens": sum(item.prompt_tokens for item in outcomes),
         "completion_tokens": sum(item.completion_tokens for item in outcomes),
         "total_tokens": sum(item.total_tokens for item in outcomes),
+        "total_cost_usd": (
+            round(sum(c for c in (item.cost_usd for item in outcomes) if c is not None), 6)
+            if outcomes and all(item.cost_usd is not None for item in outcomes)
+            else None
+        ),
         "results": [asdict(item) for item in outcomes],
     }

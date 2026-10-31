@@ -101,14 +101,45 @@ function renderCodingJob(job) {
     ? `独立工作区：${job.workspace_path} · 分支 ${job.branch} · 基于 ${job.base_sha.slice(0, 12)}`
     : `直接修改：${job.workspace_path}`;
   $("coding-answer").textContent = job.error || job.answer || "Agent 正在处理任务…";
+  const tokenMetrics = job.token_metrics;
+  if (tokenMetrics && tokenMetrics.total_tokens > 0) {
+    const p = tokenMetrics.prompt_tokens || 0;
+    const c = tokenMetrics.completion_tokens || 0;
+    $("metric-tokens").textContent = `${tokenMetrics.total_tokens.toLocaleString()} (P: ${p.toLocaleString()} / C: ${c.toLocaleString()})`;
+    if (tokenMetrics.cost) {
+      $("metric-cost").textContent = `$${tokenMetrics.cost.total_cost_usd.toFixed(4)}`;
+      $("metric-cost-box").hidden = false;
+    } else {
+      $("metric-cost-box").hidden = true;
+    }
+    $("metric-verification").textContent = job.verification_passed ? "已通过 JUnit 验证" : (job.state === "completed" ? "已完成" : "未通过/待验证");
+    $("coding-metrics-bar").hidden = false;
+  } else {
+    const modelCalls = (job.trace || []).filter((e) => e.event === "model_call" && e.usage);
+    if (modelCalls.length) {
+      const promptTokens = modelCalls.reduce((s, e) => s + (e.usage.prompt_tokens || 0), 0);
+      const completionTokens = modelCalls.reduce((s, e) => s + (e.usage.completion_tokens || 0), 0);
+      $("metric-tokens").textContent = `${(promptTokens + completionTokens).toLocaleString()} (P: ${promptTokens.toLocaleString()} / C: ${completionTokens.toLocaleString()})`;
+      $("metric-cost-box").hidden = true;
+      $("metric-verification").textContent = job.verification_passed ? "已通过 JUnit 验证" : (job.state === "completed" ? "已完成" : "未通过/待验证");
+      $("coding-metrics-bar").hidden = false;
+    } else {
+      $("coding-metrics-bar").hidden = true;
+    }
+  }
   $("coding-cancel").hidden = !codingJobRunning;
   $("coding-cancel").disabled = job.cancel_requested;
   $("coding-resume-current").hidden = codingJobRunning || !job.can_resume;
+  $("coding-revert-workspace").hidden = codingJobRunning || !job.branch;
   $("coding-remove-workspace").hidden = codingJobRunning || !job.branch;
   $("coding-diff").hidden = !job.branch;
+  $("coding-delivery").hidden = !job.branch || codingJobRunning;
   if (job.branch && !codingJobRunning && codingDiffJobId !== job.job_id) {
     codingDiffJobId = job.job_id;
     loadCodingDiff();
+    if (!$("coding-pr-title").value && job.answer) {
+      $("coding-pr-title").value = job.answer.slice(0, 100);
+    }
   }
   $("coding-trace").textContent = job.trace.map((event) => {
     const detail = event.name || event.status || event.provider || event.error_type || "";
@@ -265,6 +296,27 @@ $("coding-resume-current").addEventListener("click", () => {
   $("coding-task-text").focus();
 });
 
+$("coding-revert-workspace").addEventListener("click", async () => {
+  if (!currentCodingSession || !currentCodingRepo || !currentCodingBranch) return;
+  if (!confirm("确定要还原工作区的所有未提交改动吗？此操作将丢失当前未提交的代码和新建的文件。")) return;
+  showCodingError("");
+  const btn = $("coding-revert-workspace");
+  btn.disabled = true;
+  btn.textContent = "正在还原…";
+  try {
+    const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/revert`, {
+      repository: currentCodingRepo,
+    });
+    loadCodingDiff();
+    alert(`工作区已还原，共处理 ${res.reverted_files.length} 个文件。`);
+  } catch (error) {
+    showCodingError(`还原工作区失败: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "还原工作区改动";
+  }
+});
+
 $("coding-remove-workspace").addEventListener("click", async () => {
   if (!currentCodingSession || !currentCodingRepo || !currentCodingBranch) return;
   showCodingError("");
@@ -275,18 +327,125 @@ $("coding-remove-workspace").addEventListener("click", async () => {
     $("coding-workspace-info").textContent += " · 工作区已清理，分支仍保留";
     $("coding-remove-workspace").hidden = true;
     $("coding-resume-current").hidden = true;
+    $("coding-delivery").hidden = true;
     currentCodingBranch = "";
   } catch (error) {
     showCodingError(`${error.message}。请先在工作区提交或还原改动，再清理。`);
   }
 });
 
+$("coding-commit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentCodingSession || !currentCodingRepo) return;
+  const message = $("coding-commit-msg").value.trim();
+  if (!message) {
+    $("coding-commit-status").textContent = "请输入提交说明。";
+    $("coding-commit-status").hidden = false;
+    return;
+  }
+  const btn = $("coding-commit-btn");
+  btn.disabled = true;
+  btn.textContent = "正在提交…";
+  $("coding-commit-status").textContent = "";
+  $("coding-commit-status").hidden = true;
+  try {
+    const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/commit`, {
+      repository: currentCodingRepo,
+      message,
+    });
+    $("coding-commit-status").textContent = `提交成功：${res.commit_sha.slice(0, 10)}（${res.files_committed.length} 个文件）`;
+    $("coding-commit-status").hidden = false;
+    $("coding-commit-msg").value = "";
+    loadCodingDiff();
+  } catch (err) {
+    $("coding-commit-status").textContent = `提交失败：${err.message}`;
+    $("coding-commit-status").hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "提交改动";
+  }
+});
+
+$("coding-pr-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentCodingSession || !currentCodingRepo) return;
+  const title = $("coding-pr-title").value.trim();
+  if (!title) {
+    $("coding-pr-status").textContent = "请输入 PR 标题。";
+    $("coding-pr-status").hidden = false;
+    return;
+  }
+  const btn = $("coding-pr-btn");
+  btn.disabled = true;
+  btn.textContent = "正在推送并创建 PR…";
+  $("coding-pr-status").textContent = "";
+  $("coding-pr-status").hidden = true;
+  try {
+    const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/pr`, {
+      repository: currentCodingRepo,
+      title,
+      body: $("coding-pr-body").value.trim(),
+      base_branch: $("coding-pr-base").value.trim() || null,
+      remote: $("coding-pr-remote").value.trim() || "origin",
+    });
+    const link = document.createElement("a");
+    link.href = res.pr_url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = `PR #${res.pr_number || ""}：${res.pr_url}`;
+    $("coding-pr-status").replaceChildren(document.createTextNode("Pull Request 创建成功："), link);
+    $("coding-pr-status").hidden = false;
+  } catch (err) {
+    $("coding-pr-status").textContent = `创建 PR 失败：${err.message}`;
+    $("coding-pr-status").hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "推送并创建 Pull Request";
+  }
+});
+
+async function loadRepoEnvironment() {
+  const repo = $("coding-repo").value.trim();
+  const infoEl = $("coding-env-info");
+  if (!repo) {
+    infoEl.hidden = true;
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ repository: repo });
+    const response = await fetch(`/api/code/environment?${params}`);
+    if (!response.ok) {
+      infoEl.hidden = true;
+      return;
+    }
+    const env = await response.json();
+    const details = [
+      `布局: ${env.layout === "src" ? "src 结构" : "扁平结构"}`,
+      `测试: ${env.test_framework} (${env.test_paths.join(", ") || "默认"})`,
+    ];
+    if (env.dependency_files.length) details.push(`依赖: ${env.dependency_files.join(", ")}`);
+    if (env.lock_files.length) details.push(`锁定: ${env.lock_files.join(", ")}`);
+    if (env.suggested_image && !$("coding-image").value) {
+      details.push(`推荐镜像: ${env.suggested_image}`);
+    }
+    infoEl.textContent = `已识别环境：${details.join(" · ")}`;
+    infoEl.hidden = false;
+  } catch (_e) {
+    infoEl.hidden = true;
+  }
+}
+
+$("coding-repo").addEventListener("change", loadRepoEnvironment);
+$("coding-repo").addEventListener("blur", loadRepoEnvironment);
 $("coding-workspace").addEventListener("change", refreshCodingAvailability);
 $("coding-confirm-direct").addEventListener("change", refreshCodingAvailability);
 $("coding-sandbox").addEventListener("change", refreshCodingAvailability);
 $("coding-trust").addEventListener("change", refreshCodingAvailability);
 const savedCodingRepo = localStorage.getItem("selfforge-coding-repo");
-if (savedCodingRepo) $("coding-repo").value = savedCodingRepo;
+if (savedCodingRepo) {
+  $("coding-repo").value = savedCodingRepo;
+  loadRepoEnvironment();
+}
 const savedCodingJob = localStorage.getItem("selfforge-coding-job") ||
   sessionStorage.getItem("selfforge-coding-job");
 if (savedCodingJob) pollCodingJob(savedCodingJob);
@@ -368,8 +527,13 @@ function render(data) {
   $("model-summary").hidden = !data.model_attempts.length;
 
   const risks = $("testgen-risk");
-  risks.replaceChildren(element("option", "", "不关联，手动描述行为"));
-  risks.firstChild.value = "";
+  risks.replaceChildren();
+  const optNone = element("option", "", "不关联，手动描述行为");
+  optNone.value = "";
+  risks.append(optNone);
+  const optAuto = element("option", "", "⚡ 自动选择最高优先级风险 (Auto-prioritize)");
+  optAuto.value = "auto";
+  risks.append(optAuto);
   report.findings.forEach((finding, index) => {
     const option = element("option", "", `${finding.file_path}:${finding.line_number} · ${finding.category} · ${finding.description}`);
     option.value = String(index);
@@ -478,25 +642,39 @@ $("testgen-form").addEventListener("submit", async (event) => {
   button.textContent = "正在生成与验证…";
   try {
     const riskIndex = $("testgen-risk").value;
-    const finding = riskIndex === "" ? null : current.report.findings[Number(riskIndex)];
+    const isAuto = riskIndex === "auto";
+    const finding = (riskIndex === "" || isAuto) ? null : current.report.findings[Number(riskIndex)];
     const target = finding ? {
       file_path: finding.file_path, line_number: finding.line_number,
       description: finding.description, evidence: finding.evidence,
       category: finding.category,
     } : null;
     const response = await postJson("/api/github/generate-tests", {
-      url: current.pr.url, task: $("testgen-task").value.trim(),
+      url: current.pr.url,
+      task: $("testgen-task").value.trim() || (isAuto ? "验证优先级最高的变更风险" : ""),
       sandbox: $("testgen-sandbox").value,
       trust_local_tests: host && $("testgen-trust").checked,
       provider: $("testgen-provider").value,
       fallback: $("testgen-fallback").checked,
-      max_candidates: Number($("testgen-count").value), target,
+      max_candidates: Number($("testgen-count").value),
+      target,
+      auto_target: isAuto,
     });
     const batch = response.batch;
     const selected = batch.candidates.find((item) => item.candidate_index === batch.selected_candidate);
     differentialTest = selected?.generated_test?.test_code || "";
     $("testgen-status").textContent = `状态：${batch.status}`;
-    $("testgen-detail").textContent = `${batch.candidates.length} 次尝试 · 停止原因：${batch.stop_reason} · ${batch.target ? `关联 ${batch.target.file_path}:${batch.target.line_number}（待验证假设）` : "未关联审查风险"} · 轨迹 ID：${batch.run_id}`;
+    const inv = batch.selected_causal_investigation || selected?.causal_investigation;
+    const cost = batch.total_cost || selected?.cost;
+    let meta = `${batch.candidates.length} 次尝试 · 停止原因：${batch.stop_reason} · ${batch.target ? `关联 ${batch.target.file_path}:${batch.target.line_number}（待验证假设）` : "未关联审查风险"}`;
+    if (inv) {
+      meta += ` · 堆栈关联线索：${inv.confidence}（${inv.explanation}）`;
+    }
+    if (cost) {
+      meta += ` · 预估成本：$${cost.total_cost_usd.toFixed(6)} ${cost.currency}`;
+    }
+    meta += ` · 轨迹 ID：${batch.run_id}`;
+    $("testgen-detail").textContent = meta;
     const list = $("testgen-candidates");
     list.replaceChildren();
     batch.candidates.forEach((candidate) => {
@@ -523,7 +701,9 @@ $("testgen-form").addEventListener("submit", async (event) => {
 
 $("testgen-risk").addEventListener("change", () => {
   const value = $("testgen-risk").value;
-  if (value !== "" && current) {
+  if (value === "auto") {
+    $("testgen-task").value = "验证优先级最高的变更风险";
+  } else if (value !== "" && current) {
     $("testgen-task").value = current.report.findings[Number(value)].description;
   }
 });

@@ -41,6 +41,7 @@ class OpenAICompatibleCodingModel:
         self.api_key = api_key
         self.timeout = timeout
         self.last_usage: TokenUsage | None = None
+        self.usage_history: list[TokenUsage | None] = []
 
     def propose(self, observation: RepairObservation) -> CodeEdit:
         payload = {
@@ -59,6 +60,7 @@ class OpenAICompatibleCodingModel:
             ],
             "response_format": {"type": "json_object"},
         }
+        self.last_usage = None
         try:
             response = request_json(self.url, self.api_key, payload=payload, timeout=self.timeout)
             self.last_usage = token_usage_from_response(response)
@@ -69,6 +71,8 @@ class OpenAICompatibleCodingModel:
             raise ModelError(str(exc)) from exc
         except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
             raise ModelError("Model did not return a valid CodeEdit JSON object") from exc
+        finally:
+            self.usage_history.append(self.last_usage)
 
 
 class FallbackCodingModel:

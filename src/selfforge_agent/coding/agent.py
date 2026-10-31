@@ -114,6 +114,10 @@ class RepairAgent:
             finished_at=datetime.now(UTC),
         )
         repo = Path(context.repository)
+        model_attempts = getattr(self.model, "attempts", [])
+        attempt_offset = len(model_attempts) if isinstance(model_attempts, list) else 0
+        usage_history = getattr(self.model, "usage_history", [])
+        usage_offset = len(usage_history) if isinstance(usage_history, list) else 0
         if self.session:
             self.session.record_status("running")
             self.session.trace("repair_start", sandbox="host" if getattr(self.runner, "requires_trust", True) else "docker",
@@ -229,5 +233,21 @@ class RepairAgent:
             return report
         finally:
             report.finished_at = datetime.now(UTC)
+            from selfforge_agent.runtime.pricing import estimate_monetary_cost, sum_monetary_costs
+
+            attempts = getattr(self.model, "attempts", None)
+            records = []
+            if isinstance(attempts, list):
+                records = [(att.provider, att.model, att.usage)
+                           for att in attempts[attempt_offset:]]
+            elif isinstance(getattr(self.model, "usage_history", None), list):
+                records = [("custom", self.model.model, usage)
+                           for usage in self.model.usage_history[usage_offset:]]
+            report.total_tokens = sum(usage.total_tokens for _, _, usage in records
+                                      if usage is not None)
+            report.monetary_cost = sum_monetary_costs([
+                estimate_monetary_cost(model, usage, provider=provider)
+                for provider, model, usage in records
+            ])
             if self.session:
                 self.session.record_status(report.status)

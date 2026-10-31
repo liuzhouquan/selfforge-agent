@@ -26,11 +26,11 @@ uv run python examples/coding_demo.py
 | --- | --- | --- |
 | Coding Agent Runtime | Implemented | OpenAI-compatible 原生工具调用，多轮执行，步数/时间限制、动态预算与验证状态提示，供应商回退 |
 | 工具与会话 | Implemented | read/edit/search/bash/run_tests；大文件有界分段读取、pytest `-k` 选择、工作区路径校验、JSONL 恢复与轨迹 |
-| Context 管理 | Implemented | 工具输出截断、近似 token 预算、保留任务约束的确定性摘要压缩 |
+| Context 管理与审批 | Implemented | 工具输出截断、语法与 CJK 敏感的启发式 token 估算、完整工具轮次保留、交互式审批与供应商 Token 统计；费用需显式配置费率 |
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 非空 JUnit 成功与工作区内容指纹共同验证；外部改动撤销证据，旧证据需重测 |
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、跨进程取消、历史任务查询和会话续跑；服务中断的任务需手动续跑 |
-| Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
+| Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、查看有界 Diff、提交改动并创建 PR、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
 | 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。5 题通过参考预检；三题各 3 次 DeepSeek 运行 9/9，正式 20 题 × 3 次模型验收尚未完成 |
@@ -44,7 +44,7 @@ uv run python examples/test_recovery_demo.py --provider deepseek
 
 一次 DeepSeek 运行以 5 轮完成，原测试未改，独立验证 4 项通过。这是生成夹具演示，不计入正式任务评测。失败快照、边界与复现条件见[测试诊断](./docs/test-diagnostics.md)。
 
-PR #30 组合版本当时的本地全量验证为 **257 项通过**，这是历史结果。PR #32 合并后的本地全量验证为 **274 passed / 11 skipped**（跳过项依赖本机 Docker）；对应的 GitHub 主分支 CI 已运行 **274 项单元测试和 11 项 Docker 集成测试，全部通过**。这不是正式模型成功率；工作区证据的验证边界见[说明](./docs/workspace-evidence.md)。
+自动化回归覆盖 Runtime、恢复、JUnit、环境、交付和模型协议。当前运行状态见 [GitHub Actions](https://github.com/liuzhouquan/selfforge-agent/actions/workflows/ci.yml)；本次分支的缺陷复现与修复见[审查记录](./docs/pr-delivery-review.md)。单元/集成测试通过不代表正式模型成功率。
 
 ## Quick Start
 
@@ -60,7 +60,7 @@ uv run selfforge-agent code --repo ./your-project --task '修复失败的测试�
 
 `code` 默认从 Git 仓库已提交的 HEAD 创建 `selfforge/SESSION_ID` 分支和独立 worktree。原仓库的未提交改动不会带入；Agent 的文件工具只修改新 worktree。工作区保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/worktrees/`，任务结束后保留供检查与提交。需要已有的首次 Git commit。确需直接修改原仓库时，显式传 `--workspace direct`。
 
-命令与测试默认通过 Docker 执行，容器禁用网络、限制 CPU/内存/进程数。工具把排除了 `.env`、本地密钥和会话目录的临时工作区副本送入容器 tmpfs；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；项目有额外依赖时，可用 `selfforge-agent sandbox build` 从带哈希的锁文件和本地 wheelhouse 离线准备镜像，再通过 `--image` 或 Web 的“Docker 镜像”选择。Coding 会话会保存实际镜像 ID，续跑留空即可复用；标签变化不会改变原会话环境。固定 SHA 的 ItsDangerous 完整测试已在依赖镜像中通过 297 项，见[依赖镜像指南](./docs/dependency-images.md)。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。模型会收到读取的代码和工具输出。
+命令与测试默认通过 Docker 执行，容器禁用网络、限制 CPU/内存/进程数。工具把排除了 `.env`、本地密钥和会话目录的临时工作区副本送入容器 tmpfs；容器命令造成的文件修改不会回写，正式编辑由 `edit_file` 完成。示例镜像只预装 pytest；可用 `selfforge-agent sandbox detect --repo ./your-project` 自动识别项目布局、依赖文件、锁文件与测试目录。项目有额外依赖时，可用 `selfforge-agent sandbox build` 从带哈希的锁文件和本地 wheelhouse 离线准备镜像，再通过 `--image` 或 Web 的“Docker 镜像”选择。Coding 会话会保存实际镜像 ID，续跑留空即可复用；标签变化不会改变原会话环境。固定 SHA 的 ItsDangerous 完整测试已在依赖镜像中通过 297 项，见[依赖镜像指南](./docs/dependency-images.md)。Docker 不可用时，对**可信仓库**可显式使用 `--sandbox host --trust-local`。模型会收到读取的代码和工具输出。
 
 DeepSeek 与 OpenRouter 默认 URL 和模型已配置；Web 工作台还支持本机保存密钥、URL 与模型列表自动同步。自定义 OpenAI-compatible 端点可用 `--model ID --base-url URL`，密钥从 `SELFFORGE_API_KEY` 或 `OPENAI_API_KEY` 读取。`--provider openrouter` 可指定供应商，默认自动路由并在调用失败时切换备用供应商。
 
@@ -84,14 +84,21 @@ uv run selfforge-agent code --repo ./your-project --task '修复 add 的回归' 
 uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task '继续并验证'
 uv run selfforge-agent trace --repo ./your-project SESSION_ID
 
-# 检查工作区中的 Git diff；提交后清理 worktree，保留分支
+# 检查工作区中的 Git diff、还原、提交并创建 Pull Request；清理 worktree 时保留分支
 uv run selfforge-agent workspaces list --repo ./your-project
-git -C /path/from/workspaces/list diff
-uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces diff SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces revert SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces commit SESSION_ID -m '修复 add 的回归' --repo ./your-project
+uv run selfforge-agent workspaces pr SESSION_ID --title 'Fix add regression' --repo ./your-project
+uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project # 仅清理干净的 worktree
 
 # 只有明确需要时才直接修改原仓库
 uv run selfforge-agent code --repo ./your-project --workspace direct --task '修复 add'
 # 续跑旧版直接修改仓库的会话也需 --workspace direct
+
+# 识别项目依赖与环境配置（布局、pyproject/requirements、测试路径）或从 uv.lock 导出哈希锁定依赖
+uv run selfforge-agent sandbox detect --repo ./your-project
+uv run selfforge-agent sandbox export-lock --lock uv.lock --output requirements.lock
 
 # 单独运行测试，默认使用 Docker
 uv run selfforge-agent test --repo ./your-project --path tests
@@ -117,6 +124,11 @@ uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HE
   --task '验证这个风险关联的行为回归' --finding-index 0 --max-candidates 3 \
   --output test-batch.json --test-output test_regression.py
 
+# 或自动排定 Diff 新增行风险优先级，并对最高风险项执行差异测试
+uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
+  --task '验证优先级最高的变更风险' --auto-target --max-candidates 3 \
+  --output test-batch.json --test-output test_regression.py
+
 # 仅对可信 PR 显式选择主机执行
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task '修复回归' --sandbox host --trust-local-tests
@@ -125,6 +137,8 @@ uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
 Agent 状态有 `completed`（非空 JUnit 成功、工作区指纹匹配且有最终答复）、`unverified`（结束但缺少测试证据）、`failed`、`max_steps`、`timed_out`、`cancelled`。新会话与轨迹保存在 `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`，不会进入目标仓库；旧会话仍可通过 ID 恢复。`workspaces remove` 不使用强制删除；工作区有改动时会拒绝清理。运行中可用 Ctrl-C 中断；供应商回退共享一次模型调用的超时预算，取消会在供应商调用之间检查。正在进行的 HTTP 请求依赖传输层超时，返回后才会响应取消。
 
 Runtime 每轮向模型提示剩余轮数、时间和当前 `run_tests` 验证状态；接近上限时提醒优先验证与收尾。提示会计入近似上下文预算，续跑时重新生成。轮数上限包含最终答复；提示不会增加调用次数、自动执行测试或把未完成任务改判为成功。见[预算反馈说明](./docs/runtime-budget.md)。
+
+交付的保护路径、重试恢复与测试证据规则见[交付指南](./docs/pr-delivery.md)。
 
 ## 架构
 
@@ -155,7 +169,7 @@ Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下�
 
 通用 Coding 的 `run_tests` 复用 JUnit Runner：只有退出码为 0、至少一项测试通过且没有失败/错误时才建立证据；全部跳过、空选择、缺失或损坏的报告都不会使任务完成。工具会返回测试计数和错误原因。测试前后与完成时的工作区内容指纹必须一致；外部改动或无法完整扫描时不能建立完成证据，需重新测试。旧版未绑定工作区的会话证据也需重测，见[内容绑定规则](./docs/workspace-evidence.md)；详情见[测试证据规则](./docs/test-evidence.md)。`eval` 还会独立重新运行夹具测试，并检查源文件确实发生变化，不采信模型口头结论。PR Repair 则要求 Base 测试通过、Head 出现断言失败、Repaired 测试通过，才输出已验证补丁；这证明现有测试的回归已修复，尚不证明某条审查发现的因果关系。
 
-`generate-test` 默认生成一个 pytest 候选；`--max-candidates 2/3` 可根据上次 Base/Head 结果继续尝试，发现差异后提前停止，并跳过重复代码。多候选流程默认总时间预算为 300 秒，可用 `--time-budget` 调整，最高 600 秒。`--finding-index` 选取本地规则审查中的风险；Web 页面可选择已显示的规则或模型风险。服务端要求风险位置与实际 diff 的新增行一致。仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出被选中的测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。风险描述仍是假设，差异结果不能单独证明该风险的因果关系。
+`generate-test` 默认生成一个 pytest 候选；`--max-candidates 2/3` 可根据上次 Base/Head 结果继续尝试，发现差异后提前停止，并跳过重复代码。多候选流程默认总时间预算为 300 秒，可用 `--time-budget` 调整，最高 600 秒。`--finding-index` 选取本地规则审查中的风险；`--auto-target`（及 Web API `auto_target`）支持自动按严重度与类别为 Diff 新增行排定优先级并选取最高风险项。服务端要求风险位置与实际 diff 的新增行一致。仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出被选中的测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。差异报告的 `causal_investigation` 提供目标文件/行号与堆栈的关联线索，不能据此证明风险因果关系。费用默认留空；显式配置供应商和模型费率后才提供估算（`cost` / `total_cost`），见[计量规则](./docs/token-metrics.md)。
 
 ```sh
 uv run selfforge-agent eval --offline       # 确定性工具协议回归，不代表模型能力
@@ -171,7 +185,7 @@ uv run ruff check .
 
 `eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的文件发生修改、Agent 自身测试成功、评测器独立重跑清单指定的可见测试成功，且隐藏测试通过才计成功。可用清单中的 `agent_test_keyword` 明确选择相关 pytest 测试。任务可指定 Docker 镜像，评测开始时锁定镜像 ID。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界和[三仓库试点](./benchmark/real-pilot/README.md)见[重复评测说明](./docs/benchmark.md)。
 
-GitHub Actions 在推送 `main` 和提交 PR 时运行锁定依赖安装、Ruff、单元测试及 Docker 集成测试。[PR #32 的精确提交检查](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41031573755)和[合并后的 main 检查](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41032250484)均通过；后者运行 274 项单元测试和 11 项 Docker 集成测试。较早的首次运行记录保留在[评测历史](./docs/evaluation.md)。
+GitHub Actions 在推送 `main` 和提交 PR 时运行锁定依赖安装、Ruff、单元测试及 Docker 集成测试。每次交付以对应提交的 [CI 记录](https://github.com/liuzhouquan/selfforge-agent/actions/workflows/ci.yml)为准；历史分支的测试数不可相加，模型评测另见[评测历史](./docs/evaluation.md)。
 
 2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 旧门槛下三仓库三题各重复 3 次得到 **8/9**；唯一失败达到步数上限，虽然隐藏测试通过。加入独立可见测试门槛与大文件分块任务后，四题各运行 1 次得到 **4/4**，指定可见测试与隐藏测试均通过。2026-10-29 的 9 题候选清单通过了固定基线 holdout 与可见测试校验，但当时新增 5 题尚未运行模型，不能当作成功率。不同门槛和重复次数不能合并；正式 20 任务、每题 3 次验收仍未完成，详情见[评测记录](./docs/evaluation.md)。
 

@@ -3,6 +3,7 @@
 import json
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -16,6 +17,7 @@ from selfforge_agent.runtime.model import (
     ModelCallTimedOut,
     OpenAIChatAdapter,
 )
+from selfforge_agent.runtime.pricing import MonetaryCost
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolOutcome, ToolRegistry
 
@@ -43,12 +45,15 @@ class AgentResult:
     steps: int
     tools_used: int
     error: str = ""
+    total_tokens: int = 0
+    monetary_cost: MonetaryCost | None = None
 
 
 class CodingAgent:
     def __init__(self, model: ChatModel, tools: ToolRegistry, session: SessionStore,
                  *, max_steps: int = 12, time_budget: float = 300,
-                 context_budget: int = 8_000, cancel: threading.Event | None = None) -> None:
+                 context_budget: int = 8_000, cancel: threading.Event | None = None,
+                 approval_hook: Callable[[str, dict], bool] | None = None) -> None:
         if not 1 <= max_steps <= 100 or time_budget <= 0:
             raise ValueError("Positive time budget and 1-100 steps are required")
         self.model = model
@@ -58,6 +63,7 @@ class CodingAgent:
         self.time_budget = time_budget
         self.context = ContextManager(context_budget)
         self.cancel = cancel or threading.Event()
+        self.approval_hook = approval_hook
         if isinstance(model, OpenAIChatAdapter):
             # Web jobs may replace self.cancel with a durable cross-process marker.
             model.set_cancel_check(lambda: self.cancel.is_set())
@@ -69,7 +75,15 @@ class CodingAgent:
     def _finish(self, status: Status, answer: str, steps: int, tools_used: int,
                 error: str = "") -> AgentResult:
         self.session.record_status(status, detail=error)
-        return AgentResult(self.session.session_id, status, answer, steps, tools_used, error)
+        metrics = self.session.token_metrics()
+        cost = None
+        if metrics.get("cost"):
+            cost = MonetaryCost(**metrics["cost"])
+        return AgentResult(
+            self.session.session_id, status, answer, steps, tools_used, error,
+            total_tokens=metrics.get("total_tokens", 0),
+            monetary_cost=cost,
+        )
 
     def _resume_pending(self, messages: list[dict]) -> None:
         last_assistant = next((index for index in range(len(messages) - 1, -1, -1)
@@ -146,7 +160,7 @@ class CodingAgent:
                 notice = budget_notice(step=step, max_steps=self.max_steps,
                                        remaining_seconds=remaining, tests_passed=tests_passed)
                 messages, compacted = self.context.compact(
-                    messages, reserve_tokens=self.context.estimate([notice]))
+                    messages, reserve_tokens=self.context.estimate([notice]), preserve_recent_turns=2)
                 if compacted:
                     self.session.record_compaction(messages)
                 # Keep generated controls outside durable conversation history:
@@ -212,22 +226,29 @@ class CodingAgent:
                         arguments = json.loads(function.get("arguments") or "{}")
                         if not isinstance(arguments, dict):
                             raise TypeError("Tool arguments must be an object")
-                        if name == "run_tests":
-                            before_tests = workspace_fingerprint(
-                                self.tools.root, deadline=deadline, cancel=self.cancel)
-                        if name in {"bash", "run_tests"}:
-                            arguments["timeout"] = min(float(arguments.get("timeout", 20)),
-                                                       deadline - time.monotonic())
-                        outcome = self.tools.execute(name, arguments)
-                        if name == "run_tests" and outcome.ok:
-                            after_tests = workspace_fingerprint(
-                                self.tools.root, deadline=deadline, cancel=self.cancel)
-                            if before_tests == after_tests:
-                                tested_snapshot = after_tests
-                            else:
-                                outcome = ToolOutcome(
-                                    "Workspace changed during test execution; verification "
-                                    "was revoked. Run tests again.", False, outcome.elapsed_seconds)
+                        if self.approval_hook is not None and not self.approval_hook(name, arguments):
+                            outcome = ToolOutcome("Action rejected: operator approval denied", False)
+                        else:
+                            if self.cancel.is_set():
+                                return self._finish("cancelled", "", step, tools_used)
+                            if deadline <= time.monotonic():
+                                return self._finish("timed_out", "", step, tools_used)
+                            if name == "run_tests":
+                                before_tests = workspace_fingerprint(
+                                    self.tools.root, deadline=deadline, cancel=self.cancel)
+                            if name in {"bash", "run_tests"}:
+                                arguments["timeout"] = min(float(arguments.get("timeout", 20)),
+                                                           deadline - time.monotonic())
+                            outcome = self.tools.execute(name, arguments)
+                            if name == "run_tests" and outcome.ok:
+                                after_tests = workspace_fingerprint(
+                                    self.tools.root, deadline=deadline, cancel=self.cancel)
+                                if before_tests == after_tests:
+                                    tested_snapshot = after_tests
+                                else:
+                                    outcome = ToolOutcome(
+                                        "Workspace changed during test execution; verification "
+                                        "was revoked. Run tests again.", False, outcome.elapsed_seconds)
                     except WorkspaceSnapshotError as exc:
                         outcome = ToolOutcome(f"Workspace verification unavailable: {exc}", False)
                     except (ValueError, TypeError) as exc:
