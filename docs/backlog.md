@@ -8,7 +8,7 @@
 
 | ID | 状态 | 工作单元 | 前提 |
 | --- | --- | --- | --- |
-| SF-EVAL-01 | Ready | 选定并交付 1 道新机制的参考合格真实仓库任务 | 先核对下方现有清单，避免重复 |
+| SF-EVAL-01 | In Review | 选定并交付 1 道新机制的参考合格真实仓库任务（jmespath split） | 见 docs/tasks/SF-EVAL-01.md |
 | SF-RUN-01 | Investigate | 核对 CLI 与 Web 对同一工作区的并发协调 | 先做多进程复现；有证据后再定义修复 |
 | SF-EVAL-02 | Waiting | 冻结正式 20 题和完整运行策略 | 至少 20 个互不重复、已完成契约/参考正负控的任务 |
 | SF-EVAL-03 | Waiting | 按冻结策略完成每题至少 3 次真实模型运行并报告 | SF-EVAL-02，实际模型/镜像/预算配置可用 |
@@ -25,7 +25,7 @@
 - 范围外：本轮不改变 Runtime、不批量重写测试、不运行整套正式模型验收、不宣称上游确认了项目自定义功能需求。
 - 完成后：更新独立任务清单和证据；实时模型探索若是另一项独立目标则另立任务，按实际授权和预算执行。
 
-当前参考清单为 `benchmark/validated-candidates/suite-five-tasks.json`，5 题 / 3 仓库，文件 SHA-256 为 `5fbdc62e2e5be199e72a79c9b3ae23dcc325847cdb4e07bbddf20be4bfc20942`。覆盖异步空输入、Unicode 分隔、目录剪枝、零分块和替换回调停止；不要将候选/早期 pilot 中相同机制重复计数。历史模型分数使用不同策略，不能套用到新 Runtime 或相加，见[评测历史](./evaluation.md)。
+历史参考清单为 `benchmark/validated-candidates/suite-five-tasks.json`（5 题 / 3 仓库，SHA-256 `5fbdc62e...`）。本轮在独立分支 `feat/eval-jmespath-task` 增加了第 4 个仓库 `jmespath` 的 `split` 字符串函数任务（详见 [jmespath-split.md](../benchmark/validated-candidates/jmespath-split.md) 与 [SF-EVAL-01 任务卡](./tasks/SF-EVAL-01.md)），累积 6 题清单为 `benchmark/validated-candidates/suite-six-tasks.json`（SHA-256 `103b48f972d92ada778d9aa858be1b9b95e18b6efca45be678239a17c8025f16`），已通过 `eval-validate` 全量负例断言失败与参考正例非空验证。
 
 ## SF-RUN-01：调查工作区并发协调
 

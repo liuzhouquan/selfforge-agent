@@ -1,0 +1,16 @@
+--- a/jmespath/functions.py
++++ b/jmespath/functions.py
+@@ -247,6 +247,12 @@
+     def _func_join(self, separator, array):
+         return separator.join(array)
+ 
++    @signature({'types': ['string']}, {'types': ['string']})
++    def _func_split(self, search, separator):
++        if not separator:
++            return list(search)
++        return search.split(separator)
++
+     @signature({'types': ['expref']}, {'types': ['array']})
+     def _func_map(self, expref, arg):
+         result = []
+
