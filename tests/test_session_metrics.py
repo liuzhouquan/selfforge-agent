@@ -22,7 +22,7 @@ def test_session_store_token_metrics_empty(tmp_path: Path) -> None:
     assert metrics["cost"] is None
 
 
-def test_session_store_token_metrics_aggregation(tmp_path: Path) -> None:
+def test_session_store_token_metrics_aggregation(tmp_path: Path, configured_rates: None) -> None:
     session = SessionStore(tmp_path, "sessionusage")
     session.trace("model_call", provider="deepseek", model="deepseek-chat",
                   usage={"prompt_tokens": 10_000, "completion_tokens": 2_000, "total_tokens": 12_000})
@@ -106,7 +106,12 @@ def test_repair_report_token_and_cost_fields(tmp_path: Path) -> None:
     assert report.monetary_cost.total_cost_usd == 0.0015
 
 
-def test_coding_job_manager_get_includes_token_metrics(tmp_path: Path) -> None:
+def test_coding_job_manager_get_includes_token_metrics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_rates: None
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from selfforge_agent.api import app as api_module
     from selfforge_agent.api.coding_jobs import CodingJob, CodingJobManager, DurableCancel
 
     repo = tmp_path / "repo"
@@ -131,9 +136,14 @@ def test_coding_job_manager_get_includes_token_metrics(tmp_path: Path) -> None:
     assert data["token_metrics"]["prompt_tokens"] == 10_000
     assert data["token_metrics"]["total_tokens"] == 12_000
     assert data["token_metrics"]["cost"] is not None
+    monkeypatch.setattr(api_module, "_CODING_JOBS", manager)
+    response = TestClient(api_module.app).get(f"/api/code/jobs/{job_id}")
+    assert response.status_code == 200
+    assert response.json()["token_metrics"]["total_tokens"] == 12_000
 
 
-def test_cli_trace_summary_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_trace_summary_output(tmp_path: Path, capsys: pytest.CaptureFixture[str],
+                                  configured_rates: None) -> None:
     from selfforge_agent.cli import main
 
     repo = tmp_path / "repo"
@@ -169,3 +179,20 @@ def test_cli_interactive_flag_registered() -> None:
         assert exc.value.code == 0
 
 
+def test_session_metrics_price_each_model_and_preserve_reported_total(
+    tmp_path: Path, configured_rates: None
+) -> None:
+    session = SessionStore(tmp_path, "mixedmodels")
+    session.trace("model_call", provider="deepseek", model="deepseek-chat",
+                  usage={"prompt_tokens": 1_000, "completion_tokens": 500, "total_tokens": 1_600})
+    session.trace("model_call", provider="openrouter", model="other-model",
+                  usage={"prompt_tokens": 1_000, "completion_tokens": 500, "total_tokens": 1_500})
+    metrics = session.token_metrics()
+    assert metrics["total_tokens"] == 3_100
+    assert metrics["model"] is None
+    assert metrics["models"] == ["deepseek-chat", "other-model"]
+    assert metrics["cost"]["total_cost_usd"] == pytest.approx(0.00228)
+    session.trace("model_call", provider="custom", model="unknown", usage=None)
+    metrics = session.token_metrics()
+    assert metrics["cost"] is None
+    assert metrics["usage_complete"] is False

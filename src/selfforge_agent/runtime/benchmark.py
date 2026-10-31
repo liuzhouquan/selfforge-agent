@@ -15,12 +15,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from selfforge_agent.models import TestResult
-from selfforge_agent.providers import TokenUsage
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor, resolve_docker_image
 from selfforge_agent.runtime.failure_artifacts import prepare_artifacts, write_failure
 from selfforge_agent.runtime.model import ChatModel
-from selfforge_agent.runtime.pricing import estimate_monetary_cost
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry, _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
@@ -173,14 +171,11 @@ def _changed_files(workspace: Path) -> list[str]:
 
 def _usage(session: SessionStore) -> tuple[str, str, int, int, int]:
     metrics = session.token_metrics()
-    provider = ""
-    for event in session.trace_events():
-        if event.get("event") == "model_call" and event.get("provider"):
-            provider = str(event["provider"])
-            break
+    providers = metrics["providers"]
+    provider = providers[0] if len(providers) == 1 else "mixed" if providers else ""
     return (
         provider,
-        metrics.get("model") or "",
+        metrics.get("model") or ("mixed" if metrics["models"] else ""),
         metrics["prompt_tokens"],
         metrics["completion_tokens"],
         metrics["total_tokens"],
@@ -468,9 +463,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                                         reason=reason, visible=visible, holdout=evidence)
         except (OSError, ValueError):
             artifact_error = "artifact_write_failed"
-    usage = TokenUsage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=total)
-    cost = estimate_monetary_cost(model, usage)
-    cost_usd = cost.total_cost_usd if cost else None
+    cost = session.token_metrics()["cost"]
+    cost_usd = cost["total_cost_usd"] if cost else None
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
@@ -526,7 +520,7 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
         "total_tokens": sum(item.total_tokens for item in outcomes),
         "total_cost_usd": (
             round(sum(c for c in (item.cost_usd for item in outcomes) if c is not None), 6)
-            if any(item.cost_usd is not None for item in outcomes)
+            if outcomes and all(item.cost_usd is not None for item in outcomes)
             else None
         ),
         "results": [asdict(item) for item in outcomes],

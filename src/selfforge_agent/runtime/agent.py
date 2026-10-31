@@ -160,7 +160,7 @@ class CodingAgent:
                 notice = budget_notice(step=step, max_steps=self.max_steps,
                                        remaining_seconds=remaining, tests_passed=tests_passed)
                 messages, compacted = self.context.compact(
-                    messages, reserve_tokens=self.context.estimate([notice]))
+                    messages, reserve_tokens=self.context.estimate([notice]), preserve_recent_turns=2)
                 if compacted:
                     self.session.record_compaction(messages)
                 # Keep generated controls outside durable conversation history:
@@ -229,6 +229,10 @@ class CodingAgent:
                         if self.approval_hook is not None and not self.approval_hook(name, arguments):
                             outcome = ToolOutcome("Action rejected: operator approval denied", False)
                         else:
+                            if self.cancel.is_set():
+                                return self._finish("cancelled", "", step, tools_used)
+                            if deadline <= time.monotonic():
+                                return self._finish("timed_out", "", step, tools_used)
                             if name == "run_tests":
                                 before_tests = workspace_fingerprint(
                                     self.tools.root, deadline=deadline, cancel=self.cancel)

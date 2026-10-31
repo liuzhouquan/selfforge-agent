@@ -55,7 +55,8 @@ def test_revert_workspace_restores_tracked_and_deletes_untracked(demo_repo: tupl
     second = revert_workspace(workspace, session)
     assert second.reverted_files == []
 
-    manager.remove(repo, session_id, force=True)
+    env_file.unlink()
+    manager.remove(repo, session_id)
 
 
 def test_export_hash_locked_requirements_from_uv_lock(tmp_path: Path) -> None:
@@ -106,6 +107,29 @@ def test_export_hash_locked_requirements_rejects_invalid_file(tmp_path: Path) ->
     invalid_toml.write_text("not a toml [[[", encoding="utf-8")
     with pytest.raises(ValueError, match="Failed to parse"):
         export_hash_locked_requirements(invalid_toml)
+
+
+@pytest.mark.parametrize("package", [
+    'name = "unsafe\\n--index-url=bad"\nversion = "1.0"',
+    'name = "missing-hash"\nversion = "1.0"',
+    'name = "bad-wheel-list"\nversion = "1.0"\nwheels = 1',
+])
+def test_lock_export_rejects_incomplete_or_injectable_packages(tmp_path: Path, package: str) -> None:
+    path = tmp_path / "uv.lock"
+    path.write_text("[[package]]\n" + package + "\n")
+    with pytest.raises(ValueError):
+        export_hash_locked_requirements(path)
+
+
+def test_lock_export_rejects_version_forks(tmp_path: Path) -> None:
+    path = tmp_path / "uv.lock"
+    path.write_text("\n".join(
+        f'[[package]]\nname = "dependency"\nversion = "{version}"\n'
+        f'wheels = [{{hash = "sha256:{"a" * 64}"}}]'
+        for version in ("1.0", "2.0")
+    ))
+    with pytest.raises(ValueError, match="Version forks"):
+        export_hash_locked_requirements(path)
 
 
 def test_github_repair_request_supports_image_and_timeout() -> None:

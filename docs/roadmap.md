@@ -1,6 +1,6 @@
 # Roadmap
 
-Development order and acceptance checks: [development guide](./development.md). Historical PR #31 passed 259 local tests, and the earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; those counts describe their own commits. After PR #32, the merged-main CI passed all 274 unit and 11 Docker integration tests. The latest local non-integration suite passed 315 tests and skipped 11 Docker-dependent tests. Delivery workflow, automatic risk prioritization, causal investigation, calibrated monetary costs, precise tokenization, structured compaction, interactive approval hook, live token/cost metrics UI, and CLI interactive controls are integrated; the next priority is formal evaluation coverage.
+Development order and acceptance checks: [development guide](./development.md). Historical PR #31 passed 259 local tests, and the earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; those counts describe their own commits. After PR #32, the merged-main CI passed all 274 unit and 11 Docker integration tests. The incoming branch baseline passed 319 local tests with 11 Docker-dependent skips. Review fixes and current validation are recorded in [delivery review](./pr-delivery-review.md). The next priority is formal evaluation coverage; automatic dependency installation, causal proof and model-specific exact tokenization remain open.
 
 | Priority | Status | Work |
 | --- | --- | --- |
@@ -28,8 +28,8 @@ Development order and acceptance checks: [development guide](./development.md). 
 | 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
 | 3 | In Progress | Five distinct tasks across three repositories passed Docker reference qualification. A separate three-task iterator/traversal DeepSeek run scored 9/9 (three repeats each); prior 5/6, 4/4 and old-gate 8/9 results remain separate. Expand diverse contract-reviewed tasks before formal twenty-task acceptance; do not combine scores or count overlaps |
 | 3 | Implemented | GitHub Actions runs locked dependency installation, Ruff, unit tests, and Docker integration tests on pushes to main and pull requests; first remote run passed |
-| 3 | Implemented | Automatic PR risk prioritization from diff and review findings, risk-to-test causal investigation on assertion regressions, and calibrated monetary cost estimation for known models |
-| 4 | Implemented | More precise tokenization, structured action compaction, interactive approval hook, full-lifecycle token & cost metrics, and CLI interactive controls |
+| 3 | Implemented | Automatic added-line risk prioritization, traceback association without causal proof, and optional cost estimates from explicit provider/model rate cards |
+| 4 | Implemented | Heuristic syntax/CJK token estimates, complete tool-block compaction, interactive approval and reported usage; model-specific exact tokenization remains planned |
 | 4 | Implemented | Worktree revert workflow with sensitive file preservation, lockfile requirement export (`uv.lock`), and configurable PR repair sandbox image & timeout |
 
 General Coding now creates a worktree from committed HEAD by default and edits there; source-checkout changes are excluded. Worktrees persist until the user commits or reverts edits and explicitly removes the worktree. The branch remains after removal. Docker isolation applies to commands, while file tools are constrained to the selected workspace. Web Coding and PR repair default to Docker; host execution requires an explicit operator setting and per-request trust.

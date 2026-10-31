@@ -1,4 +1,4 @@
-"""Bound model context with precise tokenization and structured history compaction."""
+"""Bound model context with heuristic token estimates and structured history compaction."""
 
 import json
 import re
@@ -11,14 +11,17 @@ _TOKEN_PATTERN = re.compile(
 
 
 def estimate_tokens(text: str) -> int:
-    """Accurately estimate token count for text, code, whitespace, and CJK characters."""
+    """Estimate token count without claiming model-specific tokenizer accuracy."""
     if not text:
         return 0
     tokens = 0
+    last_end = 0
     for match in _TOKEN_PATTERN.finditer(text):
+        tokens += (match.start() - last_end + 3) // 4
+        last_end = match.end()
         token_str = match.group(0)
         # Check for multi-space indentation
-        leading_spaces = len(token_str) - len(token_str.lstrip(" "))
+        leading_spaces = len(token_str) - len(token_str.lstrip())
         if leading_spaces >= 4:
             tokens += leading_spaces // 4
         stripped = token_str.strip()
@@ -30,12 +33,39 @@ def estimate_tokens(text: str) -> int:
         if any(ord(char) > 127 for char in stripped):
             # CJK / non-ASCII character sequences
             tokens += max(1, int(length * 1.2))
-        elif length > 7 and stripped.isalnum():
+        elif length > 7 and stripped.isascii() and re.fullmatch(r"[A-Za-z0-9_]+", stripped):
             # Long words / compound identifiers: ~4 chars per token
             tokens += max(1, (length + 3) // 4)
         else:
             tokens += 1
-    return tokens
+    return tokens + (len(text) - last_end + 3) // 4
+
+
+def _recent_interactions(messages: list[dict], limit: int) -> list[dict]:
+    """Select complete assistant/tool blocks after the latest user task."""
+    last_user = max(index for index, item in enumerate(messages) if item.get("role") == "user")
+    starts = [index for index in range(last_user + 1, len(messages))
+              if messages[index].get("role") == "assistant"]
+    if not starts or limit <= 0:
+        return []
+    recent = messages[starts[-min(limit, len(starts))]:]
+    pending: set[str] = set()
+    for item in recent:
+        if item.get("role") == "assistant":
+            if pending:
+                return []
+            calls = item.get("tool_calls") or []
+            pending = {call.get("id") for call in calls}
+            if len(pending) != len(calls) or any(not isinstance(value, str) for value in pending):
+                return []
+        elif item.get("role") == "tool":
+            call_id = item.get("tool_call_id")
+            if call_id not in pending:
+                return []
+            pending.remove(call_id)
+        else:
+            return []
+    return [] if pending else recent
 
 
 def estimate_message_tokens(message: dict) -> int:
@@ -111,13 +141,13 @@ class ContextManager:
         recent_preserved: list[dict] = []
         older_to_summarize = intermediates
 
-        if preserve_recent_turns > 0 and len(intermediates) >= 2:
-            # An active interaction turn is typically an assistant tool call + tool response
-            turn_slice = intermediates[-(preserve_recent_turns * 2):]
+        if preserve_recent_turns > 0:
+            turn_slice = _recent_interactions(messages, preserve_recent_turns)
             test_compacted = [anchors[0], {"role": "system", "content": _SUMMARY_PREFIX}, *anchors[1:], *turn_slice]
             if self.estimate(test_compacted) + 50 <= budget:
                 recent_preserved = turn_slice
-                older_to_summarize = intermediates[:-(preserve_recent_turns * 2)]
+                older_to_summarize = [item for item in intermediates
+                                      if not any(item is kept for kept in recent_preserved)]
 
         digest: list[str] = []
         for item in older_to_summarize:
@@ -178,14 +208,7 @@ class ContextManager:
 
         # If still exceeding budget, drop recent_preserved and retry
         if self.estimate(compacted) > budget and recent_preserved:
-            compacted = [
-                anchors[0],
-                {"role": "system", "content": bounded_summary(allowed)},
-                *anchors[1:],
-            ]
-            while self.estimate(compacted) > budget and allowed > 30:
-                allowed //= 2
-                compacted[1]["content"] = bounded_summary(allowed)
+            return self.compact(messages, reserve_tokens=reserve_tokens, preserve_recent_turns=0)
 
         if self.estimate(compacted) > budget:
             raise ValueError("Task and compressed history exceed context budget")

@@ -145,8 +145,9 @@ class GitHubRepairRequest(BaseModel):
     task: str
     trust_local_tests: bool = False
     sandbox: Literal["docker", "host"] = "docker"
-    image: str | None = None
-    timeout: float = 60
+    image: str | None = Field(default=None, min_length=1, max_length=256,
+                              pattern=r"^[^\s-][^\s]*$")
+    timeout: float = Field(default=60, gt=0, le=300, allow_inf_nan=False)
     provider: Literal["auto", "deepseek", "openrouter"] = "auto"
     fallback: bool = True
 
@@ -228,6 +229,7 @@ class CodingJobResponse(BaseModel):
     base_sha: str
     can_resume: bool
     trace: list[dict]
+    token_metrics: dict = Field(default_factory=dict)
 
 
 class CodingWorkspaceRequest(BaseModel):
@@ -587,22 +589,13 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
                   else DockerTestRunner(image=request.image or "selfforge-agent-sandbox:latest"))
         agent = RepairAgent(model, runner=runner,
                             session=SessionStore(Path(checkout.path)))
-        repair_kwargs: dict[str, object] = {
-            "trusted": request.trust_local_tests if request.sandbox == "host" else False,
-        }
-        try:
-            import inspect
-            sig = inspect.signature(agent.run)
-            if "timeout" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-                repair_kwargs["timeout"] = request.timeout
-        except (ValueError, TypeError):
-            repair_kwargs["timeout"] = request.timeout
         report = agent.run(
             Path(checkout.path),
             checkout.diff_base_sha,
             pr.context.head_sha,
             request.task,
-            **repair_kwargs,
+            trusted=request.trust_local_tests if request.sandbox == "host" else False,
+            timeout=request.timeout,
         )
         return GitHubRepairResponse(
             checkout=checkout, report=report,
@@ -644,7 +637,8 @@ def _prepare_test_generation(request: GitHubGenerateTestRequest, client: Request
             validate_risk_target(pr.context, request.target)
         checkout = checkout_pr(pr.url, _WORKSPACES)
         repository = Path(checkout.path)
-        runner = TestRunner() if request.sandbox == "host" else DockerTestRunner()
+        runner = (TestRunner() if request.sandbox == "host" else
+                  DockerTestRunner(image=request.image or "selfforge-agent-sandbox:latest"))
         session = SessionStore(_CODING_WORKSPACES.session_root(repository))
         generator = DifferentialTestGenerator(
             OpenAIChatAdapter(candidates), runner=runner, session=session,

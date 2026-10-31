@@ -49,7 +49,8 @@ def test_investigate_causality_direct_line_match() -> None:
     result = _make_test_result(details=[failure])
 
     investigation = investigate_causality(target, result)
-    assert investigation.causally_linked is True
+    assert investigation.causally_linked is False
+    assert investigation.trace_associated is True
     assert investigation.confidence == "high"
     assert investigation.matched_file is True
     assert investigation.matched_line is True
@@ -72,7 +73,8 @@ def test_investigate_causality_module_level_match() -> None:
     result = _make_test_result(details=[failure])
 
     investigation = investigate_causality(target, result)
-    assert investigation.causally_linked is True
+    assert investigation.causally_linked is False
+    assert investigation.trace_associated is True
     assert investigation.confidence == "medium"
     assert investigation.matched_file is True
     assert investigation.matched_line is False
@@ -114,3 +116,13 @@ def test_investigate_causality_no_target_or_passing_test() -> None:
     investigation_passing = investigate_causality(target, passing_result)
     assert investigation_passing.causally_linked is False
     assert investigation_passing.confidence == "none"
+
+
+def test_same_basename_in_another_package_is_not_a_trace_match() -> None:
+    target = RiskTarget(file_path="payments/utils.py", line_number=10,
+                        description="Risk", evidence="charge()")
+    result = _make_test_result(stdout='File "/repo/logging/utils.py", line 10, in helper')
+    investigation = investigate_causality(target, result)
+    assert investigation.causally_linked is False
+    assert investigation.trace_associated is False
+    assert investigation.matched_file is False

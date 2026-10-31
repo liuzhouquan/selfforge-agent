@@ -1,7 +1,21 @@
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture
+def configured_rates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Synthetic rate cards test arithmetic; these are not published provider prices."""
+    card = {"prompt_per_million": 0.14, "completion_per_million": 0.28,
+            "source": "synthetic-test-card", "as_of": "2026-10-31"}
+    monkeypatch.setenv("SELFFORGE_PRICING_JSON", json.dumps({
+        "deepseek": {"deepseek-chat": card},
+        "fixture": {"deepseek-chat": card},
+        "openrouter": {"other-model": {**card, "prompt_per_million": 1.0,
+                                        "completion_per_million": 2.0}},
+    }))
 
 
 def git(repo: Path, *args: str) -> str:

@@ -1,15 +1,18 @@
 """Delivery workflow: commit worktree changes and create pull requests."""
 
+import json
 import re
 import subprocess
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from selfforge_agent.coding.worktree import WorktreeError, git
+from selfforge_agent.coding.worktree import WorktreeError, git, git_bounded
+from selfforge_agent.runtime.execution import workspace_entry_excluded
+from selfforge_agent.runtime.fingerprint import WorkspaceSnapshotError, workspace_fingerprint
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspace
-from selfforge_agent.runtime.workspace_diff import _visible
+from selfforge_agent.runtime.workspace_diff import MAX_PATH_LIST_BYTES, _visible
 
 _PR_URL_PATTERN = re.compile(
     r"https://github\.com/[^/\s]+/[^/\s]+/pull/(?P<number>[1-9][0-9]*)"
@@ -45,9 +48,11 @@ class RevertResult(BaseModel):
 
 def _paths(workspace: CodingWorkspace, *args: str) -> list[str]:
     try:
-        output = git(workspace.path, *args)
+        output, truncated = git_bounded(workspace.path, *args, max_bytes=MAX_PATH_LIST_BYTES)
     except WorktreeError as exc:
         raise DeliveryError(f"Git query failed: {exc}") from exc
+    if truncated:
+        raise DeliveryError("Changed-path list exceeds the delivery limit")
     return [p for p in output.split("\0") if p]
 
 
@@ -62,12 +67,14 @@ def commit_workspace(
     if not message or not message.strip():
         raise DeliveryError("Commit message must not be empty")
 
-    tracked = _paths(workspace, "diff", "--name-only", "-z", "HEAD")
+    tracked = _paths(workspace, "diff", "--no-renames", "--name-only", "-z", "HEAD")
     untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
     visible_changes = [path for path in set(tracked + untracked) if _visible(path)]
 
-    cached_before = _paths(workspace, "diff", "--cached", "--name-only", "-z")
-    visible_cached = [path for path in cached_before if _visible(path)]
+    cached_before = _paths(workspace, "diff", "--cached", "--no-renames", "--name-only", "-z")
+    if any(not _visible(path) for path in cached_before):
+        raise DeliveryError("Protected files are already staged; unstage them before committing")
+    visible_cached = cached_before
 
     if not visible_changes and not visible_cached:
         raise DeliveryError("No changes to commit in this workspace")
@@ -75,12 +82,14 @@ def commit_workspace(
     if visible_changes:
         try:
             # Stage files in batches using git add
-            git(workspace.path, "add", "--", *visible_changes)
+            git(workspace.path, "--literal-pathspecs", "add", "--", *visible_changes)
         except WorktreeError as exc:
             raise DeliveryError(f"Failed to stage changes: {exc}") from exc
 
-    cached_now = _paths(workspace, "diff", "--cached", "--name-only", "-z")
-    visible_to_commit = [path for path in cached_now if _visible(path)]
+    cached_now = _paths(workspace, "diff", "--cached", "--no-renames", "--name-only", "-z")
+    if any(not _visible(path) for path in cached_now):
+        raise DeliveryError("Protected files are staged; unstage them before committing")
+    visible_to_commit = cached_now
     if not visible_to_commit:
         raise DeliveryError("No changes to commit in this workspace")
 
@@ -120,34 +129,37 @@ def revert_workspace(
     session: SessionStore | None = None,
 ) -> RevertResult:
     """Discard all uncommitted changes and remove untracked files in the worktree."""
-    tracked = _paths(workspace, "diff", "--name-only", "-z", "HEAD")
+    tracked = _paths(workspace, "diff", "--no-renames", "--name-only", "-z", "HEAD")
     untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
-    cached = _paths(workspace, "diff", "--cached", "--name-only", "-z")
+    cached = _paths(workspace, "diff", "--cached", "--no-renames", "--name-only", "-z")
 
     visible_tracked = [p for p in set(tracked + cached) if _visible(p)]
     visible_untracked = [p for p in untracked if _visible(p)]
 
+    if session is not None and (visible_tracked or visible_untracked):
+        session.record_verification(False)
+
     reverted: list[str] = []
     if visible_tracked:
         try:
-            git(workspace.path, "reset", "HEAD", "--", *visible_tracked)
-            git(workspace.path, "checkout", "HEAD", "--", *visible_tracked)
+            git(workspace.path, "--literal-pathspecs", "restore", "--source=HEAD",
+                "--staged", "--worktree", "--", *visible_tracked)
             reverted.extend(visible_tracked)
         except WorktreeError as exc:
             raise DeliveryError(f"Failed to revert tracked changes: {exc}") from exc
 
     if visible_untracked:
         for rel in visible_untracked:
-            target = (workspace.path / rel).resolve()
-            if target.is_relative_to(workspace.path) and target.is_file():
-                try:
+            target = workspace.path / rel
+            try:
+                if not target.parent.resolve(strict=True).is_relative_to(workspace.path):
+                    continue
+                if target.is_symlink() or target.is_file():
+                    # Unlink the entry, never the target of an untracked symlink.
                     target.unlink(missing_ok=True)
                     reverted.append(rel)
-                except OSError as exc:
-                    raise DeliveryError(f"Failed to delete untracked file {rel}: {exc}") from exc
-
-    if session is not None and reverted:
-        session.record_verification(False)
+            except OSError as exc:
+                raise DeliveryError(f"Failed to delete untracked file {rel}: {exc}") from exc
 
     return RevertResult(
         session_id=workspace.session_id,
@@ -179,6 +191,47 @@ def _run_gh(args: list[str], *, cwd: Path, timeout: int = 60) -> str:
     return result.stdout
 
 
+def _existing_pull_request(workspace: CodingWorkspace, base_branch: str | None) -> dict | None:
+    args = ["pr", "list", "--state", "open", "--head", workspace.branch,
+            "--json", "number,title,url,baseRefName"]
+    if base_branch:
+        args.extend(["--base", base_branch])
+    output = _run_gh(args, cwd=workspace.repository)
+    try:
+        requests = json.loads(output)
+    except (TypeError, ValueError) as exc:
+        raise DeliveryError("Could not read the existing-PR list") from exc
+    if not isinstance(requests, list) or any(not isinstance(pr, dict) for pr in requests):
+        raise DeliveryError("GitHub returned an invalid existing-PR list")
+    if len(requests) > 1:
+        raise DeliveryError("Multiple open PRs use this head branch; specify a base branch")
+    if not requests:
+        return None
+    pr = requests[0]
+    if (not isinstance(pr.get("url"), str) or not _PR_URL_PATTERN.fullmatch(pr["url"])
+            or type(pr.get("number")) is not int or not isinstance(pr.get("title"), str)):
+        raise DeliveryError("GitHub returned an incomplete existing-PR record")
+    return pr
+
+
+def _verified_commit(workspace: CodingWorkspace, session: SessionStore | None,
+                     commit_sha: str) -> bool:
+    saved = session.verification_snapshot() if session is not None else None
+    if saved is None:
+        return False
+    try:
+        changed = _paths(workspace, "diff", "--name-only", "-z", commit_sha)
+        # Include ignored inputs and empty directories, but collapse wholly
+        # untracked directories so excluded caches do not flood the path list.
+        changed += _paths(workspace, "ls-files", "--others", "--directory", "-z")
+        if any(not any(workspace_entry_excluded(part) for part in Path(path).parts)
+               for path in changed):
+            return False
+        return workspace_fingerprint(workspace.path) == saved
+    except (DeliveryError, WorkspaceSnapshotError, OSError, TimeoutError):
+        return False
+
+
 def create_pull_request(
     workspace: CodingWorkspace,
     title: str,
@@ -193,10 +246,12 @@ def create_pull_request(
     if not title or not title.strip():
         raise DeliveryError("PR title must not be empty")
 
+    commit_sha = git(workspace.path, "rev-parse", "HEAD").strip()
+
     # Verify that commits exist ahead of base
     try:
         ahead_count = int(
-            git(workspace.path, "rev-list", "--count", f"{workspace.base_sha}..HEAD").strip()
+            git(workspace.path, "rev-list", "--count", f"{workspace.base_sha}..{commit_sha}").strip()
         )
     except (WorktreeError, ValueError) as exc:
         raise DeliveryError(f"Could not verify commits ahead of base: {exc}") from exc
@@ -217,16 +272,23 @@ def create_pull_request(
 
     # Push branch without force
     try:
-        git(workspace.path, "push", "--set-upstream", remote, workspace.branch)
+        git(workspace.path, "push", "--", remote, f"{commit_sha}:refs/heads/{workspace.branch}")
     except WorktreeError as exc:
         raise DeliveryError(f"Failed to push branch to remote: {exc}") from exc
 
-    # Prepare PR body with verification metadata if session is available
+    # Recover an already-created PR after a lost response without creating duplicates.
+    existing = _existing_pull_request(workspace, base_branch)
+    if existing is not None:
+        return PRResult(session_id=workspace.session_id, branch=workspace.branch,
+                        commit_sha=commit_sha, pr_url=existing["url"],
+                        pr_number=existing["number"], title=existing["title"])
+
+    # Attach evidence to this specific pushed commit, rather than a mutable branch.
     pr_body = body.strip()
     if session_store:
-        passed = session_store.verification_passed()
+        passed = _verified_commit(workspace, session_store, commit_sha)
         evidence_note = (
-            f"\n\n---\n**Verification Evidence**: "
+            f"\n\n---\n**Verification for commit `{commit_sha}`**: "
             f"{'Verified (tests passed with workspace content match)' if passed else 'Unverified'}\n"
             f"**Session ID**: `{workspace.session_id}`"
         )
@@ -245,9 +307,10 @@ def create_pull_request(
 
     output = _run_gh(gh_args, cwd=workspace.repository)
     match = _PR_URL_PATTERN.search(output)
-    pr_url = match.group(0) if match else output.strip().splitlines()[-1]
-    pr_number = int(match.group("number")) if match else None
-    commit_sha = git(workspace.path, "rev-parse", "HEAD").strip()
+    if match is None:
+        raise DeliveryError("GitHub did not return a valid PR URL; retry to recover an existing PR")
+    pr_url = match.group(0)
+    pr_number = int(match.group("number"))
 
     return PRResult(
         session_id=workspace.session_id,

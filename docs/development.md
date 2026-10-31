@@ -7,7 +7,8 @@
 目标是面向 Python Git 仓库的 Coding Agent 与测试框架：用户提交任务，Agent 在独立 worktree 中读、改、测，交付可检查的 Diff、测试结果和会话轨迹。Web 与 CLI 使用同一 Runtime。PR Review、差异测试生成和 Repair 是专项流程。
 
 - 已有：原生 Tool Calling、受限文件工具、Docker 执行、可恢复会话、Web 工作台、独立工作区、非空 JUnit 验证、预算反馈、参考修复预检与私有失败诊断；显式离线依赖镜像和会话环境绑定已接入同一 Runtime。
-- 尚未完成：自动依赖识别与更广的依赖配置、完整产品 PR 交付流程、20 题 × 每题 3 次的正式模型验收。Repair 的 proposer loop 仍独立。
+- 已新增：worktree commit/PR 交付、只读布局/依赖文件识别、锁文件导出、风险排序、堆栈关联和 CLI 审批。交付规则见[指南](./pr-delivery.md)，审查证据见[分支复核](./pr-delivery-review.md)。
+- 尚未完成：自动安装/构建依赖、更广的环境配置、真正的风险因果验证、模型专用精确 Tokenizer，以及 20 题 × 每题 3 次正式模型验收。Repair 的 proposer loop 仍独立。
 - 暂不增加：Multi-Agent、通用 MCP 平台、额外 RAG、大型前端或另一套 Runtime。
 - `completed` 要求最后一次可能持久写入后 `run_tests` 有非空 JUnit 通过证据、测试前后和当前工作区指纹一致，且模型给出非空最终答复；不代表需求全部满足，也不防恶意仓库伪造证据。正式评测还需独立可见/隐藏测试与允许修改路径检查。
 
@@ -22,7 +23,7 @@
 | 文件权限、编辑策略、命令与暂存限制 | `runtime/tools.py`、`execution.py` | `test_runtime.py`、`test_docker_staging.py` |
 | 模型协议、回退、配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py` | `test_model_deadline.py`、`test_providers.py` |
 | Web 任务持久化、锁、取消 | `api/coding_jobs.py`、`api/app.py` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py` |
-| 工作区、Diff 与交付 | `runtime/workspace.py`、`workspace_diff.py`、`delivery.py` | `test_workspace.py`、`test_workspace_delivery.py` |
+| 工作区、Diff 与交付 | `runtime/workspace.py`、`workspace_diff.py`、`delivery.py` | `test_workspace.py`、`test_workspace_delivery.py`、`test_delivery_safety.py` |
 | 测试证据、诊断、修复、测试生成与风险归因 | `verification/`、`coding/`、`runtime/pricing.py` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py`、`test_risk_prioritization.py`、`test_causal_investigation.py`、`test_pricing.py` |
 | 独立评测、参考修复与私有快照 | `runtime/benchmark.py`、`evaluation.py`、`failure_artifacts.py` | `test_benchmark.py`、`test_benchmark_isolation.py`、`test_reference_validation.py`、离线 Coding 演示 |
 
@@ -72,9 +73,9 @@ uv run --no-sync python examples/coding_demo.py
 | 已整合 | 工作区与测试证据绑定 | 前后测试、后续模型请求和最终答复时校验内容；恢复/外部编辑撤销旧证据；有界扫描与 v2 迁移有回归，真实 Docker 用例需 daemon/镜像 |
 | 本轮实现 | 依赖环境识别与 Web 重启恢复验证 | 识别 src/flat 布局、pyproject/requirements、锁文件及 pytest 目录；回归覆盖异常退出后重启续跑至完成 |
 | 本轮实现 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，排除受保护文件，附带测试验证状态，覆盖远端与 gh 失败恢复，不自动强推或合并 |
-| 本轮实现 | 风险自动排序、因果归因与成本核算 | 依据严重度、类别与代码特征排序风险假设；差异测试失败因果回溯至目标行/文件；校准模型计费与总成本核算；单测覆盖全链路 |
-| 本轮实现 | 精确 Token 估算、结构化压缩、全链路成本与交互审批 | 覆盖代码语法与 CJK 的精确 Token 估算；结构化操作摘要与保留近期交互轮次；Agent/Repair/CLI/Web 全链路 Token 与校准成本追踪；CLI 交互式审批 `--interactive` 与 `--summary` 诊断 |
-| 本轮实现 | 工作区还原、锁文件依赖导出与 PR 修复环境绑定 | 支持 worktree 恢复已跟踪文件并清理未跟踪文件同时保护凭据；支持解析 uv.lock 导出沙箱离线构建所需的哈希锁定 requirements；PR 修复接口支持指定自定义镜像与执行超时 |
+| 本轮实现 | 风险自动排序、堆栈关联与可选费用估算 | 排序仍是假设；堆栈匹配不证明因果；费用逐调用按显式费率估算，缺失任一费率/用量时不报总费用 |
+| 本轮实现 | 启发式 Token 估算、压缩与交互审批 | 估算覆盖语法、CJK、长标识符和空白；完整保留 assistant 与全部工具回填；审批后重查预算/取消；Token 与可选费用规则见[计量](./token-metrics.md) |
+| 本轮实现 | 工作区还原、锁文件导出与 PR 修复参数 | 支持 worktree 恢复已跟踪文件并清理未跟踪文件同时保护凭据；支持解析 uv.lock 导出沙箱离线构建所需的哈希锁定 requirements；PR 修复接口支持指定自定义镜像与执行超时 |
 | 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
 
 只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。现有[五题参考控制集](../benchmark/validated-candidates/iterator-traversal.md)跨三个仓库，全部通过 Docker 负例/参考正例；其中异步空输入、Unicode 分隔与零分块任务和早期候选重叠，不能额外计数。目录深度剪枝与替换回调停止涉及不同执行机制；前者保留边界目录匹配和忽略规则，后者是明确的功能扩展，不能宣称为上游确认的 bug。

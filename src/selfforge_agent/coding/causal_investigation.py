@@ -1,4 +1,4 @@
-"""Investigate causal link between targeted PR risk and differential test failure."""
+"""Describe traceback associations; location matches cannot establish causality."""
 
 import re
 from pathlib import Path
@@ -16,6 +16,7 @@ _PYTEST_LOCATION = re.compile(r'([^\s:]+\.py):(\d+):')
 class CausalInvestigation(BaseModel):
     target: RiskTarget | None = None
     causally_linked: bool
+    trace_associated: bool = False
     confidence: Literal["high", "medium", "low", "none"]
     matched_file: bool = False
     matched_line: bool = False
@@ -24,7 +25,7 @@ class CausalInvestigation(BaseModel):
 
 
 def _normalize_path(path_str: str) -> str:
-    return Path(path_str).name
+    return path_str.replace("\\", "/").removeprefix("./")
 
 
 def investigate_causality(
@@ -81,9 +82,10 @@ def investigate_causality(
     best_line = None
 
     for frame_file, frame_line in frames:
-        if _normalize_path(frame_file) == target_name or frame_file.endswith(target.file_path):
+        frame_path = _normalize_path(frame_file)
+        if frame_path == target_name or frame_path.endswith("/" + target_name):
             module_match = True
-            if abs(frame_line - target.line_number) <= 5:
+            if frame_line == target.line_number:
                 direct_line_match = True
                 best_line = frame_line
                 break
@@ -93,28 +95,30 @@ def investigate_causality(
     if direct_line_match:
         return CausalInvestigation(
             target=target,
-            causally_linked=True,
+            causally_linked=False,
+            trace_associated=True,
             confidence="high",
             matched_file=True,
             matched_line=True,
             observed_locations=observed[:5],
             explanation=(
                 f"Head test failure directly traces through target {target.file_path} "
-                f"at line {best_line} (target line {target.line_number})"
+                f"at line {best_line}; this association does not establish the finding's cause"
             ),
         )
 
     if module_match:
         return CausalInvestigation(
             target=target,
-            causally_linked=True,
+            causally_linked=False,
+            trace_associated=True,
             confidence="medium",
             matched_file=True,
             matched_line=False,
             observed_locations=observed[:5],
             explanation=(
                 f"Head test failure stack trace passes through target module {target.file_path} "
-                f"at line {best_line}"
+                f"at line {best_line}; this association does not establish the finding's cause"
             ),
         )
 
@@ -128,14 +132,14 @@ def investigate_causality(
     ):
         return CausalInvestigation(
             target=target,
-            causally_linked=True,
+            causally_linked=False,
             confidence="low",
-            matched_file=True,
+            matched_file=False,
             matched_line=False,
             observed_locations=observed[:5],
             explanation=(
-                f"Generated test asserted on target module {target.file_path} behavior "
-                f"without deep stack frame"
+                f"Test text mentions {target.file_path}, but no matching failure location "
+                "or causal evidence was established"
             ),
         )
 

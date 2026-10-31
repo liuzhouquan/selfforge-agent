@@ -26,7 +26,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | --- | --- | --- |
 | Coding Agent Runtime | Implemented | OpenAI-compatible native tool calling, multiple turns, step/time limits, dynamic budget and verification feedback, provider fallback |
 | Tools and sessions | Implemented | read/edit/search/bash/run_tests; bounded line-range reads of large files, pytest `-k` selection, workspace path checks, resumable JSONL sessions and traces |
-| Context management & controls | Implemented | Truncated tool output, syntax- and CJK-aware token estimation, structured action compaction preserving recent turns, interactive approval hook, and full-lifecycle token/cost metrics |
+| Context management & controls | Implemented | Truncated output, heuristic syntax/CJK-aware estimates, complete recent tool turns, interactive approval, reported tokens, and optional configured-rate cost estimates |
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Nonempty JUnit success plus matching workspace fingerprints; external changes revoke evidence, and unbound legacy evidence needs retesting |
 | Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cross-process cancellation, job history, and session resume; interrupted work needs an explicit resume |
@@ -44,7 +44,7 @@ uv run python examples/test_recovery_demo.py --provider deepseek
 
 One DeepSeek run completed in 5 turns, kept the original tests unchanged, and passed all 4 independent checks. This is a generated-fixture demonstration, separate from formal task evaluation. See [test diagnostics](./docs/test-diagnostics.md) for private snapshots, bounds and reproduction.
 
-The PR #30 combined version passed **257 local tests** at that time; this is historical. After PR #32, the latest local full suite reported **274 passed / 11 skipped** (the skipped tests require local Docker). The corresponding GitHub main-branch CI ran **274 unit tests and 11 Docker integration tests, all passing**. The current local non-integration suite passes **315 passed / 11 skipped**. This is not a model success rate; see the [workspace-evidence contract](./docs/workspace-evidence.md).
+Automated regression covers Runtime, recovery, JUnit, environments, delivery, and model protocols. See [GitHub Actions](https://github.com/liuzhouquan/selfforge-agent/actions/workflows/ci.yml) for current runs and the [branch review](./docs/pr-delivery-review.md) for reproduced defects and fixes. Unit/integration results are separate from model success rates.
 
 ## Quick Start
 
@@ -90,7 +90,7 @@ uv run selfforge-agent workspaces diff SESSION_ID --repo ./your-project
 uv run selfforge-agent workspaces revert SESSION_ID --repo ./your-project
 uv run selfforge-agent workspaces commit SESSION_ID -m 'Fix add regression' --repo ./your-project
 uv run selfforge-agent workspaces pr SESSION_ID --title 'Fix add regression' --repo ./your-project
-uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project # Optional --force cleans modified/untracked worktrees
+uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project # Only clean worktrees can be removed
 
 # Explicitly edit the source checkout when needed
 uv run selfforge-agent code --repo ./your-project --workspace direct --task 'Fix add'
@@ -138,6 +138,8 @@ Agent statuses are `completed` (nonempty JUnit success, matching workspace finge
 
 Each turn gives the model its remaining turns/time and current `run_tests` verification state; near the cap, it prioritizes verification and a final answer. Notices count toward the approximate context budget and are regenerated on resume. The cap includes the final answer. Feedback adds no model calls, does not run tests automatically, and does not promote unfinished tasks to success. See [budget feedback](./docs/runtime-budget.md).
 
+See the [delivery guide](./docs/pr-delivery.md) for protected paths, retry recovery, and commit-bound verification.
+
 ## Architecture
 
 ```mermaid
@@ -167,7 +169,7 @@ The Runtime separates the loop, model adapter, tools, executor, context, and ses
 
 General Coding reuses the JUnit runners: `run_tests` needs exit code 0, at least one passing test, and no failures or errors. All-skipped suites, empty selections, and missing or malformed reports cannot establish completion. The tool returns counts and error details. General completion also requires equal pre/post-test and current workspace fingerprints. External changes or incomplete scans prevent completion and require retesting. Legacy evidence without workspace binding also needs retesting; see [content binding](./docs/workspace-evidence.md); see the [test evidence rules](./docs/test-evidence.md). `eval` independently reruns fixture tests and checks for a real source change; it does not trust the model's claim. PR Repair only emits a verified patch when Base tests pass, Head fails with an assertion, and Repaired passes. That establishes repair of an existing-suite regression, not causality for an individual review finding.
 
-`generate-test` creates one pytest candidate by default. `--max-candidates 2/3` lets it use prior Base/Head results for further attempts, stops early on a differential result, and skips duplicate code. Multi-candidate generation has a 300-second total budget by default; `--time-budget` can raise it to at most 600 seconds. `--finding-index` selects a local rule finding; `--auto-target` (and Web API `auto_target`) automatically prioritizes added-line hypotheses by severity and category profiles to test the top-ranked risk. The server checks that the risk points to an actual added diff line. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. Tests run only in temporary worktrees until explicitly exported. Reports now include causal link investigation (`causal_investigation`: whether Head failure tracebacks pass directly through the targeted file and line) and calibrated monetary cost estimation (`cost` / `total_cost`) for known model rates.
+`generate-test` creates one pytest candidate by default. `--max-candidates 2/3` lets it use prior Base/Head results for further attempts, stops early on a differential result, and skips duplicate code. Multi-candidate generation has a 300-second total budget by default; `--time-budget` can raise it to at most 600 seconds. `--finding-index` selects a local rule finding; `--auto-target` (and Web API `auto_target`) automatically prioritizes added-line hypotheses by severity and category profiles to test the top-ranked risk. The server checks that the risk points to an actual added diff line. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. Tests run only in temporary worktrees until explicitly exported. The `causal_investigation` report describes traceback associations with target files/lines; it does not prove the finding caused the failure. Costs remain null until exact provider/model rates are explicitly configured; see [metrics rules](./docs/token-metrics.md).
 
 ```sh
 uv run selfforge-agent eval --offline       # Deterministic protocol check, not model skill
@@ -183,7 +185,7 @@ uv run ruff check .
 
 `eval-suite` runs in Docker by default. It requires an assertion failure on the original commit, starts every attempt from a clean checkout, and only counts a run when allowed files change, the Agent verifies its edits, the evaluator independently reruns the specified visible tests, and an unseen test passes. `agent_test_keyword` can select relevant pytest tests explicitly. Cases can select their own Docker image; its ID is pinned before evaluation. Reports contain per-case rates, failure reasons, duration, and provider-reported token usage; they do not infer monetary cost. See the [benchmark guide](./docs/benchmark.md) and [three-repository pilot](./benchmark/real-pilot/README.md) for reproduction steps.
 
-GitHub Actions runs locked dependency installation, Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests. The [PR #32 exact-head run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41031573755) and the [post-merge main run](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41032250484) both passed; the latter ran 274 unit tests and 11 Docker integration tests. The earlier first-run result remains in the [evaluation history](./docs/evaluation.md).
+GitHub Actions runs locked dependency installation, Ruff, unit tests, and Docker integration tests on pushes to `main` and pull requests. Use the [CI run for each delivered commit](https://github.com/liuzhouquan/selfforge-agent/actions/workflows/ci.yml); historical branch counts are not additive. Live-model results remain in the separate [evaluation history](./docs/evaluation.md).
 
 On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and **2/2** for DeepSeek's live tool-calling run. On 2026-10-27, three project-authored tasks across PocketFlow, boltons, and more-itertools scored **8/9** with three repeats each under the earlier gate; one attempt hit the step cap despite passing its holdout. After adding independent visible-test reruns and a large-file chunking task, four tasks scored **4/4** in one run each, with selected visible and unseen tests passing. On 2026-10-29, all nine cases in a candidate manifest passed the baseline-validity and visible-test checks; at that time its five new cases had not been run with a model. These observations use different gates and repeat counts and cannot be combined into a success rate. The 18-step limit came from earlier trials. The formal 20-task, three-repeat set remains open. See [evaluation notes](./docs/evaluation.md).
 

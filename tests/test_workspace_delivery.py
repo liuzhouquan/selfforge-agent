@@ -17,6 +17,7 @@ from selfforge_agent.runtime.delivery import (
     commit_workspace,
     create_pull_request,
 )
+from selfforge_agent.runtime.fingerprint import workspace_fingerprint
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
 
@@ -126,10 +127,10 @@ def test_create_pull_request_success_with_evidence_and_no_force(tmp_path: Path) 
 
     # Record verified session evidence
     session = SessionStore(manager.session_root(repo, "sessiondeliverysuccess"), "sessiondeliverysuccess")
-    session.record_verification(True, workspace_sha256="a" * 64)
+    session.record_verification(True, workspace_sha256=workspace_fingerprint(workspace.path))
 
     with patch("selfforge_agent.runtime.delivery._run_gh") as mock_gh:
-        mock_gh.return_value = "https://github.com/owner/repo/pull/42\n"
+        mock_gh.side_effect = ["[]", "https://github.com/owner/repo/pull/42\n"]
         pr_result = create_pull_request(
             workspace,
             title="Update value to 10",
@@ -149,8 +150,8 @@ def test_create_pull_request_success_with_evidence_and_no_force(tmp_path: Path) 
         assert workspace.branch in remote_branches
 
         # Verify gh call arguments
-        mock_gh.assert_called_once()
-        cmd_args = mock_gh.call_args[0][0]
+        assert mock_gh.call_count == 2
+        cmd_args = mock_gh.call_args_list[-1][0][0]
         assert "pr" in cmd_args and "create" in cmd_args
         assert "--title" in cmd_args
         assert "Update value to 10" in cmd_args
@@ -228,7 +229,7 @@ def test_web_delivery_endpoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
     # 2. PR endpoint with mocked gh
     with patch("selfforge_agent.runtime.delivery._run_gh") as mock_gh:
-        mock_gh.return_value = "https://github.com/owner/repo/pull/99\n"
+        mock_gh.side_effect = ["[]", "https://github.com/owner/repo/pull/99\n"]
         pr_resp = client.post(
             f"/api/code/workspaces/{workspace.session_id}/pr",
             json={
@@ -278,7 +279,7 @@ def test_cli_workspaces_diff_commit_and_pr(monkeypatch: pytest.MonkeyPatch, caps
 
     # Test workspaces pr
     with patch("selfforge_agent.runtime.delivery._run_gh") as mock_gh:
-        mock_gh.return_value = "https://github.com/owner/repo/pull/77\n"
+        mock_gh.side_effect = ["[]", "https://github.com/owner/repo/pull/77\n"]
         monkeypatch.setattr(
             "sys.argv",
             ["selfforge-agent", "workspaces", "pr", "sessionclidelivery", "--repo", str(repo), "--title", "CLI PR title"],

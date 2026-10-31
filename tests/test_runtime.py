@@ -586,3 +586,29 @@ def test_coding_agent_approval_hook_rejects_denied_actions(tmp_path: Path) -> No
     tool_reply = next(item for item in messages if item.get("role") == "tool")
     assert "Action rejected: operator approval denied" in tool_reply["content"]
     assert tmp_path.joinpath("calculator.py").exists()
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_approval_wait_rechecks_cancel_and_deadline(tmp_path: Path, monkeypatch, expired: bool) -> None:
+    _fixture(tmp_path)
+    original = (tmp_path / "calculator.py").read_bytes()
+    clock = [0.0]
+    monkeypatch.setattr("selfforge_agent.runtime.agent.time.monotonic", lambda: clock[0])
+
+    class EditModel:
+        def complete(self, *args):
+            return _call("edit_file", {"path": "calculator.py", "old_text": "return a - b",
+                                       "new_text": "return a + b"}, 1)
+
+    def approval(*args):
+        if expired:
+            clock[0] = 100
+        else:
+            agent.cancel.set()
+        return True
+
+    agent = CodingAgent(EditModel(), ToolRegistry(tmp_path), SessionStore(tmp_path / "sessions"),
+                        time_budget=5, approval_hook=approval)
+    result = agent.run("Fix calculator")
+    assert result.status == ("timed_out" if expired else "cancelled")
+    assert (tmp_path / "calculator.py").read_bytes() == original

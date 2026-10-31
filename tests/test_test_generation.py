@@ -340,7 +340,7 @@ def test_cli_selects_baseline_finding_and_exports_batch(
 
 
 def test_differential_report_includes_causal_investigation_and_cost(
-    demo_repo: tuple[Path, str, str],
+    demo_repo: tuple[Path, str, str], configured_rates: None,
 ) -> None:
     repository, base, head = demo_repo
     model = TestModel(
@@ -358,7 +358,7 @@ def test_differential_report_includes_causal_investigation_and_cost(
     assert report.cost is not None
     assert pytest.approx(report.cost.total_cost_usd, rel=1e-4) == 0.00028
     assert report.causal_investigation is not None
-    assert report.causal_investigation.causally_linked is True
+    assert report.causal_investigation.causally_linked is False
     assert report.causal_investigation.confidence in {"high", "medium", "low"}
 
 

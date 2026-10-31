@@ -142,8 +142,10 @@ def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tm
         def __init__(self, _model: object, *, runner: object, session: object) -> None:
             called.update(runner=type(runner).__name__, session_root=session.root)
 
-        def run(self, repository: Path, base: str, head: str, task: str, *, trusted: bool) -> RepairReport:
-            called.update(repository=repository, base=base, head=head, task=task, trusted=trusted)
+        def run(self, repository: Path, base: str, head: str, task: str, *,
+                trusted: bool, timeout: float) -> RepairReport:
+            called.update(repository=repository, base=base, head=head, task=task,
+                          trusted=trusted, timeout=timeout)
             now = datetime.now(UTC)
             return RepairReport(
                 run_id="test", repository=str(repository), base_sha=base, head_sha=head,
@@ -172,7 +174,7 @@ def test_web_repair_uses_checkout_merge_base(monkeypatch: pytest.MonkeyPatch, tm
     assert response.status_code == 200
     assert called == {
         "repository": tmp_path, "base": merge_base, "head": "b" * 40,
-        "task": "Fix the regression", "trusted": True,
+        "task": "Fix the regression", "trusted": True, "timeout": 60,
         "runner": "TestRunner", "session_root": tmp_path,
     }
 
@@ -186,10 +188,12 @@ def test_web_repair_defaults_to_docker_without_host_trust(monkeypatch: pytest.Mo
 
     class FakeAgent:
         def __init__(self, _model: object, *, runner: object, session: object) -> None:
-            called.update(runner=type(runner).__name__, session_root=session.root)
+            called.update(runner=type(runner).__name__, session_root=session.root, image=runner.image)
 
-        def run(self, repository: Path, base: str, head: str, task: str, *, trusted: bool) -> RepairReport:
+        def run(self, repository: Path, base: str, head: str, task: str, *,
+                trusted: bool, timeout: float) -> RepairReport:
             called["trusted"] = trusted
+            called["timeout"] = timeout
             now = datetime.now(UTC)
             return RepairReport(
                 run_id="test", repository=str(repository), base_sha=base, head_sha=head,
@@ -212,11 +216,11 @@ def test_web_repair_defaults_to_docker_without_host_trust(monkeypatch: pytest.Mo
     monkeypatch.setattr(api_module, "FallbackCodingModel", FakeRouter)
     monkeypatch.setattr(api_module, "RepairAgent", FakeAgent)
     response = TestClient(app).post("/api/github/repair", json={
-        "url": pr.url, "task": "Fix the regression",
+        "url": pr.url, "task": "Fix the regression", "image": "custom-sandbox:v1", "timeout": 123,
     })
     assert response.status_code == 200
     assert called == {"runner": "DockerTestRunner", "session_root": tmp_path,
-                      "trusted": False}
+                      "trusted": False, "image": "custom-sandbox:v1", "timeout": 123}
 
 
 def test_deepseek_findings_must_point_to_added_lines(monkeypatch: pytest.MonkeyPatch) -> None:

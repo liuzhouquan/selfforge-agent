@@ -7,12 +7,13 @@ from selfforge_agent.runtime.pricing import (
     MonetaryCost,
     estimate_monetary_cost,
     format_monetary_cost,
+    sum_monetary_costs,
 )
 
 
-def test_estimate_monetary_cost_for_known_models() -> None:
+def test_estimate_monetary_cost_for_configured_rates(configured_rates: None) -> None:
     usage = TokenUsage(prompt_tokens=1_000, completion_tokens=500, total_tokens=1_500)
-    cost = estimate_monetary_cost("deepseek-chat", usage)
+    cost = estimate_monetary_cost("deepseek-chat", usage, provider="deepseek")
     assert cost is not None
     assert cost.calibrated is True
     assert cost.currency == "USD"
@@ -22,12 +23,21 @@ def test_estimate_monetary_cost_for_known_models() -> None:
     assert pytest.approx(cost.total_cost_usd, rel=1e-4) == 0.00028
 
 
-def test_estimate_monetary_cost_normalizes_model_name() -> None:
+def test_estimate_monetary_cost_requires_exact_provider_and_model(configured_rates: None) -> None:
     usage = TokenUsage(prompt_tokens=2_000, completion_tokens=1_000, total_tokens=3_000)
-    cost1 = estimate_monetary_cost("openai/gpt-4o-mini", usage)
-    cost2 = estimate_monetary_cost("gpt-4o-mini", usage)
-    assert cost1 is not None and cost2 is not None
-    assert cost1.total_cost_usd == cost2.total_cost_usd
+    assert estimate_monetary_cost("deepseek-chat", usage) is None
+    assert estimate_monetary_cost("deepseek-chat", usage, provider="openrouter") is None
+    assert estimate_monetary_cost("deepseek/deepseek-chat", usage, provider="deepseek") is None
+
+
+def test_no_default_or_partial_price_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SELFFORGE_PRICING_JSON", raising=False)
+    usage = TokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
+    assert estimate_monetary_cost("deepseek-chat", usage, provider="deepseek") is None
+    monkeypatch.setenv("SELFFORGE_PRICING_JSON", "invalid JSON")
+    assert estimate_monetary_cost("deepseek-chat", usage, provider="deepseek") is None
+    assert sum_monetary_costs([MonetaryCost(prompt_cost_usd=1, completion_cost_usd=2,
+                                         total_cost_usd=3), None]) is None
 
 
 def test_estimate_monetary_cost_returns_none_for_unknown_model_or_none_usage() -> None:

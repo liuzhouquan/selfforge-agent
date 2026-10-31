@@ -1,5 +1,6 @@
 """Bind Coding sessions to one execution mode and immutable Docker image, and detect repository environment."""
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -71,7 +72,9 @@ def detect_repository_environment(repository: Path) -> dict:
     if pyproject_path.is_file() and not pyproject_path.is_symlink() and pyproject_path.stat().st_size <= 256 * 1024:
         try:
             data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-            python_requires = data.get("project", {}).get("requires-python")
+            project = data.get("project", {})
+            if isinstance(project, dict) and isinstance(project.get("requires-python"), str):
+                python_requires = project["requires-python"]
         except (tomllib.TOMLDecodeError, OSError):
             pass
 
@@ -153,35 +156,50 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     if not isinstance(packages, list) or not packages:
         raise ValueError("Lock file contains no packages")
 
-    lines: list[str] = []
+    requirements: dict[str, tuple[str, str, set[str]]] = {}
     for pkg in packages:
         if not isinstance(pkg, dict):
-            continue
+            raise ValueError("Invalid package entry in lock file")  # noqa: TRY004 - malformed file data
         name = pkg.get("name")
         version = pkg.get("version")
-        if not name or not version:
+        source = pkg.get("source", {})
+        if isinstance(source, dict) and any(key in source for key in ("editable", "virtual", "directory")):
             continue
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", name)
+                or not isinstance(version, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,199}", version)):
+            raise ValueError("Invalid package name or version in lock file")
 
         hashes: set[str] = set()
-        for wheel in pkg.get("wheels", []):
+        wheels = pkg.get("wheels", [])
+        if not isinstance(wheels, list):
+            raise ValueError("Invalid wheel list in lock file")  # noqa: TRY004 - malformed file data
+        for wheel in wheels:
             if isinstance(wheel, dict) and "hash" in wheel:
                 h = wheel["hash"]
-                if isinstance(h, str) and h.startswith("sha256:") and len(h) == 71:
+                if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
                     hashes.add(h)
         sdist = pkg.get("sdist")
         if isinstance(sdist, dict) and "hash" in sdist:
             h = sdist["hash"]
-            if isinstance(h, str) and h.startswith("sha256:") and len(h) == 71:
+            if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
                 hashes.add(h)
 
-        if hashes:
-            hash_str = "".join(f" --hash={h}" for h in sorted(hashes))
-            lines.append(f"{name}=={version}{hash_str}")
+        if not hashes:
+            raise ValueError("Lock file includes an external package without supported SHA-256 hashes")
+        key = re.sub(r"[-_.]+", "-", name).lower()
+        if key in requirements:
+            if requirements[key][1] != version:
+                raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
+            requirements[key][2].update(hashes)
+        else:
+            requirements[key] = (name, version, hashes)
 
-    if not lines:
+    if not requirements:
         raise ValueError("No hashed requirements found in lock file")
 
-    lines.sort()
+    lines = sorted(f"{name}=={version}" + "".join(f" --hash={h}" for h in sorted(hashes))
+                   for name, version, hashes in requirements.values())
     result = "\n".join(lines) + "\n"
     if output_path is not None:
         output_path.write_text(result, encoding="utf-8")

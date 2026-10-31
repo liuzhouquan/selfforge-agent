@@ -16,7 +16,7 @@ from selfforge_agent.coding.worktree import detached_worktree
 from selfforge_agent.core.git_context import build_context
 from selfforge_agent.models import ChangeKind, PRContext, TestResult
 from selfforge_agent.runtime.model import ChatModel
-from selfforge_agent.runtime.pricing import MonetaryCost, estimate_monetary_cost
+from selfforge_agent.runtime.pricing import MonetaryCost, estimate_monetary_cost, sum_monetary_costs
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
@@ -196,7 +196,8 @@ class DifferentialTestGenerator:
                     )
                     report.provider, report.model = turn.provider, turn.model
                     if turn.usage:
-                        report.cost = estimate_monetary_cost(turn.model, turn.usage)
+                        report.cost = estimate_monetary_cost(turn.model, turn.usage,
+                                                             provider=turn.provider)
                     if self.session:
                         self.session.trace("testgen_model", provider=turn.provider, model=turn.model,
                                            candidate_index=candidate_index,
@@ -290,17 +291,7 @@ class DifferentialTestGenerator:
              if item.candidate_index == selected and item.causal_investigation is not None),
             None,
         )
-        valid_costs = [c.cost for c in candidates if c.cost is not None]
-        if valid_costs:
-            total_cost = MonetaryCost(
-                currency="USD",
-                prompt_cost_usd=round(sum(c.prompt_cost_usd for c in valid_costs), 6),
-                completion_cost_usd=round(sum(c.completion_cost_usd for c in valid_costs), 6),
-                total_cost_usd=round(sum(c.total_cost_usd for c in valid_costs), 6),
-                calibrated=True,
-            )
-        else:
-            total_cost = None
+        total_cost = sum_monetary_costs([candidate.cost for candidate in candidates])
         first = candidates[0]
         return TestGenerationBatchReport(
             run_id=first.run_id, repository=first.repository,

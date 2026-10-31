@@ -134,14 +134,10 @@ class CodingWorkspaceManager:
                               RuntimeWarning, stacklevel=2)
         return workspaces
 
-    def remove(self, repository: Path, session_id: str, *, force: bool = False) -> CodingWorkspace:
+    def remove(self, repository: Path, session_id: str) -> CodingWorkspace:
         workspace = self.get(repository, session_id)
         _, metadata, _ = self._paths(workspace.repository, session_id)
-        # Git refuses to remove modified or untracked worktrees without --force.
-        cmd = ["worktree", "remove"]
-        if force:
-            cmd.append("--force")
-        cmd.append(str(workspace.path))
-        git(workspace.repository, *cmd)
+        # Keep Git's dirty-worktree guard for persistent user workspaces.
+        git(workspace.repository, "worktree", "remove", str(workspace.path))
         metadata.unlink()
         return workspace

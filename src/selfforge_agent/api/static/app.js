@@ -668,7 +668,7 @@ $("testgen-form").addEventListener("submit", async (event) => {
     const cost = batch.total_cost || selected?.cost;
     let meta = `${batch.candidates.length} 次尝试 · 停止原因：${batch.stop_reason} · ${batch.target ? `关联 ${batch.target.file_path}:${batch.target.line_number}（待验证假设）` : "未关联审查风险"}`;
     if (inv) {
-      meta += ` · 因果调查：${inv.confidence}（${inv.explanation}）`;
+      meta += ` · 堆栈关联线索：${inv.confidence}（${inv.explanation}）`;
     }
     if (cost) {
       meta += ` · 预估成本：$${cost.total_cost_usd.toFixed(6)} ${cost.currency}`;

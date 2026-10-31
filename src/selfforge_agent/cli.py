@@ -184,7 +184,6 @@ def main() -> int:
     workspaces.add_argument("--base", help="Target base branch for 'pr' action")
     workspaces.add_argument("--remote", default="origin", help="Git remote for 'pr' action")
     workspaces.add_argument("--draft", action="store_true", help="Create draft PR")
-    workspaces.add_argument("--force", action="store_true", help="Force remove worktree even if modified or untracked files exist")
     evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
     evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
     evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
@@ -348,7 +347,7 @@ def main() -> int:
             elif args.action == "remove":
                 if not args.session_id:
                     parser.error("workspaces remove requires a session ID")
-                workspace = manager.remove(args.repo, args.session_id, force=bool(getattr(args, "force", False)))
+                workspace = manager.remove(args.repo, args.session_id)
                 print(f"Removed worktree {workspace.path}; branch {workspace.branch} remains")
             elif args.action == "diff":
                 if not args.session_id:
@@ -520,7 +519,7 @@ def main() -> int:
                   f"Head: {result.head_test.status} ({result.head_test.failed} failed)")
         inv = (batch.selected_causal_investigation if batch else None) or result.causal_investigation
         if inv:
-            print(f"Causal link: {inv.confidence} ({inv.explanation})")
+            print(f"Trace association: {inv.confidence} ({inv.explanation})")
         cost = (batch.total_cost if batch else None) or result.cost
         if cost:
             print(f"Cost: {format_monetary_cost(cost)}")

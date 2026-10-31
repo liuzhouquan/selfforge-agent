@@ -159,45 +159,43 @@ class SessionStore:
         return list(events)
 
     def token_metrics(self) -> dict:
-        if not self.trace_path.exists():
-            return {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "model": None,
-                "cost": None,
-            }
+        from selfforge_agent.providers import TokenUsage
+        from selfforge_agent.runtime.pricing import estimate_monetary_cost, sum_monetary_costs
+
         prompt_tokens = 0
         completion_tokens = 0
-        model_name: str | None = None
-        for event in self._complete_events(self.trace_path):
+        total_tokens = 0
+        models: set[str] = set()
+        providers: set[str] = set()
+        costs = []
+        complete = True
+        events = self._complete_events(self.trace_path) if self.trace_path.exists() else []
+        for event in events:
             if event.get("event") == "model_call":
-                usage = event.get("usage")
-                if isinstance(usage, dict):
-                    prompt_tokens += int(usage.get("prompt_tokens") or 0)
-                    completion_tokens += int(usage.get("completion_tokens") or 0)
-                if not model_name and event.get("model"):
-                    model_name = str(event.get("model"))
-        total_tokens = prompt_tokens + completion_tokens
-        cost = None
-        if model_name:
-            from selfforge_agent.providers import TokenUsage
-            from selfforge_agent.runtime.pricing import estimate_monetary_cost
-
-            cost_obj = estimate_monetary_cost(
-                model_name,
-                TokenUsage(
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=total_tokens,
-                ),
-            )
-            if cost_obj:
-                cost = cost_obj.model_dump()
+                model = str(event.get("model") or "")
+                provider = str(event.get("provider") or "")
+                models.add(model)
+                providers.add(provider)
+                try:
+                    usage = TokenUsage.model_validate(event.get("usage"))
+                    if min(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) < 0:
+                        raise ValueError("Negative usage")
+                except ValueError:
+                    complete = False
+                    costs.append(None)
+                    continue
+                prompt_tokens += usage.prompt_tokens
+                completion_tokens += usage.completion_tokens
+                total_tokens += usage.total_tokens
+                costs.append(estimate_monetary_cost(model, usage, provider=provider))
+        cost = sum_monetary_costs(costs)
         return {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
-            "model": model_name,
-            "cost": cost,
+            "model": next(iter(models)) if len(models) == 1 else None,
+            "models": sorted(models),
+            "providers": sorted(providers),
+            "usage_complete": complete,
+            "cost": cost.model_dump() if cost is not None else None,
         }
