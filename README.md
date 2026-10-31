@@ -197,8 +197,12 @@ GitHub Actions 在推送 `main` 和提交 PR 时运行锁定依赖安装、Ruff�
 
 ## Specialized Workflows：PR Review
 
-Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支、生成差异验证测试，并运行验证修复。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 测试生成与修复默认在 Docker 中执行；选择主机执行时，仍需 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。工具不会自动推送、评论或合并 PR。修复轨迹保存在 checkout 的 `.selfforge/sessions/`，可用 `selfforge-agent trace --repo CHECKOUT RUN_ID` 查看。
+Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 与启发式/模型发现、下载可编辑分支、生成差异验证测试，并运行验证修复。审查发现始终标为 `suspected`；导入与审查不会执行 PR 代码。Web 测试生成与修复默认在 Docker 中执行；选择主机执行时，仍需 `SELFFORGE_ENABLE_HOST_TESTS=1` 和单次明确勾选信任。该专项工作流不会自动推送、评论或合并 PR；通用 Coding 的 commit/PR 交付由用户另行显式发起。修复轨迹保存在 checkout 的 `.selfforge/sessions/`，可用 `selfforge-agent trace --repo CHECKOUT RUN_ID` 查看。
 
 ## Roadmap
 
-下一步优先扩展并冻结带参考验证的 20 题正式评测集，随后补全从 worktree Diff 到提交并创建 PR 的产品交付流程；自动依赖识别与更广的环境配置也仍待实现。具体验收顺序见[开发指南](./docs/development.md)。
+下一步逐题扩展有参考正负控的任务，再冻结 20 题、每题至少 3 次的正式验收策略。已有显式 commit/PR 交付和只读环境发现；自动依赖安装、更广的环境配置仍开放。一次接手一个工作单元，见[可接手任务](./docs/backlog.md)与[产品边界](./docs/product-scope.md)。
+
+## 开发与 Agent 协作
+
+新贡献者或 coding agent 从 [AGENTS.md](./AGENTS.md) 和[开发指南](./docs/development.md)开始，再按[协作流程](./docs/agent-workflow.md)领取一个任务。[任务卡模板](./docs/task-template.md)统一范围、验收和交接；[工程约束](./docs/engineering-invariants.md)按模块查阅。Roadmap 是方向，历史审计是指定版本的证据，都不能直接当成本轮整份任务单。贡献入口见 [CONTRIBUTING.md](./CONTRIBUTING.md)。

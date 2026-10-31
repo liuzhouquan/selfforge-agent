@@ -1,89 +1,95 @@
 # 开发指南
 
-本文件说明怎样推进和验证 selfForge Agent；功能定义以[产品边界](./product-scope.md)为准，执行路径见[架构](./architecture.md)，缺陷证据见[代码审计](./code-audit.md)。[Roadmap](./roadmap.md)记录能力状态，不把候选评测题数量当作产品完成度。
+本指南回答新贡献者或 coding agent 的四个问题：先读什么、改哪里、怎样验收、如何交接。产品目标是面向 Python Git 仓库的 Coding Agent 与测试框架；CLI/Web 共用 Runtime，PR Review/差异测试/Repair 是专项流程。
 
-## 当前交付边界
+## Reading order
 
-目标是面向 Python Git 仓库的 Coding Agent 与测试框架：用户提交任务，Agent 在独立 worktree 中读、改、测，交付可检查的 Diff、测试结果和会话轨迹。Web 与 CLI 使用同一 Runtime。PR Review、差异测试生成和 Repair 是专项流程。
+1. [AGENTS.md](../AGENTS.md)：自动读取的短入口、任务边界与通用交付规则。
+2. [Agent 协作流程](./agent-workflow.md)：确认现场 → 写任务 → 实施 → 验证 → 交接；小任务自主推进，不等待形式审批。
+3. [产品边界](./product-scope.md)与[可接手任务](./backlog.md)：分清目标、已实现、待验证和本轮选中的一个工作单元。
+4. 下方模块表，以及涉及模块的[工程约束](./engineering-invariants.md)和专门契约；无需一开始通读所有历史报告。
+5. 需要追踪执行路径时读[架构](./architecture.md)；调查旧问题时再读带基线 SHA 的审计/评测记录。
 
-- 已有：原生 Tool Calling、受限文件工具、Docker 执行、可恢复会话、Web 工作台、独立工作区、非空 JUnit 验证、预算反馈、参考修复预检与私有失败诊断；显式离线依赖镜像和会话环境绑定已接入同一 Runtime。
-- 已新增：worktree commit/PR 交付、只读布局/依赖文件识别、锁文件导出、风险排序、堆栈关联和 CLI 审批。交付规则见[指南](./pr-delivery.md)，审查证据见[分支复核](./pr-delivery-review.md)。
-- 尚未完成：自动安装/构建依赖、更广的环境配置、真正的风险因果验证、模型专用精确 Tokenizer，以及 20 题 × 每题 3 次正式模型验收。Repair 的 proposer loop 仍独立。
-- 暂不增加：Multi-Agent、通用 MCP 平台、额外 RAG、大型前端或另一套 Runtime。
-- `completed` 要求最后一次可能持久写入后 `run_tests` 有非空 JUnit 通过证据、测试前后和当前工作区指纹一致，且模型给出非空最终答复；不代表需求全部满足，也不防恶意仓库伪造证据。正式评测还需独立可见/隐藏测试与允许修改路径检查。
+跨模块或行为变更使用[任务卡](./task-template.md)。Owner、分支、基线、验收、真实结果和下一步放在同一个记录里，避免依赖聊天上下文。人和 agent 使用相同流程；是否启动并行 agent 由当前用户/工具授权决定。
 
-七个 PR 的组合与验证记录见[Runtime 整合](./runtime-integration.md)。独立分支历史测试数不能相加，也不能用于替代组合版本的全量回归。
+## 文档职责与冲突处理
 
-## 模块与变更入口
-
-| 责任 | 主要源码 | 相关回归 |
+| 文件 | 回答的问题 | 更新时机 |
 | --- | --- | --- |
-| 工具循环、完成条件、中断恢复、预算、上下文与审批 | `runtime/agent.py`、`session.py`、`fingerprint.py`、`context.py`、`control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_context.py`、`test_context_precision.py`、`test_session_metrics.py`、`test_runtime_budget.py`、`test_runtime_composition.py`、`test_workspace_evidence.py`、`test_workspace_fingerprint.py` |
-| 依赖镜像与会话环境 | `runtime/images.py`、`environment.py` | `test_dependency_images.py`、`test_session_environment.py`、`test_environment_detection.py` |
-| 文件权限、编辑策略、命令与暂存限制 | `runtime/tools.py`、`execution.py` | `test_runtime.py`、`test_docker_staging.py` |
-| 模型协议、回退、配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py` | `test_model_deadline.py`、`test_providers.py` |
-| Web 任务持久化、锁、取消 | `api/coding_jobs.py`、`api/app.py` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py` |
-| 工作区、Diff 与交付 | `runtime/workspace.py`、`workspace_diff.py`、`delivery.py` | `test_workspace.py`、`test_workspace_delivery.py`、`test_delivery_safety.py` |
-| 测试证据、诊断、修复、测试生成与风险归因 | `verification/`、`coding/`、`runtime/pricing.py` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py`、`test_risk_prioritization.py`、`test_causal_investigation.py`、`test_pricing.py` |
-| 独立评测、参考修复与私有快照 | `runtime/benchmark.py`、`evaluation.py`、`failure_artifacts.py` | `test_benchmark.py`、`test_benchmark_isolation.py`、`test_reference_validation.py`、离线 Coding 演示 |
+| 当前用户任务 / 任务卡 | 这一轮到底做什么、哪些不做、谁接手 | 开工、必要范围变化、交接 |
+| `AGENTS.md` | 全局规则、读取顺序、交付要求 | 协作规则变化；保持简短 |
+| `product-scope.md` / `.en.md` | 最终产品边界及完成条件 | 产品能力/验收边界变化；两种语言同步 |
+| `backlog.md` | 下一位可以接哪个小任务、前提是否满足 | 认领/完成/优先级变化 |
+| `engineering-invariants.md` 及链接契约 | 哪些执行、权限、状态和证据规则不能回退 | 所属行为变化且有对应验证时 |
+| `architecture.md` | 实际模块职责和调用路径 | 数据流/职责变化 |
+| `roadmap.md` | 能力级状态和较长期方向 | 功能状态变化；不当作一次任务清单 |
+| 审计/评测/整合记录 | 某个 SHA 下的观察与证据 | 保留历史；补后续链接，不能冒充当前待办 |
 
-源码相对 `src/selfforge_agent/`，测试相对 `tests/`。新增能力先找现有模块的扩展点；只为已确认的问题增加抽象。
+用户指令优先。发现文档互相冲突或实现不符时，用源码路径和复现确认实际行为，修正所属文档或实现；不能仅因为“代码现在如此”就放宽安全/证据规则。当前状态只在所属文件维护，README 链接过去；测试数、模型分数只在对应 SHA/策略的证据记录维护，避免多处复制漂移。
 
-## 本地环境与验证
+## 当前能力与边界
 
-Python 3.11+、Git、uv；完整隔离验证还需要 Docker daemon。安装步骤应使用锁文件：
+已有一套原生 Tool Calling Runtime、受限工具、会话/轨迹、Docker 执行、Web 工作台、持久 worktree、非空 JUnit 与内容指纹证据，以及显式 commit/PR 交付。已有只读依赖/布局发现、有限锁导出、离线镜像准备、风险排序、堆栈关联、交互审批和可选配置费率估算。
+
+正式 20 题 × 每题至少 3 次真实模型验收仍未完成；自动安装构建环境、因果反事实验证和模型专用精确 Tokenizer 仍开放。Repair proposer loop 仍独立。详细状态以产品边界为准，下一步从 Backlog 选择，不重复实现已合并能力。
+
+当前不增加多 Agent 产品编排、通用 MCP 平台、额外 RAG、大型前端或另一套 Runtime；开发时多人/agent 分工与产品内的 Multi-Agent 能力是两件事。
+
+`completed` 要求非空 JUnit 成功、测试前后及当前工作区指纹匹配，并有非空最终答复；它不代表全部用户需求已经被充分验证。独立 Eval 还有允许修改路径和可见/隐藏测试门槛。指纹不是锁、原子快照或恶意 Host 防御；Web 锁不代表 CLI/外部进程已有统一协调。
+
+会话恢复覆盖进程中断，不承诺断电事务一致性；取消不保证立即中止阻塞中的 HTTP 请求。这些边界不能因本地测试通过而写成已解决。
+
+## Module entry points
+
+源码相对 `src/selfforge_agent/`，测试相对 `tests/`。新增行为先找现有扩展点；不要并建另一套 Runtime、Runner 或持久状态系统。
+
+| 责任 | 主要源码 | 优先回归/契约 |
+| --- | --- | --- |
+| Native loop、预算、恢复、上下文、审批 | `runtime/agent.py`、`runtime/session.py`、`runtime/context.py`、`runtime/control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_runtime_composition.py`、`test_runtime_budget.py`、`test_context*.py`；[Runtime 约束](./engineering-invariants.md#runtime-model-protocol-and-context) |
+| 文件/搜索/执行器与暂存 | `runtime/tools.py`、`runtime/execution.py` | `test_runtime.py`、`test_docker_staging.py`；[工具与沙箱](./engineering-invariants.md#tools-sandbox-and-dependency-environments) |
+| 依赖准备、环境绑定与发现 | `runtime/images.py`、`runtime/environment.py` | `test_dependency_images.py`、`test_session_environment.py`、`test_environment_detection.py`、`test_delivery_revert_and_lock_export.py`；[依赖镜像](./dependency-images.md) |
+| 模型、回退和配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py`、`coding/model_client.py` | `test_model_deadline.py`、`test_providers.py`、`test_repair_agent.py` |
+| Web 任务、序列化、锁、取消、UI | `api/coding_jobs.py`、`api/app.py`、`api/static/` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py`、`test_session_metrics.py`；[状态与 Web 约束](./engineering-invariants.md#private-state-providers-web-jobs-and-workspaces) |
+| 工作区、Diff、提交/PR/还原 | `runtime/workspace.py`、`runtime/workspace_diff.py`、`runtime/delivery.py` | `test_workspace.py`、`test_workspace_delivery.py`、`test_delivery_safety.py`；[交付契约](./pr-delivery.md) |
+| JUnit、诊断、内容证据 | `verification/`、`runtime/fingerprint.py`、`runtime/failure_artifacts.py` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_workspace_evidence.py`、`test_workspace_fingerprint.py`；[证据约束](./engineering-invariants.md#junit-diagnostics-and-workspace-evidence) |
+| Review、差异测试、Repair | `review/`、`coding/` | `test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py`、`test_risk_prioritization.py`、`test_causal_investigation.py`；[专项约束](./engineering-invariants.md#specialized-pr-review-testing-and-repair) |
+| 用量与可选费用 | `runtime/session.py`、`runtime/pricing.py`、`coding/agent.py` | `test_session_metrics.py`、`test_pricing.py`、`test_repair_agent.py`；[计量规则](./token-metrics.md) |
+| 独立评测与参考预检 | `runtime/benchmark.py`、`runtime/evaluation.py` | `test_benchmark.py`、`test_benchmark_isolation.py`、`test_reference_validation.py`；[评测约束](./engineering-invariants.md#independent-evaluation-and-reference-controls) |
+
+## Verification gates
+
+需要 Python 3.11+、Git、uv；当前 GitHub CI 使用 Python 3.12。没有配置类型检查器，不要把 Ruff 通过写成类型检查通过。
 
 ```sh
 uv sync --locked --dev
+# 按本任务选择相关测试；以下只是交付变更的例子
+uv run --no-sync pytest -q tests/test_delivery_safety.py
 uv run --no-sync ruff check .
-uv run --no-sync pytest -q -m 'not integration'
+# Docker 相关/最终隔离验证前启用 daemon 并准备镜像
 docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
-uv run --no-sync pytest -q -m integration
-# 提交前最终回归（包含可用的 Docker 集成测试）
+# 对最终组合执行一次完整回归
 uv run --no-sync pytest -q
-uv run --no-sync ruff check .
 git diff --check
 ```
 
-缺少 daemon/镜像时，Docker 测试会跳过；报告必须写出 skipped 数量，不能称为隔离验证通过。`--no-sync` 仅复用当前环境，不能证明依赖已按锁文件安装；若同步因网络失败，应记录该限制。默认镜像只有 Python/pytest，不具备任意项目依赖。
+镜像构建命令在仓库根目录执行；默认镜像只有 Python/pytest，不包含任意项目依赖。无需重复执行与本次无关且已通过的全套命令；源码再改动、出现失败或未解决风险时，重跑相关检查并确认最终组合。CI 按不重叠的 `not integration` / `integration` 分组覆盖完整测试集，不相加不同分支/重叠选择的数量。
 
-无需 API Key 的链路演示：
+| 变更/环境 | 最低需要的证据 |
+| --- | --- |
+| 运行行为或状态 | 有意义的相关回归、最终组合完整 pytest、Ruff；缺陷要有旧行为失败证据 |
+| Docker/权限/跨进程 | 对应集成或故障验证；缺 daemon/镜像的 skip 必须说明，等待可用环境/远端结果 |
+| API/UI | 检查实际序列化响应；JS 变更检查 `node --check src/selfforge_agent/api/static/app.js`；交互变化做浏览器 smoke 或明确尚未覆盖 |
+| 仅文档/模板 | 相对链接及锚点、引用源码/测试路径、状态一致性、`git diff --check`；本地无需 Python pytest |
+| 模型或 Eval | 固定任务/报告哈希、模型/供应商策略、镜像、预算与重复次数；真实服务结果单列 |
 
-```sh
-uv run --no-sync python examples/coding_demo.py
-```
+本机没有 Docker 时可先执行 `uv run --no-sync pytest -q -m 'not integration'`。完整 pytest 中 Docker 项跳过不能称为“隔离通过”；保留 skipped 数量/原因，远端 CI 必须实际构建镜像并执行集成组。依赖同步失败时说明原因；`--no-sync` 本身不证明锁文件环境已经安装。
 
-它证明工具协议及代码修改/测试链路可执行，不作为真实模型成功率。真实供应商测试与 `eval-suite` 单独运行，记录模型、任务 SHA、镜像 ID、步数/时间预算、重复次数和报告哈希；不得提交密钥、原始会话、工具输出或课程源码。
+无需 API Key 的链路演示为 `uv run --no-sync python examples/coding_demo.py`；它证明协议与改测链路，不代表模型能力。真实供应商/写入 GitHub 的操作沿用当前授权和预算，记录 mock 与真实调用的区别，不重复请求已有授权。
 
-## 每次开发的最小闭环
+`.github/workflows/ci.yml` 在 PR 和 main push 上执行锁定依赖、Ruff、单元与 Docker 集成测试；工作流 token 保持只读，不能加入模型密钥。CI 配置变更需检查真实远端运行，不能用本地 pytest 代替。
 
-1. 检查 Git 工作区、当前 `main` 和未合并 PR，明确本次基线及依赖。独立修复从已合并代码开始，避免无意堆叠 PR。
-2. 用代码路径与复现区分 P0/P1/P2；未经验证的推断明确标注。行为缺陷先写能在旧实现失败的回归测试。
-3. 更新文档中的边界与验收条件，然后实施小范围修改。保留既有测试，不以删断言获得通过。
-4. 先跑相关测试，再跑完整 pytest 和 Ruff。涉及 Web/Docker/跨进程状态时加对应故障或集成验证；只有存在剩余风险或新代码变化时才重复全量验证。
-5. 检查 diff、敏感信息和文档一致性，提交并记录 commit/PR。区分“本地修复”“CI 通过”“已合并”，不得混用。
+## 交付完成条件
 
-## 近期开发顺序与验收
+任务卡的每个验收编号都有实际结果或明确未完成项；错误路径、消费者和必要的集成边界已覆盖；没有删除/削弱旧断言；源码、文档声明与验证口径一致；敏感 diff 已检查；HEAD、PR、CI 和剩余事项已写入交接。
 
-| 顺序 | 工作 | 验收证据 |
-| --- | --- | --- |
-| 已整合 | 中断后的验证状态恢复 | 写入前失效、未完成调用保守恢复；组合测试覆盖 JUnit 成功后中断写入，再续跑失败、编辑、重测成功 |
-| 已整合 | 通用 Coding 测试证据 | 共用非空 JUnit Runner；全部 skipped、空/损坏报告、超时和失败诊断均有回归，不弱化 Repair/benchmark 门槛 |
-| 已整合 | 显式可复现项目依赖环境 | 哈希锁定 wheels、离线安装和镜像 ID；会话模式/镜像不可静默更换 |
-| 已整合 | 工作区与测试证据绑定 | 前后测试、后续模型请求和最终答复时校验内容；恢复/外部编辑撤销旧证据；有界扫描与 v2 迁移有回归，真实 Docker 用例需 daemon/镜像 |
-| 本轮实现 | 依赖环境识别与 Web 重启恢复验证 | 识别 src/flat 布局、pyproject/requirements、锁文件及 pytest 目录；回归覆盖异常退出后重启续跑至完成 |
-| 本轮实现 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，排除受保护文件，附带测试验证状态，覆盖远端与 gh 失败恢复，不自动强推或合并 |
-| 本轮实现 | 风险自动排序、堆栈关联与可选费用估算 | 排序仍是假设；堆栈匹配不证明因果；费用逐调用按显式费率估算，缺失任一费率/用量时不报总费用 |
-| 本轮实现 | 启发式 Token 估算、压缩与交互审批 | 估算覆盖语法、CJK、长标识符和空白；完整保留 assistant 与全部工具回填；审批后重查预算/取消；Token 与可选费用规则见[计量](./token-metrics.md) |
-| 本轮实现 | 工作区还原、锁文件导出与 PR 修复参数 | 支持 worktree 恢复已跟踪文件并清理未跟踪文件同时保护凭据；支持解析 uv.lock 导出沙箱离线构建所需的哈希锁定 requirements；PR 修复接口支持指定自定义镜像与执行超时 |
-| 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
-
-只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。现有[五题参考控制集](../benchmark/validated-candidates/iterator-traversal.md)跨三个仓库，全部通过 Docker 负例/参考正例；其中异步空输入、Unicode 分隔与零分块任务和早期候选重叠，不能额外计数。目录深度剪枝与替换回调停止涉及不同执行机制；前者保留边界目录匹配和忽略规则，后者是明确的功能扩展，不能宣称为上游确认的 bug。
-
-## 尚需明确的可靠性边界
-
-- 文件工具限制路径，Docker 隔离命令；Host 显式信任后可写工作区。隔离副本中的命令修改不回写。
-- 测试证据已有[有界内容指纹绑定](./workspace-evidence.md)，能在执行/恢复时发现外部改动；它不是原子快照、持续文件监控或 CLI 工作区锁。最后检查后的竞态、排除路径与 Host 外部依赖不在保证范围内。
-- 会话支持进程中断恢复，不承诺断电后日志和文件写入的事务一致性。完整损坏记录仍明确报错。
-- Web 锁跨进程，活动任务数量限制仍按进程。取消不保证即时中止阻塞的 HTTP 请求。
-- 审计是分阶段检查，不能以全量 pytest 通过代替真实模型、外部 GitHub 故障或安全攻击链验证。
+已实现、本地验证、CI 通过、已合并是不同状态。仅在当前用户授权整合后完成合并；整合时保留提交历史并确认 main。完整流程及可复制的接手指令见 [Agent 协作流程](./agent-workflow.md)。

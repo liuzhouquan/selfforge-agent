@@ -197,8 +197,12 @@ The reference-qualified set now covers **5 tasks / 3 repositories**, all with pa
 
 ## Specialized Workflows: PR Review
 
-The web workbench can also import your own or someone else's accessible GitHub PR, inspect diffs and heuristic/model findings, check out an editable branch, generate a differential test, and optionally run verified repair. Findings remain `suspected`; import and review never execute PR code. Web test generation and repair run in Docker by default. Explicit host execution still requires `SELFFORGE_ENABLE_HOST_TESTS=1` and per-request trust. The app does not push, comment on, or merge PRs. Repair traces are stored in the checkout's `.selfforge/sessions/`; inspect them with `selfforge-agent trace --repo CHECKOUT RUN_ID`.
+The web workbench can also import your own or someone else's accessible GitHub PR, inspect diffs and heuristic/model findings, check out an editable branch, generate a differential test, and optionally run verified repair. Findings remain `suspected`; import and review never execute PR code. Web test generation and repair run in Docker by default. Explicit host execution still requires `SELFFORGE_ENABLE_HOST_TESTS=1` and per-request trust. This specialized workflow does not automatically push, comment on, or merge PRs; general Coding commit/PR delivery is a separate explicit user action. Repair traces are stored in the checkout's `.selfforge/sessions/`; inspect them with `selfforge-agent trace --repo CHECKOUT RUN_ID`.
 
 ## Roadmap
 
-Next, expand and freeze the reference-qualified 20-task acceptance set, then complete the product delivery flow from worktree diff through commit and PR creation. Automatic dependency detection and broader environment profiles also remain open. See the [development guide](./docs/development.md) for acceptance order.
+Next, qualify tasks individually, then freeze the twenty-task acceptance policy with at least three attempts per task. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
+
+## Development and agent collaboration
+
+New contributors and coding agents start with [AGENTS.md](./AGENTS.md) and the [development guide](./docs/development.md), then take one task through the [collaboration workflow](./docs/agent-workflow.md). The [task template](./docs/task-template.md) records scope, acceptance and handoff; read [engineering invariants](./docs/engineering-invariants.md) by affected module. Roadmap items are directions, and audit records describe pinned versions; neither is a request to implement everything in one branch. See [CONTRIBUTING.md](./CONTRIBUTING.md).
