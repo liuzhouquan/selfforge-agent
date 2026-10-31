@@ -26,7 +26,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | --- | --- | --- |
 | Coding Agent Runtime | Implemented | OpenAI-compatible native tool calling, multiple turns, step/time limits, dynamic budget and verification feedback, provider fallback |
 | Tools and sessions | Implemented | read/edit/search/bash/run_tests; bounded line-range reads of large files, pytest `-k` selection, workspace path checks, resumable JSONL sessions and traces |
-| Context management | Implemented | Truncated tool output, approximate token budget, deterministic summary retaining task constraints |
+| Context management & controls | Implemented | Truncated tool output, syntax- and CJK-aware token estimation, structured action compaction preserving recent turns, and interactive action approval hook |
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Nonempty JUnit success plus matching workspace fingerprints; external changes revoke evidence, and unbound legacy evidence needs retesting |
 | Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cross-process cancellation, job history, and session resume; interrupted work needs an explicit resume |
@@ -44,7 +44,7 @@ uv run python examples/test_recovery_demo.py --provider deepseek
 
 One DeepSeek run completed in 5 turns, kept the original tests unchanged, and passed all 4 independent checks. This is a generated-fixture demonstration, separate from formal task evaluation. See [test diagnostics](./docs/test-diagnostics.md) for private snapshots, bounds and reproduction.
 
-The PR #30 combined version passed **257 local tests** at that time; this is historical. After PR #32, the latest local full suite reported **274 passed / 11 skipped** (the skipped tests require local Docker). The corresponding GitHub main-branch CI ran **274 unit tests and 11 Docker integration tests, all passing**. This is not a model success rate; see the [workspace-evidence contract](./docs/workspace-evidence.md).
+The PR #30 combined version passed **257 local tests** at that time; this is historical. After PR #32, the latest local full suite reported **274 passed / 11 skipped** (the skipped tests require local Docker). The corresponding GitHub main-branch CI ran **274 unit tests and 11 Docker integration tests, all passing**. The current local non-integration suite passes **307 passed / 11 skipped**. This is not a model success rate; see the [workspace-evidence contract](./docs/workspace-evidence.md).
 
 ## Quick Start
 

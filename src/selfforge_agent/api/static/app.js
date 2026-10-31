@@ -101,6 +101,16 @@ function renderCodingJob(job) {
     ? `独立工作区：${job.workspace_path} · 分支 ${job.branch} · 基于 ${job.base_sha.slice(0, 12)}`
     : `直接修改：${job.workspace_path}`;
   $("coding-answer").textContent = job.error || job.answer || "Agent 正在处理任务…";
+  const modelCalls = (job.trace || []).filter((e) => e.event === "model_call" && e.usage);
+  if (modelCalls.length) {
+    const promptTokens = modelCalls.reduce((s, e) => s + (e.usage.prompt_tokens || 0), 0);
+    const completionTokens = modelCalls.reduce((s, e) => s + (e.usage.completion_tokens || 0), 0);
+    $("metric-tokens").textContent = `${promptTokens + completionTokens} (P: ${promptTokens} / C: ${completionTokens})`;
+    $("metric-verification").textContent = job.verification_passed ? "已通过 JUnit 验证" : (job.state === "completed" ? "已完成" : "未通过/待验证");
+    $("coding-metrics-bar").hidden = false;
+  } else {
+    $("coding-metrics-bar").hidden = true;
+  }
   $("coding-cancel").hidden = !codingJobRunning;
   $("coding-cancel").disabled = job.cancel_requested;
   $("coding-resume-current").hidden = codingJobRunning || !job.can_resume;
@@ -479,8 +489,13 @@ function render(data) {
   $("model-summary").hidden = !data.model_attempts.length;
 
   const risks = $("testgen-risk");
-  risks.replaceChildren(element("option", "", "不关联，手动描述行为"));
-  risks.firstChild.value = "";
+  risks.replaceChildren();
+  const optNone = element("option", "", "不关联，手动描述行为");
+  optNone.value = "";
+  risks.append(optNone);
+  const optAuto = element("option", "", "⚡ 自动选择最高优先级风险 (Auto-prioritize)");
+  optAuto.value = "auto";
+  risks.append(optAuto);
   report.findings.forEach((finding, index) => {
     const option = element("option", "", `${finding.file_path}:${finding.line_number} · ${finding.category} · ${finding.description}`);
     option.value = String(index);
@@ -589,25 +604,39 @@ $("testgen-form").addEventListener("submit", async (event) => {
   button.textContent = "正在生成与验证…";
   try {
     const riskIndex = $("testgen-risk").value;
-    const finding = riskIndex === "" ? null : current.report.findings[Number(riskIndex)];
+    const isAuto = riskIndex === "auto";
+    const finding = (riskIndex === "" || isAuto) ? null : current.report.findings[Number(riskIndex)];
     const target = finding ? {
       file_path: finding.file_path, line_number: finding.line_number,
       description: finding.description, evidence: finding.evidence,
       category: finding.category,
     } : null;
     const response = await postJson("/api/github/generate-tests", {
-      url: current.pr.url, task: $("testgen-task").value.trim(),
+      url: current.pr.url,
+      task: $("testgen-task").value.trim() || (isAuto ? "验证优先级最高的变更风险" : ""),
       sandbox: $("testgen-sandbox").value,
       trust_local_tests: host && $("testgen-trust").checked,
       provider: $("testgen-provider").value,
       fallback: $("testgen-fallback").checked,
-      max_candidates: Number($("testgen-count").value), target,
+      max_candidates: Number($("testgen-count").value),
+      target,
+      auto_target: isAuto,
     });
     const batch = response.batch;
     const selected = batch.candidates.find((item) => item.candidate_index === batch.selected_candidate);
     differentialTest = selected?.generated_test?.test_code || "";
     $("testgen-status").textContent = `状态：${batch.status}`;
-    $("testgen-detail").textContent = `${batch.candidates.length} 次尝试 · 停止原因：${batch.stop_reason} · ${batch.target ? `关联 ${batch.target.file_path}:${batch.target.line_number}（待验证假设）` : "未关联审查风险"} · 轨迹 ID：${batch.run_id}`;
+    const inv = batch.selected_causal_investigation || selected?.causal_investigation;
+    const cost = batch.total_cost || selected?.cost;
+    let meta = `${batch.candidates.length} 次尝试 · 停止原因：${batch.stop_reason} · ${batch.target ? `关联 ${batch.target.file_path}:${batch.target.line_number}（待验证假设）` : "未关联审查风险"}`;
+    if (inv) {
+      meta += ` · 因果调查：${inv.confidence}（${inv.explanation}）`;
+    }
+    if (cost) {
+      meta += ` · 预估成本：$${cost.total_cost_usd.toFixed(6)} ${cost.currency}`;
+    }
+    meta += ` · 轨迹 ID：${batch.run_id}`;
+    $("testgen-detail").textContent = meta;
     const list = $("testgen-candidates");
     list.replaceChildren();
     batch.candidates.forEach((candidate) => {
@@ -634,7 +663,9 @@ $("testgen-form").addEventListener("submit", async (event) => {
 
 $("testgen-risk").addEventListener("change", () => {
   const value = $("testgen-risk").value;
-  if (value !== "" && current) {
+  if (value === "auto") {
+    $("testgen-task").value = "验证优先级最高的变更风险";
+  } else if (value !== "" && current) {
     $("testgen-task").value = current.report.findings[Number(value)].description;
   }
 });

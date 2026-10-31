@@ -61,7 +61,12 @@
           <div id="coding-error" class="alert coding-error" hidden role="alert"></div>
           <div id="coding-job" class="coding-job" hidden>
             <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-remove-workspace" type="button" hidden>清理已提交的工作区</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>
-            <p id="coding-job-meta"></p><p id="coding-workspace-info"></p><p id="coding-answer"></p><pre id="coding-trace"></pre>
+            <p id="coding-job-meta"></p><p id="coding-workspace-info"></p><p id="coding-answer"></p>
+            <div id="coding-metrics-bar" class="metrics" style="margin: 10px 0;" hidden>
+              <div><small>Token 消耗</small><strong id="metric-tokens">-</strong></div>
+              <div><small>测试验证</small><strong id="metric-verification">待验证</strong></div>
+            </div>
+            <pre id="coding-trace"></pre>
             <div id="coding-diff" class="coding-diff" hidden>
               <div class="coding-diff-head"><strong>工作区改动</strong><button id="coding-diff-refresh" type="button">刷新 Diff</button></div>
               <p id="coding-diff-state">正在读取改动…</p>
@@ -174,7 +179,10 @@
             <div><div class="section-kicker">SELF-TESTING</div><h3>生成回归测试</h3><p>可选择一条审查风险作为生成目标，最多尝试 3 个不同的 pytest 候选。每个候选分别在 Base 和 Head 验证，找到 Base 通过且 Head 断言失败的测试即停止。风险仍是待验证假设；差异结果不能单独证明它的因果关系。默认使用无网络 Docker。</p></div>
             <form id="testgen-form">
               <label for="testgen-risk">关联审查风险</label>
-              <select id="testgen-risk"><option value="">不关联，手动描述行为</option></select>
+              <select id="testgen-risk">
+                <option value="">不关联，手动描述行为</option>
+                <option value="auto">自动选择最高优先级风险 (Auto-prioritize risks)</option>
+              </select>
               <label for="testgen-task">要检验的行为</label>
               <input id="testgen-task" required placeholder="例如：add(2, 3) 应返回 5" />
               <label for="testgen-count">最多尝试</label>

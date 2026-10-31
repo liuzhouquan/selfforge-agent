@@ -558,3 +558,31 @@ def test_docker_timeout_forces_container_cleanup(tmp_path: Path, monkeypatch) ->
                         lambda argv, **_kwargs: removed.append(argv))
     assert DockerExecutor(tmp_path).run("sleep 10", 1).timed_out
     assert removed and removed[0][:3] == ["docker", "rm", "-f"]
+
+
+def test_coding_agent_approval_hook_rejects_denied_actions(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    session = SessionStore(tmp_path / "sessions")
+    tools = ToolRegistry(tmp_path, HostExecutor(tmp_path, trusted=True))
+
+    class ApprovalTestModel:
+        def __init__(self) -> None:
+            self.turn = 0
+
+        def complete(self, messages: list[dict], _tools: list[dict], _timeout: float) -> ModelTurn:
+            self.turn += 1
+            if self.turn == 1:
+                return _call("bash", {"command": "rm -rf calculator.py"}, 1)
+            return ModelTurn({"role": "assistant", "content": "Tool was rejected; stopping."},
+                             "stop", "fixture", "scripted", None)
+
+    def approval(name: str, args: dict) -> bool:
+        return not (name == "bash" and "rm" in args.get("command", ""))
+
+    agent = CodingAgent(ApprovalTestModel(), tools, session, approval_hook=approval)
+    result = agent.run("Perform actions")
+    assert result.status == "unverified"
+    messages, _ = session.load()
+    tool_reply = next(item for item in messages if item.get("role") == "tool")
+    assert "Action rejected: operator approval denied" in tool_reply["content"]
+    assert tmp_path.joinpath("calculator.py").exists()
