@@ -10,10 +10,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, ValidationError
 
+from selfforge_agent.coding.causal_investigation import CausalInvestigation, investigate_causality
+from selfforge_agent.coding.models import RiskTarget
 from selfforge_agent.coding.worktree import detached_worktree
 from selfforge_agent.core.git_context import build_context
 from selfforge_agent.models import ChangeKind, PRContext, TestResult
 from selfforge_agent.runtime.model import ChatModel
+from selfforge_agent.runtime.pricing import MonetaryCost, estimate_monetary_cost
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
@@ -22,16 +25,6 @@ from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, Tr
 class GeneratedTest(BaseModel):
     test_code: str = Field(min_length=20, max_length=8_192)
     rationale: str = Field(min_length=1, max_length=500)
-
-
-class RiskTarget(BaseModel):
-    """A review hypothesis anchored to an actual added line, not a verified defect."""
-
-    file_path: str = Field(min_length=1, max_length=500)
-    line_number: int = Field(ge=1)
-    description: str = Field(min_length=1, max_length=1_000)
-    evidence: str = Field(min_length=1, max_length=2_000)
-    category: str = Field(default="", max_length=100)
 
 
 class DifferentialTestReport(BaseModel):
@@ -50,6 +43,8 @@ class DifferentialTestReport(BaseModel):
     base_test: TestResult | None = None
     head_test: TestResult | None = None
     errors: list[str] = Field(default_factory=list)
+    causal_investigation: CausalInvestigation | None = None
+    cost: MonetaryCost | None = None
 
 
 class TestGenerationBatchReport(BaseModel):
@@ -63,6 +58,8 @@ class TestGenerationBatchReport(BaseModel):
     stop_reason: Literal["differential", "attempt_limit", "time_budget"]
     selected_candidate: int | None = None
     candidates: list[DifferentialTestReport]
+    selected_causal_investigation: CausalInvestigation | None = None
+    total_cost: MonetaryCost | None = None
 
 
 _SUBMIT_TEST = [{"type": "function", "function": {
@@ -198,6 +195,8 @@ class DifferentialTestGenerator:
                         _SUBMIT_TEST, min(45, _remaining(deadline)),
                     )
                     report.provider, report.model = turn.provider, turn.model
+                    if turn.usage:
+                        report.cost = estimate_monetary_cost(turn.model, turn.usage)
                     if self.session:
                         self.session.trace("testgen_model", provider=turn.provider, model=turn.model,
                                            candidate_index=candidate_index,
@@ -239,6 +238,10 @@ class DifferentialTestGenerator:
                           and report.head_test.status == "failed" and report.head_test.failed > 0
                           and report.head_test.errors == 0):
                         report.status = "differential"
+                        report.causal_investigation = investigate_causality(
+                            target, report.head_test, report.base_test,
+                            test_code=generated.test_code if generated else "",
+                        )
                     else:
                         report.status = "inconclusive"
                         report.errors.append("Base/Head results did not show a clean assertion regression")
@@ -282,10 +285,28 @@ class DifferentialTestGenerator:
                   else "error")
         selected = next((item.candidate_index for item in candidates
                          if item.status == "differential"), None)
+        selected_investigation = next(
+            (item.causal_investigation for item in candidates
+             if item.candidate_index == selected and item.causal_investigation is not None),
+            None,
+        )
+        valid_costs = [c.cost for c in candidates if c.cost is not None]
+        if valid_costs:
+            total_cost = MonetaryCost(
+                currency="USD",
+                prompt_cost_usd=round(sum(c.prompt_cost_usd for c in valid_costs), 6),
+                completion_cost_usd=round(sum(c.completion_cost_usd for c in valid_costs), 6),
+                total_cost_usd=round(sum(c.total_cost_usd for c in valid_costs), 6),
+                calibrated=True,
+            )
+        else:
+            total_cost = None
         first = candidates[0]
         return TestGenerationBatchReport(
             run_id=first.run_id, repository=first.repository,
             base_sha=first.base_sha, head_sha=first.head_sha,
             task=task, target=target, status=status,
             stop_reason=stop_reason, selected_candidate=selected, candidates=candidates,
+            selected_causal_investigation=selected_investigation,
+            total_cost=total_cost,
         )

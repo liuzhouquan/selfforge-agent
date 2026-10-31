@@ -17,6 +17,7 @@ from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel
 from selfforge_agent.coding.models import RepairReport
+from selfforge_agent.coding.risk_prioritization import PrioritizedRisk, prioritize_risks
 from selfforge_agent.coding.test_generation import (
     DifferentialTestGenerator,
     DifferentialTestReport,
@@ -167,11 +168,22 @@ class GitHubGenerateTestsRequest(GitHubGenerateTestRequest):
     max_candidates: int = Field(default=2, ge=1, le=3)
     time_budget: float = Field(default=300, gt=0, le=600)
     target: RiskTarget | None = None
+    auto_target: bool = False
 
 
 class GitHubGenerateTestsResponse(BaseModel):
     checkout: CheckoutResult
     batch: TestGenerationBatchReport
+
+
+class GitHubPrioritizeRisksRequest(BaseModel):
+    url: str
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class GitHubPrioritizeRisksResponse(BaseModel):
+    checkout: CheckoutResult
+    risks: list[PrioritizedRisk]
 
 
 class AppConfig(BaseModel):
@@ -594,6 +606,10 @@ def _prepare_test_generation(request: GitHubGenerateTestRequest, client: Request
     try:
         pr = load_pr(request.url)
         if isinstance(request, GitHubGenerateTestsRequest):
+            if request.target is None and request.auto_target:
+                risks = prioritize_risks(pr.context)
+                if risks:
+                    request.target = risks[0].to_risk_target()
             validate_risk_target(pr.context, request.target)
         checkout = checkout_pr(pr.url, _WORKSPACES)
         repository = Path(checkout.path)
@@ -620,6 +636,19 @@ def github_generate_tests(request: GitHubGenerateTestsRequest, client: Request
         )
         return GitHubGenerateTestsResponse(checkout=checkout, batch=batch)
     except (GitContextError, WorktreeError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/github/prioritize-risks", response_model=GitHubPrioritizeRisksResponse)
+def github_prioritize_risks(request: GitHubPrioritizeRisksRequest, client: Request
+                            ) -> GitHubPrioritizeRisksResponse:
+    _require_local(client)
+    try:
+        pr = load_pr(request.url)
+        checkout = checkout_pr(pr.url, _WORKSPACES)
+        risks = prioritize_risks(pr.context, top_k=request.top_k)
+        return GitHubPrioritizeRisksResponse(checkout=checkout, risks=risks)
+    except (GitHubPRError, GitContextError, WorktreeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

@@ -20,6 +20,16 @@ class CodeEdit(BaseModel):
     rationale: str = Field(min_length=1)
 
 
+class RiskTarget(BaseModel):
+    """A review hypothesis anchored to an actual added line, not a verified defect."""
+
+    file_path: str = Field(min_length=1, max_length=500)
+    line_number: int = Field(ge=1)
+    description: str = Field(min_length=1, max_length=1_000)
+    evidence: str = Field(min_length=1, max_length=2_000)
+    category: str = Field(default="", max_length=100)
+
+
 class RepairObservation(BaseModel):
     task: str
     attempt: int

@@ -122,6 +122,11 @@ uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HE
   --task 'Check the behavior related to this risk' --finding-index 0 --max-candidates 3 \
   --output test-batch.json --test-output test_regression.py
 
+# Or automatically prioritize added-line risks from diff and test the highest-priority target
+uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
+  --task 'Check behavior of top prioritized risk' --auto-target --max-candidates 3 \
+  --output test-batch.json --test-output test_regression.py
+
 # Explicit host execution for a trusted PR only
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task 'Repair the regression' --sandbox host --trust-local-tests
@@ -160,7 +165,7 @@ The Runtime separates the loop, model adapter, tools, executor, context, and ses
 
 General Coding reuses the JUnit runners: `run_tests` needs exit code 0, at least one passing test, and no failures or errors. All-skipped suites, empty selections, and missing or malformed reports cannot establish completion. The tool returns counts and error details. General completion also requires equal pre/post-test and current workspace fingerprints. External changes or incomplete scans prevent completion and require retesting. Legacy evidence without workspace binding also needs retesting; see [content binding](./docs/workspace-evidence.md); see the [test evidence rules](./docs/test-evidence.md). `eval` independently reruns fixture tests and checks for a real source change; it does not trust the model's claim. PR Repair only emits a verified patch when Base tests pass, Head fails with an assertion, and Repaired passes. That establishes repair of an existing-suite regression, not causality for an individual review finding.
 
-`generate-test` creates one pytest candidate by default. `--max-candidates 2/3` lets it use prior Base/Head results for further attempts, stops early on a differential result, and skips duplicate code. Multi-candidate generation has a 300-second total budget by default; `--time-budget` can raise it to at most 600 seconds. `--finding-index` selects a local rule finding; the Web page can select a displayed rule or model finding. The server checks that the risk points to an actual added diff line. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. Tests run only in temporary worktrees until explicitly exported. The risk description remains a hypothesis; a differential result does not establish its cause.
+`generate-test` creates one pytest candidate by default. `--max-candidates 2/3` lets it use prior Base/Head results for further attempts, stops early on a differential result, and skips duplicate code. Multi-candidate generation has a 300-second total budget by default; `--time-budget` can raise it to at most 600 seconds. `--finding-index` selects a local rule finding; `--auto-target` (and Web API `auto_target`) automatically prioritizes added-line hypotheses by severity and category profiles to test the top-ranked risk. The server checks that the risk points to an actual added diff line. It writes `--test-output` only if Base passes and Head has an assertion failure with no collection errors. Other outcomes are `inconclusive` or `error`. Tests run only in temporary worktrees until explicitly exported. Reports now include causal link investigation (`causal_investigation`: whether Head failure tracebacks pass directly through the targeted file and line) and calibrated monetary cost estimation (`cost` / `total_cost`) for known model rates.
 
 ```sh
 uv run selfforge-agent eval --offline       # Deterministic protocol check, not model skill

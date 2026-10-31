@@ -23,7 +23,7 @@
 | 模型协议、回退、配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py` | `test_model_deadline.py`、`test_providers.py` |
 | Web 任务持久化、锁、取消 | `api/coding_jobs.py`、`api/app.py` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py` |
 | 工作区、Diff 与交付 | `runtime/workspace.py`、`workspace_diff.py`、`delivery.py` | `test_workspace.py`、`test_workspace_delivery.py` |
-| 测试证据、诊断、修复与测试生成 | `verification/`、`coding/` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py` |
+| 测试证据、诊断、修复、测试生成与风险归因 | `verification/`、`coding/`、`runtime/pricing.py` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py`、`test_risk_prioritization.py`、`test_causal_investigation.py`、`test_pricing.py` |
 | 独立评测、参考修复与私有快照 | `runtime/benchmark.py`、`evaluation.py`、`failure_artifacts.py` | `test_benchmark.py`、`test_benchmark_isolation.py`、`test_reference_validation.py`、离线 Coding 演示 |
 
 源码相对 `src/selfforge_agent/`，测试相对 `tests/`。新增能力先找现有模块的扩展点；只为已确认的问题增加抽象。
@@ -72,6 +72,7 @@ uv run --no-sync python examples/coding_demo.py
 | 已整合 | 工作区与测试证据绑定 | 前后测试、后续模型请求和最终答复时校验内容；恢复/外部编辑撤销旧证据；有界扫描与 v2 迁移有回归，真实 Docker 用例需 daemon/镜像 |
 | 本轮实现 | 依赖环境识别与 Web 重启恢复验证 | 识别 src/flat 布局、pyproject/requirements、锁文件及 pytest 目录；回归覆盖异常退出后重启续跑至完成 |
 | 本轮实现 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，排除受保护文件，附带测试验证状态，覆盖远端与 gh 失败恢复，不自动强推或合并 |
+| 本轮实现 | 风险自动排序、因果归因与成本核算 | 依据严重度、类别与代码特征排序风险假设；差异测试失败因果回溯至目标行/文件；校准模型计费与总成本核算；单测覆盖全链路 |
 | 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
 
 只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。现有[五题参考控制集](../benchmark/validated-candidates/iterator-traversal.md)跨三个仓库，全部通过 Docker 负例/参考正例；其中异步空输入、Unicode 分隔与零分块任务和早期候选重叠，不能额外计数。目录深度剪枝与替换回调停止涉及不同执行机制；前者保留边界目录匹配和忽略规则，后者是明确的功能扩展，不能宣称为上游确认的 bug。

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel, OpenAICompatibleCodingModel
+from selfforge_agent.coding.risk_prioritization import prioritize_risks
 from selfforge_agent.coding.test_generation import DifferentialTestGenerator, RiskTarget
 from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError, build_context
@@ -24,6 +25,7 @@ from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.images import build_dependency_image
 from selfforge_agent.runtime.model import OpenAIChatAdapter
+from selfforge_agent.runtime.pricing import format_monetary_cost
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
@@ -223,6 +225,8 @@ def main() -> int:
                           help="Try up to this many distinct tests; stop at the first differential result")
     generate.add_argument("--finding-index", type=int,
                           help="Zero-based index from local rule review of this Base/Head diff")
+    generate.add_argument("--auto-target", action="store_true",
+                          help="Automatically prioritize risk hypotheses from the diff")
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args()
@@ -406,6 +410,15 @@ def main() -> int:
                     "description": finding.description, "evidence": finding.evidence,
                     "category": finding.category,
                 }
+            elif args.auto_target:
+                context = build_context(args.repo, args.base, args.head)
+                prioritized = prioritize_risks(context)
+                if not prioritized:
+                    parser.error("No candidate added lines found to prioritize in this Base/Head diff")
+                top = prioritized[0]
+                target = top.to_risk_target().model_dump()
+                print(f"Auto-selected risk target (rank {top.rank}, score {top.score:.0f}): "
+                      f"{top.file_path}:{top.line_number} [{top.category}]")
             if args.max_candidates > 1 or target is not None:
                 batch = generator.run_many(
                     args.repo.resolve(), args.base, args.head, args.task,
@@ -440,6 +453,12 @@ def main() -> int:
         if result.base_test and result.head_test:
             print(f"Base: {result.base_test.status} ({result.base_test.passed} passed); "
                   f"Head: {result.head_test.status} ({result.head_test.failed} failed)")
+        inv = (batch.selected_causal_investigation if batch else None) or result.causal_investigation
+        if inv:
+            print(f"Causal link: {inv.confidence} ({inv.explanation})")
+        cost = (batch.total_cost if batch else None) or result.cost
+        if cost:
+            print(f"Cost: {format_monetary_cost(cost)}")
         for error in result.errors:
             print(error, file=sys.stderr)
         return 0 if result.status == "differential" else 1

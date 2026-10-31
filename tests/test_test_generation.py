@@ -14,6 +14,7 @@ from selfforge_agent.api import app as api_module
 from selfforge_agent.coding.test_generation import DifferentialTestGenerator, RiskTarget
 from selfforge_agent.core.git_context import build_context
 from selfforge_agent.integrations.github_pr import CheckoutResult
+from selfforge_agent.providers import TokenUsage
 from selfforge_agent.runtime.model import ModelTurn
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
@@ -23,8 +24,10 @@ from selfforge_agent.verification.runner import TestRunner, TrustRequiredError
 class TestModel:
     __test__ = False
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, model: str = "scripted", usage: TokenUsage | None = None) -> None:
         self.code = code
+        self.model = model
+        self.usage = usage
 
     def complete(self, messages: list[dict], tools: list[dict], timeout: float) -> ModelTurn:
         assert timeout > 0
@@ -36,7 +39,7 @@ class TestModel:
                     "test_code": self.code, "rationale": "Check addition",
                 }),
             },
-        }]}, "tool_calls", "fixture", "scripted", None)
+        }]}, "tool_calls", "fixture", self.model, self.usage)
 
 
 class SequenceModel:
@@ -334,3 +337,98 @@ def test_cli_selects_baseline_finding_and_exports_batch(
     assert batch["target"]["file_path"] == "calculator.py"
     assert batch["selected_candidate"] == 2
     assert "assert add(2, 3) == 5" in output.read_text()
+
+
+def test_differential_report_includes_causal_investigation_and_cost(
+    demo_repo: tuple[Path, str, str],
+) -> None:
+    repository, base, head = demo_repo
+    model = TestModel(
+        "from calculator import add\n\ndef test_regression():\n"
+        "    assert add(2, 3) == 5\n",
+        model="deepseek-chat",
+        usage=TokenUsage(prompt_tokens=1_000, completion_tokens=500, total_tokens=1_500),
+    )
+    generator = DifferentialTestGenerator(model, TestRunner())
+    report = generator.run(
+        repository, base, head, "Addition must work",
+        target=_risk(), trusted=True,
+    )
+    assert report.status == "differential"
+    assert report.cost is not None
+    assert pytest.approx(report.cost.total_cost_usd, rel=1e-4) == 0.00028
+    assert report.causal_investigation is not None
+    assert report.causal_investigation.causally_linked is True
+    assert report.causal_investigation.confidence in {"high", "medium", "low"}
+
+
+def test_cli_auto_target_prioritizes_risk_and_exports_batch(
+    demo_repo: tuple[Path, str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, base, head = demo_repo
+    original_manager = CodingWorkspaceManager
+    monkeypatch.setattr(cli, "CodingWorkspaceManager",
+                        lambda: original_manager(tmp_path / "workspaces"))
+    monkeypatch.setattr(cli, "route_providers", lambda _provider, _fallback: [object()])
+    monkeypatch.setattr(cli, "OpenAIChatAdapter", lambda _providers: SequenceModel([
+        "def test_always_passes():\n    assert 1 + 1 == 2\n",
+        ("from calculator import add\n\ndef test_regression():\n"
+         "    assert add(2, 3) == 5\n"),
+    ]))
+    evidence, output = tmp_path / "auto_batch.json", tmp_path / "test_regression.py"
+    monkeypatch.setattr(sys, "argv", ["selfforge-agent", "generate-test",
+                        "--repo", str(repository), "--base", base, "--head", head,
+                        "--task", "Addition must work", "--sandbox", "host",
+                        "--trust-local-tests", "--max-candidates", "2",
+                        "--auto-target", "--output", str(evidence),
+                        "--test-output", str(output)])
+    assert cli.main() == 0
+    batch = json.loads(evidence.read_text())
+    assert batch["target"] is not None
+    assert batch["target"]["file_path"] == "calculator.py"
+    assert batch["selected_candidate"] == 2
+    assert "assert add(2, 3) == 5" in output.read_text()
+
+
+def test_web_prioritize_risks_and_auto_target_flow(
+    demo_repo: tuple[Path, str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, base, head = demo_repo
+    url = "https://github.com/example/demo/pull/1"
+    monkeypatch.setattr(api_module, "_WORKSPACES", tmp_path / "checkouts")
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES",
+                        CodingWorkspaceManager(tmp_path / "coding-workspaces"))
+    monkeypatch.setattr(api_module, "load_pr", lambda _url: SimpleNamespace(
+        url=url, context=build_context(repository, base, head)))
+    monkeypatch.setattr(api_module, "checkout_pr", lambda _url, _root: CheckoutResult(
+        path=str(repository), branch="pr-1", head_sha=head,
+        diff_base_sha=base, pr_url=url))
+    model = SequenceModel([
+        "def test_always_passes():\n    assert 1 + 1 == 2\n",
+        ("from calculator import add\n\ndef test_regression():\n"
+         "    assert add(2, 3) == 5\n"),
+    ])
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda _providers: model)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fixture-key")
+    monkeypatch.setenv("SELFFORGE_ENABLE_HOST_TESTS", "1")
+    client = TestClient(api_module.app)
+
+    # 1. Test prioritize-risks endpoint
+    prioritize_resp = client.post("/api/github/prioritize-risks", json={"url": url, "top_k": 3})
+    assert prioritize_resp.status_code == 200, prioritize_resp.text
+    risks = prioritize_resp.json()["risks"]
+    assert len(risks) >= 1
+    assert risks[0]["file_path"] == "calculator.py"
+    assert risks[0]["rank"] == 1
+
+    # 2. Test generate-tests with auto_target=True
+    gen_resp = client.post("/api/github/generate-tests", json={
+        "url": url, "task": "Check addition", "sandbox": "host",
+        "trust_local_tests": True, "max_candidates": 3,
+        "auto_target": True,
+    })
+    assert gen_resp.status_code == 200, gen_resp.text
+    batch = gen_resp.json()["batch"]
+    assert batch["status"] == "differential"
+    assert batch["target"]["file_path"] == "calculator.py"
+    assert batch["selected_candidate"] == 2

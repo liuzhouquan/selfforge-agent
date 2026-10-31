@@ -122,6 +122,11 @@ uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HE
   --task '验证这个风险关联的行为回归' --finding-index 0 --max-candidates 3 \
   --output test-batch.json --test-output test_regression.py
 
+# 或自动排定 Diff 新增行风险优先级，并对最高风险项执行差异测试
+uv run selfforge-agent generate-test --repo ./your-project --base BASE --head HEAD \
+  --task '验证优先级最高的变更风险' --auto-target --max-candidates 3 \
+  --output test-batch.json --test-output test_regression.py
+
 # 仅对可信 PR 显式选择主机执行
 uv run selfforge-agent repair --repo ./your-project --base BASE --head HEAD \
   --task '修复回归' --sandbox host --trust-local-tests
@@ -160,7 +165,7 @@ Runtime 分为 Agent Loop、模型适配器、工具注册、执行器、上下�
 
 通用 Coding 的 `run_tests` 复用 JUnit Runner：只有退出码为 0、至少一项测试通过且没有失败/错误时才建立证据；全部跳过、空选择、缺失或损坏的报告都不会使任务完成。工具会返回测试计数和错误原因。测试前后与完成时的工作区内容指纹必须一致；外部改动或无法完整扫描时不能建立完成证据，需重新测试。旧版未绑定工作区的会话证据也需重测，见[内容绑定规则](./docs/workspace-evidence.md)；详情见[测试证据规则](./docs/test-evidence.md)。`eval` 还会独立重新运行夹具测试，并检查源文件确实发生变化，不采信模型口头结论。PR Repair 则要求 Base 测试通过、Head 出现断言失败、Repaired 测试通过，才输出已验证补丁；这证明现有测试的回归已修复，尚不证明某条审查发现的因果关系。
 
-`generate-test` 默认生成一个 pytest 候选；`--max-candidates 2/3` 可根据上次 Base/Head 结果继续尝试，发现差异后提前停止，并跳过重复代码。多候选流程默认总时间预算为 300 秒，可用 `--time-budget` 调整，最高 600 秒。`--finding-index` 选取本地规则审查中的风险；Web 页面可选择已显示的规则或模型风险。服务端要求风险位置与实际 diff 的新增行一致。仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出被选中的测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。风险描述仍是假设，差异结果不能单独证明该风险的因果关系。
+`generate-test` 默认生成一个 pytest 候选；`--max-candidates 2/3` 可根据上次 Base/Head 结果继续尝试，发现差异后提前停止，并跳过重复代码。多候选流程默认总时间预算为 300 秒，可用 `--time-budget` 调整，最高 600 秒。`--finding-index` 选取本地规则审查中的风险；`--auto-target`（及 Web API `auto_target`）支持自动按严重度与类别为 Diff 新增行排定优先级并选取最高风险项。服务端要求风险位置与实际 diff 的新增行一致。仅当 Base 通过、Head 有断言失败且没有收集错误时，`--test-output` 才写出被选中的测试。其他结果为 `inconclusive` 或 `error`。测试只在临时 worktree 中运行，显式导出前不会进入项目。差异报告提供因果调查结果（`causal_investigation`：追踪失败堆栈是否直接经过目标文件及行号）以及已知模型费率的校准货币成本估算（`cost` / `total_cost`）。
 
 ```sh
 uv run selfforge-agent eval --offline       # 确定性工具协议回归，不代表模型能力
