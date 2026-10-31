@@ -22,7 +22,7 @@
 | 文件权限、编辑策略、命令与暂存限制 | `runtime/tools.py`、`execution.py` | `test_runtime.py`、`test_docker_staging.py` |
 | 模型协议、回退、配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py` | `test_model_deadline.py`、`test_providers.py` |
 | Web 任务持久化、锁、取消 | `api/coding_jobs.py`、`api/app.py` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py` |
-| 工作区及 Diff | `runtime/workspace.py`、`workspace_diff.py` | `test_workspace.py` |
+| 工作区、Diff 与交付 | `runtime/workspace.py`、`workspace_diff.py`、`delivery.py` | `test_workspace.py`、`test_workspace_delivery.py` |
 | 测试证据、诊断、修复与测试生成 | `verification/`、`coding/` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_runner_report_api.py`、`test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py` |
 | 独立评测、参考修复与私有快照 | `runtime/benchmark.py`、`evaluation.py`、`failure_artifacts.py` | `test_benchmark.py`、`test_benchmark_isolation.py`、`test_reference_validation.py`、离线 Coding 演示 |
 
@@ -69,9 +69,9 @@ uv run --no-sync python examples/coding_demo.py
 | 已整合 | 中断后的验证状态恢复 | 写入前失效、未完成调用保守恢复；组合测试覆盖 JUnit 成功后中断写入，再续跑失败、编辑、重测成功 |
 | 已整合 | 通用 Coding 测试证据 | 共用非空 JUnit Runner；全部 skipped、空/损坏报告、超时和失败诊断均有回归，不弱化 Repair/benchmark 门槛 |
 | 已整合 | 显式可复现项目依赖环境 | 哈希锁定 wheels、离线安装和镜像 ID；会话模式/镜像不可静默更换；自动依赖识别仍未实现 |
-| 本轮实现 | 工作区与测试证据绑定 | 前后测试、后续模型请求和最终答复时校验内容；恢复/外部编辑撤销旧证据；有界扫描与 v2 迁移有回归，真实 Docker 用例需 daemon/镜像 |
+| 已整合 | 工作区与测试证据绑定 | 前后测试、后续模型请求和最终答复时校验内容；恢复/外部编辑撤销旧证据；有界扫描与 v2 迁移有回归，真实 Docker 用例需 daemon/镜像 |
+| 本轮实现 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，排除受保护文件，附带测试验证状态，覆盖远端与 gh 失败恢复，不自动强推或合并 |
 | 4 | 审核并扩展正式评测集 | 每题有行为契约来源、负例基线、可通过的参考修复及正向/边界 holdout；区分 bug fix 与功能变更；冻结策略后完成 ≥3 仓库、20 题、每题 ≥3 次真实模型运行 |
-| 5 | 补全交付体验 | 从保留的 worktree 检查 Diff、提交并创建 PR；明确授权边界，覆盖远端失败和恢复，不自动强推或合并 |
 
 只验证 holdout 在原代码上失败，无法证明题目合理或可解；不能用任意输入限制凑任务数量。九题清单已包含在组合交付中，仍属于候选，不替代正式验收。现有[五题参考控制集](../benchmark/validated-candidates/iterator-traversal.md)跨三个仓库，全部通过 Docker 负例/参考正例；其中异步空输入、Unicode 分隔与零分块任务和早期候选重叠，不能额外计数。目录深度剪枝与替换回调停止涉及不同执行机制；前者保留边界目录匹配和忽略规则，后者是明确的功能扩展，不能宣称为上游确认的 bug。
 

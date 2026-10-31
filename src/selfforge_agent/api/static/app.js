@@ -106,9 +106,13 @@ function renderCodingJob(job) {
   $("coding-resume-current").hidden = codingJobRunning || !job.can_resume;
   $("coding-remove-workspace").hidden = codingJobRunning || !job.branch;
   $("coding-diff").hidden = !job.branch;
+  $("coding-delivery").hidden = !job.branch || codingJobRunning;
   if (job.branch && !codingJobRunning && codingDiffJobId !== job.job_id) {
     codingDiffJobId = job.job_id;
     loadCodingDiff();
+    if (!$("coding-pr-title").value && job.answer) {
+      $("coding-pr-title").value = job.answer.slice(0, 100);
+    }
   }
   $("coding-trace").textContent = job.trace.map((event) => {
     const detail = event.name || event.status || event.provider || event.error_type || "";
@@ -275,9 +279,80 @@ $("coding-remove-workspace").addEventListener("click", async () => {
     $("coding-workspace-info").textContent += " · 工作区已清理，分支仍保留";
     $("coding-remove-workspace").hidden = true;
     $("coding-resume-current").hidden = true;
+    $("coding-delivery").hidden = true;
     currentCodingBranch = "";
   } catch (error) {
     showCodingError(`${error.message}。请先在工作区提交或还原改动，再清理。`);
+  }
+});
+
+$("coding-commit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentCodingSession || !currentCodingRepo) return;
+  const message = $("coding-commit-msg").value.trim();
+  if (!message) {
+    $("coding-commit-status").textContent = "请输入提交说明。";
+    $("coding-commit-status").hidden = false;
+    return;
+  }
+  const btn = $("coding-commit-btn");
+  btn.disabled = true;
+  btn.textContent = "正在提交…";
+  $("coding-commit-status").textContent = "";
+  $("coding-commit-status").hidden = true;
+  try {
+    const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/commit`, {
+      repository: currentCodingRepo,
+      message,
+    });
+    $("coding-commit-status").textContent = `提交成功：${res.commit_sha.slice(0, 10)}（${res.files_committed.length} 个文件）`;
+    $("coding-commit-status").hidden = false;
+    $("coding-commit-msg").value = "";
+    loadCodingDiff();
+  } catch (err) {
+    $("coding-commit-status").textContent = `提交失败：${err.message}`;
+    $("coding-commit-status").hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "提交改动";
+  }
+});
+
+$("coding-pr-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentCodingSession || !currentCodingRepo) return;
+  const title = $("coding-pr-title").value.trim();
+  if (!title) {
+    $("coding-pr-status").textContent = "请输入 PR 标题。";
+    $("coding-pr-status").hidden = false;
+    return;
+  }
+  const btn = $("coding-pr-btn");
+  btn.disabled = true;
+  btn.textContent = "正在推送并创建 PR…";
+  $("coding-pr-status").textContent = "";
+  $("coding-pr-status").hidden = true;
+  try {
+    const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/pr`, {
+      repository: currentCodingRepo,
+      title,
+      body: $("coding-pr-body").value.trim(),
+      base_branch: $("coding-pr-base").value.trim() || null,
+      remote: $("coding-pr-remote").value.trim() || "origin",
+    });
+    const link = document.createElement("a");
+    link.href = res.pr_url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = `PR #${res.pr_number || ""}：${res.pr_url}`;
+    $("coding-pr-status").replaceChildren(document.createTextNode("Pull Request 创建成功："), link);
+    $("coding-pr-status").hidden = false;
+  } catch (err) {
+    $("coding-pr-status").textContent = `创建 PR 失败：${err.message}`;
+    $("coding-pr-status").hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "推送并创建 Pull Request";
   }
 });
 

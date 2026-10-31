@@ -1,6 +1,6 @@
 # Roadmap
 
-Development order and acceptance checks: [development guide](./development.md). Historical PR #31 passed 259 local tests, and the earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; those counts describe their own commits. After PR #32, the latest local full suite passed 274 tests and skipped 11 Docker-dependent tests; merged-main CI passed all 274 unit and 11 Docker integration tests. Current reliability fixes are integrated; the next priorities are formal evaluation coverage and the product PR-delivery flow.
+Development order and acceptance checks: [development guide](./development.md). Historical PR #31 passed 259 local tests, and the earlier [combined #24–#30 delivery](./runtime-integration.md) passed 257; those counts describe their own commits. After PR #32, the latest local full suite passed 274 tests and skipped 11 Docker-dependent tests; merged-main CI passed all 274 unit and 11 Docker integration tests. Current reliability fixes and the PR delivery flow are integrated; the next priority is formal evaluation coverage.
 
 | Priority | Status | Work |
 | --- | --- | --- |
@@ -23,6 +23,7 @@ Development order and acceptance checks: [development guide](./development.md). 
 | 2 | Implemented | Local Web Coding tasks use the common Runtime with status, recent traces, cancellation, and session resume |
 | 2 | Implemented | General Coding defaults to persistent reviewable Git worktrees, resumes in place, and provides safe cleanup; direct edits require explicit selection |
 | 2 | Implemented | Web Coding displays a bounded, read-only diff against the worktree base commit |
+| 2 | Implemented | Worktree commit and GitHub PR creation delivery workflow with protected file filtering, commit author configuration, evidence status annotations, and non-force push |
 | 2 | Implemented | Durable Web job records and history, explicit resume after server interruption, cross-process workspace locks and cancellation markers; active-job limit remains per process |
 | 3 | Implemented | Up to three distinct pytest candidates with feedback, early stop on objective Base-pass/Head-assertion-fail evidence, and an optional review risk anchored to an added line; CLI and Web entry points |
 | 3 | In Progress | Five distinct tasks across three repositories passed Docker reference qualification. A separate three-task iterator/traversal DeepSeek run scored 9/9 (three repeats each); prior 5/6, 4/4 and old-gate 8/9 results remain separate. Expand diverse contract-reviewed tasks before formal twenty-task acceptance; do not combine scores or count overlaps |

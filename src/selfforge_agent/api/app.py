@@ -50,6 +50,13 @@ from selfforge_agent.providers import (
 )
 from selfforge_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
 from selfforge_agent.runtime.agent import CodingAgent
+from selfforge_agent.runtime.delivery import (
+    CommitResult,
+    DeliveryError,
+    PRResult,
+    commit_workspace,
+    create_pull_request,
+)
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
@@ -210,6 +217,22 @@ class CodingWorkspaceRequest(BaseModel):
     repository: str = Field(min_length=1)
 
 
+class CodingCommitRequest(BaseModel):
+    repository: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=5000)
+    author_name: str | None = Field(default=None, max_length=128)
+    author_email: str | None = Field(default=None, max_length=128)
+
+
+class CodingPRRequest(BaseModel):
+    repository: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=256)
+    body: str = Field(default="", max_length=20000)
+    base_branch: str | None = Field(default=None, max_length=128)
+    remote: str = Field(default="origin", max_length=64)
+    draft: bool = False
+
+
 class CodingDiffFile(BaseModel):
     path: str
     status: str
@@ -345,6 +368,62 @@ def coding_workspace_diff(session_id: str, repository: str, client: Request) -> 
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/code/workspaces/{session_id}/commit", response_model=CommitResult)
+def commit_coding_workspace(
+    session_id: str, request: CodingCommitRequest, client: Request
+) -> CommitResult:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    try:
+        workspace = _CODING_WORKSPACES.get(repository, session_id)
+        with _CODING_JOBS.workspace_guard(workspace.path):
+            return commit_workspace(
+                workspace,
+                request.message,
+                author_name=request.author_name,
+                author_email=request.author_email,
+            )
+    except DeliveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(
+            status_code=409 if "already running" in str(exc) else 400,
+            detail=str(exc),
+        ) from exc
+
+
+@app.post("/api/code/workspaces/{session_id}/pr", response_model=PRResult)
+def create_coding_pr(
+    session_id: str, request: CodingPRRequest, client: Request
+) -> PRResult:
+    _require_local(client)
+    repository = Path(request.repository).expanduser().resolve()
+    try:
+        workspace = _CODING_WORKSPACES.get(repository, session_id)
+        session_root = _CODING_WORKSPACES.session_root(
+            repository, session_id,
+            legacy_roots=(_coding_session_root(repository), repository),
+        )
+        session = SessionStore(session_root, session_id)
+        with _CODING_JOBS.workspace_guard(workspace.path):
+            return create_pull_request(
+                workspace,
+                request.title,
+                body=request.body,
+                base_branch=request.base_branch,
+                remote=request.remote,
+                draft=request.draft,
+                session_store=session,
+            )
+    except DeliveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(
+            status_code=409 if "already running" in str(exc) else 400,
+            detail=str(exc),
+        ) from exc
 
 
 @app.get("/api/code/jobs", response_model=list[CodingJobResponse])

@@ -30,7 +30,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Docker executor | Implemented | Verified with a live Docker container; no network, resource limits, temporary workspace copied into tmpfs, separate artifact retrieval |
 | Self-testing | Implemented | Nonempty JUnit success plus matching workspace fingerprints; external changes revoke evidence, and unbound legacy evidence needs retesting |
 | Web Coding workbench | Implemented | Local Git repository tasks, live status and traces, cross-process cancellation, job history, and session resume; interrupted work needs an explicit resume |
-| Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect a bounded diff in the browser, and explicitly clean up |
+| Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect bounded diffs, commit, create PRs, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
 | Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent visible/unseen tests, image IDs and failure categories; optional external reference fixes are checked before model calls. Five tasks passed reference qualification; a separate three-task, three-repeat DeepSeek run scored 9/9; formal 20-task acceptance remains open |
@@ -84,9 +84,11 @@ uv run selfforge-agent code --repo ./your-project --task 'Fix the add regression
 uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task 'Continue and verify'
 uv run selfforge-agent trace --repo ./your-project SESSION_ID
 
-# Review a worktree's Git diff; commit before cleanup (the branch stays)
+# Review diffs, commit changes, and create a GitHub PR; cleanup preserves the branch
 uv run selfforge-agent workspaces list --repo ./your-project
-git -C /path/from/workspaces/list diff
+uv run selfforge-agent workspaces diff SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces commit SESSION_ID -m 'Fix add regression' --repo ./your-project
+uv run selfforge-agent workspaces pr SESSION_ID --title 'Fix add regression' --repo ./your-project
 uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project
 
 # Explicitly edit the source checkout when needed

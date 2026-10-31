@@ -67,6 +67,29 @@
               <div id="coding-diff-files" class="coding-diff-files"></div>
               <pre id="coding-diff-patch" hidden></pre>
             </div>
+            <div id="coding-delivery" class="coding-diff" hidden>
+              <div class="coding-diff-head"><strong>交付工作流</strong></div>
+              <form id="coding-commit-form" style="margin-top:10px;">
+                <label for="coding-commit-msg">提交说明 (Commit Message)</label>
+                <div class="import-row">
+                  <input id="coding-commit-msg" type="text" placeholder="例如：fix: resolve calculator add regression" autocomplete="off" />
+                  <button id="coding-commit-btn" type="submit">提交改动</button>
+                </div>
+              </form>
+              <div id="coding-commit-status" class="model-state" hidden></div>
+              <form id="coding-pr-form" style="margin-top:14px;">
+                <label for="coding-pr-title">PR 标题 (Pull Request Title)</label>
+                <input id="coding-pr-title" type="text" placeholder="例如：Fix add() return value and verify with pytest" autocomplete="off" />
+                <label for="coding-pr-body" style="margin-top:8px;display:block;">PR 详细描述 (可选，会自动附带测试验证状态)</label>
+                <textarea id="coding-pr-body" rows="3" placeholder="例如：由 selfForge Agent 修复并通过非空 JUnit 测试验证。"></textarea>
+                <div class="coding-options" style="margin-top:8px;">
+                  <label>目标基线分支 (Base)<input id="coding-pr-base" type="text" placeholder="留空则使用默认分支 (main)" /></label>
+                  <label>Git Remote<input id="coding-pr-remote" type="text" value="origin" /></label>
+                </div>
+                <button id="coding-pr-btn" type="submit" style="margin-top:10px;">推送并创建 Pull Request</button>
+              </form>
+              <div id="coding-pr-status" class="model-state" hidden></div>
+            </div>
           </div>
         </section>
         <section class="workflow" id="pr-workflow">

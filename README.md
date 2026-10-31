@@ -30,7 +30,7 @@ uv run python examples/coding_demo.py
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
 | Self-Testing | Implemented | 非空 JUnit 成功与工作区内容指纹共同验证；外部改动撤销证据，旧证据需重测 |
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、跨进程取消、历史任务查询和会话续跑；服务中断的任务需手动续跑 |
-| Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、在网页查看有界 Diff、手动清理 |
+| Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、查看有界 Diff、提交改动并创建 PR、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
 | 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。5 题通过参考预检；三题各 3 次 DeepSeek 运行 9/9，正式 20 题 × 3 次模型验收尚未完成 |
@@ -84,9 +84,11 @@ uv run selfforge-agent code --repo ./your-project --task '修复 add 的回归' 
 uv run selfforge-agent code --repo ./your-project --resume SESSION_ID --task '继续并验证'
 uv run selfforge-agent trace --repo ./your-project SESSION_ID
 
-# 检查工作区中的 Git diff；提交后清理 worktree，保留分支
+# 检查工作区中的 Git diff、提交并创建 Pull Request；清理 worktree 时保留分支
 uv run selfforge-agent workspaces list --repo ./your-project
-git -C /path/from/workspaces/list diff
+uv run selfforge-agent workspaces diff SESSION_ID --repo ./your-project
+uv run selfforge-agent workspaces commit SESSION_ID -m '修复 add 的回归' --repo ./your-project
+uv run selfforge-agent workspaces pr SESSION_ID --title 'Fix add regression' --repo ./your-project
 uv run selfforge-agent workspaces remove SESSION_ID --repo ./your-project
 
 # 只有明确需要时才直接修改原仓库
