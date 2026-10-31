@@ -5,6 +5,12 @@ changes. Integration preserves their original commits and adds merge-resolution
 and composition tests. Merging this delivery includes the prerequisite branches;
 it does not require applying the seven PR diffs individually.
 
+This is a historical record of the PR #30 integration point, not the current
+open-work list. Follow-up PR #32 implemented workspace-bound test evidence and
+is merged; see [workspace evidence](./workspace-evidence.md) and the current
+[development guide](./development.md). The PR #30 regression counts below are
+kept to identify exactly what was verified at that earlier point.
+
 | PR | Included capability |
 | --- | --- |
 | #24 | Nine pinned candidate tasks and Docker baseline checks; candidates are not formal acceptance results |
@@ -64,15 +70,17 @@ The [PR #30 checks](https://github.com/liuzhouquan/selfforge-agent/pull/30/check
 record remote locked-install, Ruff and unit/Docker regression results.
 Historical 145/155/175-test records describe their original branches.
 
-## What remains open
+## What remained open after PR #30
 
 This integration does not create twenty qualified acceptance tasks or improve
 previous model scores by reclassifying failures. The nine-task candidate set,
 two overlapping reference-qualified tasks, old 4/4, 8/9, separate 5/6 pilots and
 generated-fixture demo remain distinct. Missing work includes broader task
 qualification and live repeats, automatic dependency detection, a full product
-PR-submission workflow, workspace-bound evidence fingerprints and stronger
-crash durability. Source builds and OS dependencies remain operator-managed.
+PR-submission workflow, workspace-bound evidence fingerprints (completed in PR
+#32) and stronger crash durability. Source builds and OS dependencies remain
+operator-managed. The product PR-submission flow and stronger crash durability
+remain open today; workspace-bound evidence does not.
 
 Reproduce local gates with locked dependencies, Ruff and full pytest as in the
 [development guide](./development.md). Docker tests need a daemon and the sandbox

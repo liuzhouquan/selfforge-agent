@@ -44,7 +44,7 @@ uv run python examples/test_recovery_demo.py --provider deepseek
 
 一次 DeepSeek 运行以 5 轮完成，原测试未改，独立验证 4 项通过。这是生成夹具演示，不计入正式任务评测。失败快照、边界与复现条件见[测试诊断](./docs/test-diagnostics.md)。
 
-组合版本的本地全量验证 **257 项通过**；涵盖中断恢复、JUnit、环境绑定、预算、参考修复与诊断的联合回归。七个 PR 的能力对应、安装验证及历史结果边界见[Runtime 整合记录](./docs/runtime-integration.md)。这不是正式模型成功率。
+PR #30 组合版本当时的本地全量验证为 **257 项通过**，这是历史结果。PR #32 合并后的本地全量验证为 **274 passed / 11 skipped**（跳过项依赖本机 Docker）；对应的 GitHub 主分支 CI 已运行 **274 项单元测试和 11 项 Docker 集成测试，全部通过**。这不是正式模型成功率；工作区证据的验证边界见[说明](./docs/workspace-evidence.md)。
 
 ## Quick Start
 
@@ -171,7 +171,7 @@ uv run ruff check .
 
 `eval-suite` 默认在 Docker 中运行，要求隐藏测试在原始 commit 上先出现断言失败；每次运行从干净副本开始，只有允许的文件发生修改、Agent 自身测试成功、评测器独立重跑清单指定的可见测试成功，且隐藏测试通过才计成功。可用清单中的 `agent_test_keyword` 明确选择相关 pytest 测试。任务可指定 Docker 镜像，评测开始时锁定镜像 ID。报告包含逐题成功率、失败原因、耗时和供应商上报的 token 用量；不会推测费用。格式、安全边界和[三仓库试点](./benchmark/real-pilot/README.md)见[重复评测说明](./docs/benchmark.md)。
 
-GitHub Actions 在推送 `main` 和提交 PR 时运行 Ruff、单元测试及 Docker 集成测试；[首次远端运行](https://github.com/liuzhouquan/selfforge-agent/actions/runs/40358812798)已通过（90 项单元测试、5 项 Docker 集成测试）。
+GitHub Actions 在推送 `main` 和提交 PR 时运行锁定依赖安装、Ruff、单元测试及 Docker 集成测试。[PR #32 的精确提交检查](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41031573755)和[合并后的 main 检查](https://github.com/liuzhouquan/selfforge-agent/actions/runs/41032250484)均通过；后者运行 274 项单元测试和 11 项 Docker 集成测试。较早的首次运行记录保留在[评测历史](./docs/evaluation.md)。
 
 2026-10-17 的一次本地运行：离线协议夹具 **2/2**；DeepSeek 真实工具调用 **2/2**。2026-10-27 旧门槛下三仓库三题各重复 3 次得到 **8/9**；唯一失败达到步数上限，虽然隐藏测试通过。加入独立可见测试门槛与大文件分块任务后，四题各运行 1 次得到 **4/4**，指定可见测试与隐藏测试均通过。2026-10-29 的 9 题候选清单通过了固定基线 holdout 与可见测试校验，但当时新增 5 题尚未运行模型，不能当作成功率。不同门槛和重复次数不能合并；正式 20 任务、每题 3 次验收仍未完成，详情见[评测记录](./docs/evaluation.md)。
 
@@ -187,4 +187,4 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-下一步优先改善真实任务的失败恢复与自动环境识别，再扩展互不重复、带参考验证的 20 题正式评测集。见[产品边界与验收](./docs/product-scope.md)、[路线图](./docs/roadmap.md)和[开发指南](./docs/development.md)。
+下一步优先扩展并冻结带参考验证的 20 题正式评测集，随后补全从 worktree Diff 到提交并创建 PR 的产品交付流程；自动依赖识别与更广的环境配置也仍待实现。具体验收顺序见[开发指南](./docs/development.md)。
