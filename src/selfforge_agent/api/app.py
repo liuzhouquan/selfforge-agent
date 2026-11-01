@@ -60,7 +60,10 @@ from selfforge_agent.runtime.delivery import (
     create_pull_request,
     revert_workspace,
 )
-from selfforge_agent.runtime.environment import detect_repository_environment
+from selfforge_agent.runtime.environment import (
+    detect_repository_environment,
+    plan_environment_preparation,
+)
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
@@ -232,6 +235,14 @@ class CodingJobResponse(BaseModel):
     token_metrics: dict = Field(default_factory=dict)
 
 
+class EnvironmentPlanRequest(BaseModel):
+    repository: str
+    wheelhouse: str | None = None
+    tag: str | None = None
+    lock_file: str | None = None
+    requirements_file: str | None = None
+
+
 class CodingWorkspaceRequest(BaseModel):
     repository: str = Field(min_length=1)
 
@@ -299,6 +310,22 @@ def repository_environment(repository: str, client: Request) -> dict:
     repo = Path(repository).expanduser().resolve()
     try:
         return detect_repository_environment(repo)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/sandbox/plan")
+def sandbox_plan(request: EnvironmentPlanRequest, client: Request) -> dict:
+    _require_local(client)
+    repo = Path(request.repository).expanduser().resolve()
+    try:
+        return plan_environment_preparation(
+            repo,
+            wheelhouse=Path(request.wheelhouse).expanduser().resolve() if request.wheelhouse else None,
+            tag=request.tag,
+            lock_file=Path(request.lock_file).expanduser().resolve() if request.lock_file else None,
+            requirements_file=Path(request.requirements_file).expanduser().resolve() if request.requirements_file else None,
+        )
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
