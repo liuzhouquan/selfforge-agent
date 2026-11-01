@@ -9,7 +9,7 @@
 | ID | 状态 | 工作单元 | 前提 |
 | --- | --- | --- | --- |
 | SF-EVAL-01 | Ready | 选定并交付 1 道新机制的参考合格真实仓库任务 | 先核对下方现有清单，避免重复 |
-| SF-RUN-01 | Investigate | 核对 CLI 与 Web 对同一工作区的并发协调 | 先做多进程复现；有证据后再定义修复 |
+| SF-RUN-01 | In Review | 统一 CLI 与 Web 对同一工作区的并发协调与文件锁保护 | 见 docs/tasks/SF-RUN-01.md |
 | SF-EVAL-02 | Waiting | 冻结正式 20 题和完整运行策略 | 至少 20 个互不重复、已完成契约/参考正负控的任务 |
 | SF-EVAL-03 | Waiting | 按冻结策略完成每题至少 3 次真实模型运行并报告 | SF-EVAL-02，实际模型/镜像/预算配置可用 |
 | SF-ENV-01 | Needs Design | 为一种已选依赖配置定义准备计划或离线构建扩展 | 先选支持的输入与输出，不默认执行任意项目脚本 |
@@ -29,11 +29,10 @@
 
 ## SF-RUN-01：调查工作区并发协调
 
-已知边界：Web 已有跨进程 workspace guard，CLI/外部 Git 进程尚未承诺统一锁；内容指纹不是锁。这是调查入口，不是已复现的新 P1。
+状态：已在独立分支 `feat/workspace-concurrency-coordination` 完成统一。跨进程工作区排他锁（`flock`）已统一下沉至 `runtime/workspace.py`，Web 端 `CodingJobManager` 与 CLI 子命令（`code` 与 `workspaces remove/revert/commit`）共用同一锁机制与锁目录，多进程冲突安全拒绝并提示清晰错误，进程异常退出由操作系统内核自动释放锁；详见 [SF-RUN-01 任务卡](./tasks/SF-RUN-01.md)。
 
-- 入口：`api/coding_jobs.py` 的 workspace guard、CLI Coding 与 workspaces 子命令、`runtime/workspace.py`、`runtime/delivery.py`。
-- 首个验收：用受控临时仓库和两个进程，证明实际冲突或证明现有保护生效；记录交错顺序、期望和观察结果。
-- 若确认需修复：另明确一项“第二个写入者被拒绝/安全等待”的行为；复用现有锁机制，覆盖进程退出/取消后的锁释放以及 CLI/Web 的组合。
+- 入口：`runtime/workspace.py`、`api/coding_jobs.py` 的 workspace guard、CLI Coding 与 workspaces 子命令、`runtime/delivery.py`。
+- 验收结果：多进程冲突测试通过，持锁期间第二个写入操作被安全拒绝；持锁进程被 SIGKILL 终止后内核自动回收锁；全量回归通过。
 - 范围外：新调度平台、多 Agent 产品能力、全局分布式锁、强制清理用户工作区。
 
 ## SF-EVAL-02 / 03：冻结与正式运行

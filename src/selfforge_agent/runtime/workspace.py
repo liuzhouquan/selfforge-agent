@@ -1,10 +1,12 @@
 """Persistent, reviewable Git worktrees for general Coding sessions."""
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +18,48 @@ _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 
 class WorkspaceError(ValueError):
     """A Coding worktree cannot be created, resumed, or removed safely."""
+
+
+def workspace_lock_path(workspace: Path, root: Path | None = None) -> Path:
+    """Return the filesystem lock file path for a workspace directory."""
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    locks_dir = (root or data_home / "selfforge-agent" / "locks").expanduser().resolve()
+    locks_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    digest = hashlib.sha256(str(workspace.resolve()).encode("utf-8")).hexdigest()
+    return locks_dir / digest
+
+
+def try_workspace_lock(workspace: Path, root: Path | None = None) -> int | None:
+    """Attempt non-blocking exclusive file lock on a workspace. Returns fd or None."""
+    path = workspace_lock_path(workspace, root=root)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def unlock_workspace(fd: int) -> None:
+    """Release and close a workspace file lock."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def workspace_guard(workspace: Path, root: Path | None = None,
+                    message: str = "Workspace is locked by another task or process"):
+    """Context manager acquiring an exclusive file lock on a workspace."""
+    fd = try_workspace_lock(workspace, root=root)
+    if fd is None:
+        raise WorkspaceError(message)
+    try:
+        yield
+    finally:
+        unlock_workspace(fd)
 
 
 @dataclass(frozen=True)
@@ -31,6 +75,12 @@ class CodingWorkspaceManager:
     def __init__(self, root: Path | None = None) -> None:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         self.root = (root or data_home / "selfforge-agent" / "worktrees").expanduser().resolve()
+        self.locks_root = (root.parent / "locks" if root else None)
+
+    def guard(self, workspace: Path | CodingWorkspace,
+              message: str = "Workspace is locked by another task or process"):
+        path = workspace.path if isinstance(workspace, CodingWorkspace) else workspace
+        return workspace_guard(path, root=self.locks_root, message=message)
 
     @staticmethod
     def validate_repository(repository: Path) -> Path:
