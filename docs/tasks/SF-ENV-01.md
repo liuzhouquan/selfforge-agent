@@ -54,6 +54,7 @@
 | `uv run --no-sync ruff check .` | Host | 本地工作树 | All checks passed! |
 | `git diff --check` | Host | 本地工作树 | 无空白字符或格式错误 |
 | `uv run --no-sync pytest -q -m 'not integration'` | Host | 本地工作树 | 348 passed, 11 deselected, 1 warning in 246.01s |
+| `uv run --no-sync pytest -v -m integration` | Docker Desktop 4.92.0 / `selfforge-agent-sandbox:latest` | 本地工作树 | 11 passed in 48.33s |
 
 ## Review
 
@@ -64,10 +65,10 @@
 
 ## Handoff
 
-- 交付状态：本地已实现，测试与静态检查全绿，待审核合并。
+- 交付状态：本地已实现，单元/离线测试及真实 Docker 端到端集成测试全绿，待审核合并。
 - 当前分支：`feat/environment-preparation-plan`
 - 已完成：A1, A2, A3, A4。
-- 未完成/环境限制：宿主机 Docker Desktop WSL 集成需在 Windows Docker Desktop 设置中开启 Ubuntu-24.04 方可在本 distro 中直接与 Docker daemon 交互运行 `sandbox build` 容器集成测试；计划生成及静态审计逻辑已在当前环境完整测试验证。
-- 最近验证：`uv run --no-sync pytest tests/test_environment_plan.py`（5 passed）、`uv run --no-sync pytest -q -m 'not integration'`（348 passed）、`uv run --no-sync ruff check .`（All checks passed）。
+- 未完成/环境限制：无。宿主机 Docker Desktop WSL 集成已成功连接，11 项真实 Docker 集成测试全部通过。
+- 最近验证：`uv run --no-sync pytest tests/test_environment_plan.py`（5 passed）、`uv run --no-sync pytest -q -m 'not integration'`（348 passed）、`uv run --no-sync pytest -v -m integration`（11 passed）、`uv run --no-sync ruff check .`（All checks passed）。
 - 仍在运行：无。
 - 下一步：审查本分支并创建 Pull Request 合并至 `main`。
