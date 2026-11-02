@@ -1,0 +1,22 @@
+diff --git a/pocketflow/__init__.py b/pocketflow/__init__.py
+index 0b71858..d6e2ca6 100644
+--- a/pocketflow/__init__.py
++++ b/pocketflow/__init__.py
+@@ -1,4 +1,4 @@
+-import asyncio, warnings, copy, time
++import asyncio, warnings, copy, time, math
+ 
+ class BaseNode:
+     def __init__(self): self.params,self.successors={},{}
+@@ -24,7 +24,10 @@ class _ConditionalTransition:
+     def __rshift__(self,tgt): return self.src.next(tgt,self.action)
+ 
+ class Node(BaseNode):
+-    def __init__(self,max_retries=1,wait=0): super().__init__(); self.max_retries,self.wait=max_retries,wait
++    def __init__(self,max_retries=1,wait=0):
++        if isinstance(wait, bool) or not isinstance(wait, (int, float)): raise TypeError("wait must be an int or float")
++        if wait < 0 or not math.isfinite(wait): raise ValueError("wait must be a finite non-negative number")
++        super().__init__(); self.max_retries,self.wait=max_retries,wait
+     def exec_fallback(self,prep_res,exc): raise exc
+     def _exec(self,prep_res):
+         for self.cur_retry in range(self.max_retries):
