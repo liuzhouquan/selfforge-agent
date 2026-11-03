@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "pocketflow_transition_validation",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, BaseNode.__sub__ requires action to be a string (raising TypeError('Action must be a string')), but BaseNode.next accepts arbitrary non-string action types and non-BaseNode successors without validation, causing late crashes during flow execution. Require action to be a string in BaseNode.next, raising TypeError('Action must be a string') if not. Require node to be an instance of BaseNode in BaseNode.next, raising TypeError('Successor must be an instance of BaseNode') if not. Preserve existing default transitions, conditional transitions, overwriting warnings, and return values. Add regression tests in tests/test_flow_basic.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_flow_basic.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_transition_validation.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_transition_validation.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
