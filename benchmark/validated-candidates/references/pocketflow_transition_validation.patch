@@ -1,0 +1,8 @@
+--- a/pocketflow/__init__.py
++++ b/pocketflow/__init__.py
+@@ -6,3 +6,5 @@ class BaseNode:
+     def next(self,node,action="default"):
++        if not isinstance(action,str): raise TypeError("Action must be a string")
++        if not isinstance(node,BaseNode): raise TypeError("Successor must be an instance of BaseNode")
+         if action in self.successors: warnings.warn(f"Overwriting successor for action '{action}'")
+         self.successors[action]=node; return node

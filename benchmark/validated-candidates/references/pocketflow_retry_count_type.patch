@@ -1,0 +1,9 @@
+--- a/pocketflow/__init__.py
++++ b/pocketflow/__init__.py
+@@ -25,3 +25,5 @@ class _ConditionalTransition:
+ class Node(BaseNode):
+-    def __init__(self,max_retries=1,wait=0): super().__init__(); self.max_retries,self.wait=max_retries,wait
++    def __init__(self,max_retries=1,wait=0):
++        if isinstance(max_retries,bool) or not isinstance(max_retries,int): raise TypeError("max_retries must be an int")
++        super().__init__(); self.max_retries,self.wait=max_retries,wait
+     def exec_fallback(self,prep_res,exc): raise exc

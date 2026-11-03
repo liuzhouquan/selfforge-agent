@@ -1,0 +1,8 @@
+--- a/boltons/iterutils.py
++++ b/boltons/iterutils.py
+@@ -533,4 +533,5 @@ def windowed_iter(src, size, fill=_UNSET):
+     For infinite iterators, setting *fill* has no effect.
+     """
++    size = _validate_positive_int(size, 'window size')
+     tees = itertools.tee(src, size)
+     if fill is _UNSET:

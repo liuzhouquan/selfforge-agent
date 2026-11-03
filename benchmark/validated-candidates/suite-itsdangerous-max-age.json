@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "itsdangerous_negative_max_age",
+      "repository": "../../.local/benchmark/repos/itsdangerous",
+      "revision": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "task": "In itsdangerous, TimestampSigner.unsign, validate, TimedSerializer.loads, and URLSafeTimedSerializer.loads accept a negative max_age (max_age < 0). A negative max_age currently bypasses input validation: unsign and loads raise SignatureExpired even on fresh signatures or return False in validate, rather than signaling invalid arguments. Reject any negative max_age (max_age < 0) with ValueError('max_age must be >= 0') at the start of TimestampSigner.unsign before signature checking. Preserve existing behavior for positive max_age, max_age=0, and max_age=None. Add regression tests in tests/test_itsdangerous/test_timed.py and run that file.",
+      "allowed_changes": [
+        "src/itsdangerous/timed.py",
+        "tests/test_itsdangerous/test_timed.py"
+      ],
+      "holdout_test": "holdouts/test_itsdangerous_negative_max_age.py",
+      "agent_test_path": "tests/test_itsdangerous/test_timed.py",
+      "agent_test_keyword": "test_max_age",
+      "reference_patch": "references/itsdangerous_negative_max_age.patch",
+      "image": "selfforge-itsdangerous:locked"
+    }
+  ]
+}

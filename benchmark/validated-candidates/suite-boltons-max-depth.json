@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "boltons_negative_max_depth",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons.fileutils.iter_find_files, max_depth is documented as a traversal depth where 0 includes the starting directory. Reject negative max_depth values with ValueError mentioning max_depth instead of silently returning no matches. Preserve max_depth=None, zero, and positive behavior. Add tests to tests/test_fileutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/fileutils.py",
+        "tests/test_fileutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_negative_max_depth.py",
+      "agent_test_path": "tests/test_fileutils.py",
+      "reference_patch": "references/boltons_negative_max_depth.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}

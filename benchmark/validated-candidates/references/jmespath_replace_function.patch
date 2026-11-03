@@ -1,0 +1,11 @@
+--- a/jmespath/functions.py
++++ b/jmespath/functions.py
+@@ -246,4 +246,8 @@ class Functions(object):
+     def _func_join(self, separator, array):
+         return separator.join(array)
+ 
++    @signature({'types': ['string']}, {'types': ['string']}, {'types': ['string']})
++    def _func_replace(self, subject, search, replacement):
++        return subject.replace(search, replacement)
++
+     @signature({'types': ['expref']}, {'types': ['array']})

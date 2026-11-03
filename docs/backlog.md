@@ -8,11 +8,11 @@
 
 | ID | 状态 | 工作单元 | 前提 |
 | --- | --- | --- | --- |
-| SF-EVAL-01 | Ready | 选定并交付 1 道新机制的参考合格真实仓库任务 | 先核对下方现有清单，避免重复 |
-| SF-RUN-01 | Investigate | 核对 CLI 与 Web 对同一工作区的并发协调 | 先做多进程复现；有证据后再定义修复 |
-| SF-EVAL-02 | Waiting | 冻结正式 20 题和完整运行策略 | 至少 20 个互不重复、已完成契约/参考正负控的任务 |
-| SF-EVAL-03 | Waiting | 按冻结策略完成每题至少 3 次真实模型运行并报告 | SF-EVAL-02，实际模型/镜像/预算配置可用 |
-| SF-ENV-01 | Needs Design | 为一种已选依赖配置定义准备计划或离线构建扩展 | 先选支持的输入与输出，不默认执行任意项目脚本 |
+| SF-EVAL-01 | Complete | 选定并交付 15 道新机制参考合格任务（合计达 20 题候选池） | 覆盖 5 仓库共 20 题均通过 Docker 双向验证 |
+| SF-RUN-01 | In Review | 核对 CLI 与 Web 对同一工作区的并发协调 | 独立分支 feat/workspace-concurrency-coordination 已交付 |
+| SF-EVAL-02 | In Review | 冻结正式 20 题和完整运行策略 | 20 题套件 SHA-256 冻结，Docker 预检全通，策略已确立 |
+| SF-EVAL-03 | Ready | 按冻结策略完成每题至少 3 次真实模型运行并报告 | SF-EVAL-02 就绪，实际模型/镜像/预算配置可用时执行 |
+| SF-ENV-01 | In Review | 为一种已选依赖配置定义准备计划或离线构建扩展 | 独立分支 feat/environment-preparation-plan 已交付 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 

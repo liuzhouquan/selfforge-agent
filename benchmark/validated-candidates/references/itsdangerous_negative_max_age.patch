@@ -1,0 +1,10 @@
+--- a/src/itsdangerous/timed.py
++++ b/src/itsdangerous/timed.py
+@@ -87,4 +87,7 @@ def unsign(
+         """
++        if max_age is not None and max_age < 0:
++            raise ValueError("max_age must be >= 0")
++
+         try:
+             result = super().unsign(signed_value)
+             sig_error = None
