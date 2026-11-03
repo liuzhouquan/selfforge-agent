@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "more_itertools_intersperse_n",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "In more_itertools.intersperse, non-positive separation n <= 0 is inconsistent: n=0 raises ValueError('n must be > 0'), while negative n falls through to chunked and raises ValueError('n must be at least 0'). Consistently reject all non-positive integers n <= 0 with ValueError('n must be > 0') at call time. Preserve positive separation behavior, empty iterables, and fill values. Add regression tests to IntersperseTest in tests/test_more.py and run that class.",
+      "allowed_changes": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_intersperse_n.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "IntersperseTest",
+      "reference_patch": "references/more_itertools_intersperse_n.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
+
