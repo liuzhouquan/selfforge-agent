@@ -1,0 +1,40 @@
+diff --git a/more_itertools/more.py b/more_itertools/more.py
+index 9c56ab3..a278c9f 100755
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -1589,6 +1589,8 @@ def split_at(iterable, pred, maxsplit=-1, keep_separator=False):
+         [['a'], ['b'], ['c', 'd', 'c'], ['b'], ['a']]
+ 
+     """
++    if maxsplit < -1:
++        raise ValueError(f"maxsplit must be at least -1, got {maxsplit}")
+     if maxsplit == 0:
+         yield list(iterable)
+         return
+@@ -1626,6 +1628,8 @@ def split_before(iterable, pred, maxsplit=-1):
+         >>> list(split_before(range(10), lambda n: n % 3 == 0, maxsplit=2))
+         [[0, 1, 2], [3, 4, 5], [6, 7, 8, 9]]
+     """
++    if maxsplit < -1:
++        raise ValueError(f"maxsplit must be at least -1, got {maxsplit}")
+     if maxsplit == 0:
+         buf = list(iterable)
+         if buf:
+@@ -1664,6 +1668,8 @@ def split_after(iterable, pred, maxsplit=-1):
+         [[0], [1, 2, 3], [4, 5, 6, 7, 8, 9]]
+ 
+     """
++    if maxsplit < -1:
++        raise ValueError(f"maxsplit must be at least -1, got {maxsplit}")
+     if maxsplit == 0:
+         buf = list(iterable)
+         if buf:
+@@ -1706,6 +1712,8 @@ def split_when(iterable, pred, maxsplit=-1):
+         [[1, 2, 3, 3], [2, 5], [2, 4, 2]]
+ 
+     """
++    if maxsplit < -1:
++        raise ValueError(f"maxsplit must be at least -1, got {maxsplit}")
+     if maxsplit == 0:
+         buf = list(iterable)
+         if buf:
