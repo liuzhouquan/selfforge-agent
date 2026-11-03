@@ -1,5 +1,6 @@
 """Bind Coding sessions to one execution mode and immutable Docker image, and detect repository environment."""
 
+import hashlib
 import re
 import tomllib
 from pathlib import Path
@@ -204,3 +205,141 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     if output_path is not None:
         output_path.write_text(result, encoding="utf-8")
     return result
+
+
+def plan_environment_preparation(
+    repository: Path,
+    *,
+    wheelhouse: Path | None = None,
+    tag: str | None = None,
+    lock_file: Path | None = None,
+    requirements_file: Path | None = None,
+) -> dict:
+    """Generate an offline dependency preparation plan and audit wheelhouse completeness."""
+    repo = repository.expanduser().resolve()
+    if not repo.is_dir():
+        raise ValueError(f"Repository directory does not exist: {repository}")
+
+    detected = detect_repository_environment(repo)
+    layout = detected["layout"]
+
+    req_text = ""
+    req_source_path: Path | None = None
+
+    if requirements_file is not None:
+        p = requirements_file.expanduser().resolve()
+        if not p.is_file():
+            raise ValueError(f"Requirements file does not exist: {requirements_file}")
+        req_text = p.read_text(encoding="utf-8")
+        req_source_path = p
+    elif lock_file is not None:
+        p = lock_file.expanduser().resolve()
+        if not p.is_file():
+            raise ValueError(f"Lock file does not exist: {lock_file}")
+        if p.name == "uv.lock" or p.suffix == ".toml":
+            req_text = export_hash_locked_requirements(p)
+        else:
+            req_text = p.read_text(encoding="utf-8")
+        req_source_path = p
+    else:
+        # Check standard locations in repo
+        uv_lock = repo / "uv.lock"
+        req_lock = repo / "requirements.lock"
+        if uv_lock.is_file():
+            req_text = export_hash_locked_requirements(uv_lock)
+            req_source_path = uv_lock
+        elif req_lock.is_file():
+            req_text = req_lock.read_text(encoding="utf-8")
+            req_source_path = req_lock
+        else:
+            raise ValueError("No supported lockfile (uv.lock, requirements.lock) found in repository")
+
+    # Parse requirements lines
+    packages = []
+    required_hashes: dict[str, set[str]] = {}
+    for line in req_text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        pkg_spec = parts[0]
+        if "==" not in pkg_spec:
+            continue
+        pkg_name, pkg_version = pkg_spec.split("==", 1)
+        hashes = [h.replace("--hash=", "") for h in parts[1:] if h.startswith("--hash=")]
+        packages.append({
+            "name": pkg_name,
+            "version": pkg_version,
+            "hashes": hashes,
+        })
+        required_hashes[pkg_name] = set(hashes)
+
+    req_sha256 = hashlib.sha256(req_text.encode("utf-8")).hexdigest()
+    target_tag = tag or f"selfforge-{repo.name.lower()}:locked"
+
+    # Audit wheelhouse
+    wheelhouse_path = wheelhouse.expanduser().resolve() if wheelhouse else None
+    existing_wheels: dict[str, str] = {}
+    if wheelhouse_path and wheelhouse_path.is_dir():
+        for whl in sorted(wheelhouse_path.glob("*.whl")):
+            if whl.is_file():
+                h = hashlib.sha256(whl.read_bytes()).hexdigest()
+                existing_wheels[f"sha256:{h}"] = whl.name
+
+    satisfied = []
+    missing = []
+    for pkg in packages:
+        hashes = required_hashes[pkg["name"]]
+        matching_file = next((existing_wheels[h] for h in hashes if h in existing_wheels), None)
+        if matching_file:
+            satisfied.append({
+                "name": pkg["name"],
+                "version": pkg["version"],
+                "wheel_file": matching_file,
+            })
+        else:
+            missing.append({
+                "name": pkg["name"],
+                "version": pkg["version"],
+                "required_hashes": sorted(hashes),
+            })
+
+    ready = len(missing) == 0 and len(packages) > 0
+    whl_dest = str(wheelhouse_path) if wheelhouse_path else "./wheelhouse"
+    req_arg = str(req_source_path) if req_source_path else "requirements.lock"
+
+    download_cmd = (
+        f"python -m pip download --index-url https://pypi.org/simple "
+        f"--only-binary=:all: --require-hashes --dest {whl_dest} -r {req_arg}"
+    )
+    build_cmd = (
+        f"uv run selfforge-agent sandbox build --requirements {req_arg} "
+        f"--wheelhouse {whl_dest} --tag {target_tag}"
+    )
+
+    return {
+        "version": 1,
+        "repository": str(repo),
+        "layout": layout,
+        "tag": target_tag,
+        "ready_to_build": ready,
+        "status": "ready" if ready else "pending_wheels",
+        "requirements_sha256": req_sha256,
+        "package_count": len(packages),
+        "packages": packages,
+        "wheelhouse": {
+            "path": str(wheelhouse_path) if wheelhouse_path else None,
+            "total_wheels": len(existing_wheels),
+            "satisfied_count": len(satisfied),
+            "missing_count": len(missing),
+            "satisfied_packages": satisfied,
+            "missing_packages": missing,
+        },
+        "download_command": download_cmd,
+        "build_command": build_cmd,
+        "safety_invariants": [
+            "Offline build only (--network=none)",
+            "Hash-locked wheels required (--require-hashes)",
+            "No arbitrary repository build scripts or hooks executed",
+        ],
+    }

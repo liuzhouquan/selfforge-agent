@@ -12,7 +12,7 @@
 | SF-RUN-01 | In Review | 统一 CLI 与 Web 对同一工作区的并发协调与文件锁保护 | 见 docs/tasks/SF-RUN-01.md |
 | SF-EVAL-02 | Waiting | 冻结正式 20 题和完整运行策略 | 至少 20 个互不重复、已完成契约/参考正负控的任务 |
 | SF-EVAL-03 | Waiting | 按冻结策略完成每题至少 3 次真实模型运行并报告 | SF-EVAL-02，实际模型/镜像/预算配置可用 |
-| SF-ENV-01 | Needs Design | 为一种已选依赖配置定义准备计划或离线构建扩展 | 先选支持的输入与输出，不默认执行任意项目脚本 |
+| SF-ENV-01 | In Review | 为一种已选依赖配置定义准备计划或离线构建扩展 | 任务卡与实现见 docs/tasks/SF-ENV-01.md |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 

@@ -24,6 +24,7 @@ from selfforge_agent.runtime.delivery import (
 from selfforge_agent.runtime.environment import (
     detect_repository_environment,
     export_hash_locked_requirements,
+    plan_environment_preparation,
 )
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
@@ -134,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
     sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
-    sandbox.add_argument("action", choices=["build", "detect", "export-lock"])
+    sandbox.add_argument("action", choices=["build", "detect", "export-lock", "plan"])
     sandbox.add_argument("--repo", type=Path, default=Path.cwd())
     sandbox.add_argument("--lock", type=Path, help="Path to uv.lock file for export-lock action")
     sandbox.add_argument("--requirements", type=Path)
@@ -292,6 +293,24 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Exported hash-locked requirements to {args.output}")
             else:
                 print(content, end="")
+            return 0
+        if args.action == "plan":
+            try:
+                plan = plan_environment_preparation(
+                    args.repo,
+                    wheelhouse=args.wheelhouse,
+                    tag=args.tag,
+                    lock_file=args.lock,
+                    requirements_file=args.requirements,
+                )
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            rendered = json.dumps(plan, ensure_ascii=False, indent=2) + "\n"
+            if args.output:
+                args.output.write_text(rendered, encoding="utf-8")
+                print(f"Environment preparation plan written to {args.output}")
+            else:
+                print(rendered, end="")
             return 0
         if not args.requirements or not args.wheelhouse or not args.tag:
             parser.error("sandbox build requires --requirements, --wheelhouse, and --tag")
