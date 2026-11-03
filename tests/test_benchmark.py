@@ -424,6 +424,30 @@ def test_nine_task_candidate_manifest_and_holdouts_are_well_formed() -> None:
                    for path in case.allowed_changes)
 
 
+def test_twenty_task_frozen_suite_manifest_and_holdouts_are_well_formed() -> None:
+    manifest = (Path(__file__).parents[1]
+                / "benchmark/validated-candidates/suite-twenty-tasks.json")
+    suite = BenchmarkSuite.model_validate_json(manifest.read_bytes())
+    assert len(suite.cases) == 20
+    assert len({case.id for case in suite.cases}) == 20
+
+    manifest_sha = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert manifest_sha == "0a5bd935e7d0aa4b6b9a93ad101686a50c57af2cd1b4143accd5a3bc4e327fd8"
+
+    for case in suite.cases:
+        repository = (manifest.parent / case.repository).resolve()
+        holdout = (manifest.parent / case.holdout_test).resolve()
+        assert len(case.revision) == 40
+        assert holdout.is_file()
+        assert not holdout.is_relative_to(repository)
+        assert case.allowed_changes
+        assert all(not Path(path).is_absolute() and ".." not in Path(path).parts
+                   for path in case.allowed_changes)
+        if case.reference_patch:
+            patch = (manifest.parent / case.reference_patch).resolve()
+            assert patch.is_file()
+
+
 @pytest.mark.integration
 def test_suite_runs_agent_and_holdout_in_live_docker(tmp_path: Path) -> None:
     image = "selfforge-agent-sandbox:latest"
