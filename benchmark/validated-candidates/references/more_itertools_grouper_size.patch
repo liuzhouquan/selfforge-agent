@@ -1,0 +1,9 @@
+--- a/more_itertools/recipes.py
++++ b/more_itertools/recipes.py
+@@ -379,4 +379,6 @@ def grouper(iterable, n, incomplete='fill', fillvalue=None):
+     ValueError
+ 
+     """
++    if n <= 0:
++        raise ValueError(f'Expected n > 0, got {n!r}')
+     iterators = [iter(iterable)] * n
