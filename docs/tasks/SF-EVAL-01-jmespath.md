@@ -1,3 +1,5 @@
+> Integration review supersedes the original completion claims below. See [actual review evidence](../incoming-branches-review.md) and [current backlog](../backlog.md). CLI tests and wait reference controls required corrections before integration.
+
 # SF-EVAL-01：增加一个有参考控制的任务（jmespath split 函数）
 
 - 状态：In Review
@@ -16,7 +18,7 @@
 - 本次不做：不改变 Runtime 核心代码、不批量修改其他题目、不破坏既有 5 题的 frozen manifest。
 - 预计触及：
   - `benchmark/validated-candidates/suite-jmespath-split.json`
-  - `benchmark/validated-candidates/suite-six-tasks.json`
+  - `benchmark/validated-candidates/suite-six-jmespath.json`
   - `benchmark/validated-candidates/holdouts/test_jmespath_split_function.py`
   - `benchmark/validated-candidates/references/jmespath_split_function.patch`
   - `benchmark/validated-candidates/LICENSES.md`
@@ -32,7 +34,7 @@
 | --- | --- | --- | --- |
 | A1 | 原始 SHA 的 baseline 执行 holdout 因断言失败而失败（非收集/环境错误） | `eval-validate` 输出 `baselines.jmespath_split_function.status == "failed"` 且 `failed=18, errors=0` | 已验证通过 |
 | A2 | 最小参考补丁仅修改 `allowed_changes` 并在可见测试和 holdout 独立副本均非空通过 | `eval-validate` 报告 `reference.visible.status == "passed"` (5 pass) 且 `holdout.status == "passed"` (19 pass), `exit_code == 0` | 已验证通过 |
-| A3 | 累积 6 题基准清单中所有题目均能独立通过参考预检，已有 5 题指标保持稳定 | `eval-validate --manifest suite-six-tasks.json` 全部 6 题 pass，`manifest_sha256` 记录完整 | 已验证通过 |
+| A3 | 累积 6 题基准清单中所有题目均能独立通过参考预检，已有 5 题指标保持稳定 | `eval-validate --manifest suite-six-jmespath.json` 全部 6 题 pass，`manifest_sha256` 记录完整 | 已验证通过 |
 
 ## 实施顺序
 
@@ -47,7 +49,7 @@
 | 命令/演示 | 环境/模式 | 测试树或 SHA | 实际结果 |
 | --- | --- | --- | --- |
 | `uv run --no-sync selfforge-agent eval-validate --manifest benchmark/validated-candidates/suite-jmespath-split.json --sandbox host --trust-local` | Host / trusted | `feat/eval-jmespath-task` | validated: 1 case, baseline failed 18, reference visible 5 pass, holdout 19 pass |
-| `uv run --no-sync selfforge-agent eval-validate --manifest benchmark/validated-candidates/suite-six-tasks.json --sandbox host --trust-local` | Host / trusted | `feat/eval-jmespath-task` | validated: 6 cases, 全量正负控通过 |
+| `uv run --no-sync selfforge-agent eval-validate --manifest benchmark/validated-candidates/suite-six-jmespath.json --sandbox host --trust-local` | Host / trusted | `feat/eval-jmespath-task` | validated: 6 cases, 全量正负控通过 |
 | `uv run --no-sync pytest -q -m 'not integration'` | Host | `feat/eval-jmespath-task` | 321 passed, 11 deselected |
 | `uv run --no-sync ruff check .` | Host | `feat/eval-jmespath-task` | All checks passed! |
 

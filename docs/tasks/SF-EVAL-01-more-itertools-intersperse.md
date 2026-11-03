@@ -1,3 +1,5 @@
+> Integration review supersedes the original completion claims below. See [actual review evidence](../incoming-branches-review.md) and [current backlog](../backlog.md). CLI tests and wait reference controls required corrections before integration.
+
 # SF-EVAL-01：增加一个有参考控制的任务（more-itertools intersperse 非正间隔参数校验收紧）
 
 - 状态：In Review
@@ -18,7 +20,7 @@
   2. 保持兼容：保持正整数间隔（`n >= 1`）、空可迭代对象以及不同类型填充元素的行为完全不变。
   3. 独立 holdout：在 `benchmark/validated-candidates/holdouts/test_more_itertools_intersperse_n.py` 中覆盖 `n in [-1, -2, -5, -10]` 与非空/空输入的 8 项参数化断言、`n=0` 既有行为断言以及正整数保持断言。基线呈现清晰的 8 个断言失败（0 collection error）；打补丁后 11 项全部通过。
   4. 最小参考补丁：`benchmark/validated-candidates/references/more_itertools_intersperse_n.patch` 仅修改 `more_itertools/more.py` 中的 1 行判断。
-  5. 独立清单：新增 `suite-more-itertools-intersperse.json` 与累积 `suite-six-tasks.json`（保留 `suite-five-tasks.json` 历史冻结不变）。
+  5. 独立清单：新增 `suite-more-itertools-intersperse.json` 与累积 `suite-six-more-itertools-intersperse.json`（保留 `suite-five-tasks.json` 历史冻结不变）。
   6. 文档与授权：编写 `more-itertools-intersperse.md`，上游 MIT License 既已完整登记于 `LICENSES.md`。
 - 本次不做：不修改 Runtime 核心逻辑，不修改原有历史评测清单，不声称上游确认了该需求。
 - 触及文件：
@@ -26,7 +28,7 @@
   - `benchmark/validated-candidates/references/more_itertools_intersperse_n.patch`
   - `benchmark/validated-candidates/more-itertools-intersperse.md`
   - `benchmark/validated-candidates/suite-more-itertools-intersperse.json`
-  - `benchmark/validated-candidates/suite-six-tasks.json`
+  - `benchmark/validated-candidates/suite-six-more-itertools-intersperse.json`
   - `docs/tasks/SF-EVAL-01.md`
 
 ## 验收
@@ -36,7 +38,7 @@
 | A1 | 给定原始 baseline revision `4aeb4338ae1407d8da9723e86da99efeb446f719` | holdout 测试因负数报错信息不一致断言失败（8 个断言失败，0 collection error） | `eval-validate` 报告 status="failed", failed=8 |
 | A2 | 给定打上参考补丁的独立 checkout | visible 与 holdout 均通过，无跳过与错误 | visible 6 passed, holdout 11 passed, exit 0 |
 | A3 | 参考补丁范围受限 | 仅修改 allowed_changes 中的 `more_itertools/more.py` | `eval-validate` changed_files 验证通过 |
-| A4 | 累积套件回归验证 | `suite-six-tasks.json` 6 题全部在 Docker 中通过预检与双向验证 | 6/6 validated, exit 0 |
+| A4 | 累积套件回归验证 | `suite-six-more-itertools-intersperse.json` 6 题全部在 Docker 中通过预检与双向验证 | 6/6 validated, exit 0 |
 
 ## 实施顺序
 
@@ -44,7 +46,7 @@
 2. 编写独立 holdout 测试 `test_more_itertools_intersperse_n.py` 并验证基线 8 个负例断言失败与 3 个正例通过。
 3. 制作最小参考补丁 `more_itertools_intersperse_n.patch` 并验证仅修改 `more_itertools/more.py`。
 4. 编写候选描述 `more-itertools-intersperse.md`。
-5. 生成 `suite-more-itertools-intersperse.json` 与 `suite-six-tasks.json`，运行 `eval-validate`。
+5. 生成 `suite-more-itertools-intersperse.json` 与 `suite-six-more-itertools-intersperse.json`，运行 `eval-validate`。
 6. 更新任务卡与交付记录。
 
 ## 验证记录
@@ -52,7 +54,7 @@
 | 命令/演示 | 环境/模式 | 测试树或 SHA | 实际结果 |
 | --- | --- | --- | --- |
 | `uv run --no-sync selfforge-agent eval-validate --manifest benchmark/validated-candidates/suite-more-itertools-intersperse.json` | Docker (`selfforge-agent-sandbox:latest`) | 本地工作树 | validated: 1 case, baseline failed=8, visible passed=6, holdout passed=11 |
-| `uv run --no-sync selfforge-agent eval-validate --manifest benchmark/validated-candidates/suite-six-tasks.json` | Docker (live daemon) | 本地工作树 | validated: 6 cases, manifest SHA `539eb29676def519c8a869e9d7e1017a9cce4b9879d769e161e15435ac7b4676` |
+| `uv run --no-sync selfforge-agent eval-validate --manifest benchmark/validated-candidates/suite-six-more-itertools-intersperse.json` | Docker (live daemon) | 本地工作树 | validated: 6 cases, manifest SHA `539eb29676def519c8a869e9d7e1017a9cce4b9879d769e161e15435ac7b4676` |
 | `uv run --no-sync ruff check .` | Host | 本地工作树 | All checks passed! |
 | `git diff --check` | Host | 本地工作树 | 无空白字符或格式错误 |
 | `uv run --no-sync pytest -q -m 'not integration'` | Host | 本地工作树 | 343 passed, 11 deselected |

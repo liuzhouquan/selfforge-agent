@@ -33,3 +33,5 @@ This is a capability map, not a task queue. Take one bounded work unit from the 
 | 4 | Implemented | Worktree revert workflow with sensitive file preservation, lockfile requirement export (`uv.lock`), and configurable PR repair sandbox image & timeout |
 
 General Coding now creates a worktree from committed HEAD by default and edits there; source-checkout changes are excluded. Worktrees persist until the user commits or reverts edits and explicitly removes the worktree. The branch remains after removal. Docker isolation applies to commands, while file tools are constrained to the selected workspace. Web Coding and PR repair default to Docker; host execution requires an explicit operator setting and per-request trust.
+
+Current integration: [CLI/Web cooperative ownership, offline plans and twenty reference-qualified cases](./incoming-branches-review.md). The [v2 formal policy](../benchmark/validated-candidates/twenty-tasks-v2.md) is frozen; its 60 live-model attempts are pending. Input-validation-heavy task diversity remains limited.

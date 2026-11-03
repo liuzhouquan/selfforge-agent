@@ -33,7 +33,7 @@ uv run python examples/coding_demo.py
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、查看有界 Diff、提交改动并创建 PR、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
-| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。5 题通过参考预检；三题各 3 次 DeepSeek 运行 9/9，正式 20 题 × 3 次模型验收尚未完成 |
+| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。[20 题 / 5 仓库通过 Docker 参考预检](./benchmark/validated-candidates/twenty-tasks-v2.md)；三题各 3 次 DeepSeek 运行 9/9，正式 20 题 × 3 次模型验收尚未完成 |
 
 失败测试会通过有界 JUnit 诊断回填给同一个 Coding Agent，它可读取相关代码、修复并重测。可运行真实模型演示（需配置供应商和 Docker 镜像）：
 
@@ -193,7 +193,7 @@ GitHub Actions 在推送 `main` 和提交 PR 时运行锁定依赖安装、Ruff�
 
 2026-10-30，两题参考控制集在相同预算下增加 Runtime 预算反馈后，DeepSeek 三次重复仍为 **5/6**，一次达到轮数上限且独立可见测试有失败。六次均调用了正式测试工具，但该小样本不能证明成功率提升，且不增加验收任务数。逐次数据与限制见[预算反馈复测](./docs/runtime-budget.md)。
 
-现有参考控制扩展到 **3 仓库 / 5 题**，五题均通过 Docker 负例与参考正例。另用固定预算对深度剪枝、零分块与替换回调停止三题各运行 3 次，DeepSeek `deepseek-flash` 得到 **9/9**，独立可见/隐藏测试全部通过。这是小规模项目自编任务结果，与历史 5/6 分开记录；不代表正式 20 题验收完成。契约、逐次结果与限制见[迭代器/遍历评测](./benchmark/validated-candidates/iterator-traversal.md)。
+此前参考控制扩展到 **3 仓库 / 5 题**，五题均通过 Docker 负例与参考正例。另用固定预算对深度剪枝、零分块与替换回调停止三题各运行 3 次，DeepSeek `deepseek-flash` 得到 **9/9**，独立可见/隐藏测试全部通过。这是小规模项目自编任务结果，与历史 5/6 分开记录；不代表正式 20 题验收完成。契约、逐次结果与限制见[迭代器/遍历评测](./benchmark/validated-candidates/iterator-traversal.md)。
 
 ## Specialized Workflows：PR Review
 
@@ -201,8 +201,10 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-下一步逐题扩展有参考正负控的任务，再冻结 20 题、每题至少 3 次的正式验收策略。已有显式 commit/PR 交付和只读环境发现；自动依赖安装、更广的环境配置仍开放。一次接手一个工作单元，见[可接手任务](./docs/backlog.md)与[产品边界](./docs/product-scope.md)。
+已完成 [20 题 / 5 仓库参考预检与 v2 策略冻结](./benchmark/validated-candidates/twenty-tasks-v2.md)；下一步按该策略完成每题至少 3 次真实模型验收。已有显式 commit/PR 交付和只读环境发现；自动依赖安装、更广的环境配置仍开放。一次接手一个工作单元，见[可接手任务](./docs/backlog.md)与[产品边界](./docs/product-scope.md)。
 
 ## 开发与 Agent 协作
 
 新贡献者或 coding agent 从 [AGENTS.md](./AGENTS.md) 和[开发指南](./docs/development.md)开始，再按[协作流程](./docs/agent-workflow.md)领取一个任务。[任务卡模板](./docs/task-template.md)统一范围、验收和交接；[工程约束](./docs/engineering-invariants.md)按模块查阅。Roadmap 是方向，历史审计是指定版本的证据，都不能直接当成本轮整份任务单。贡献入口见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+CLI/Web 现使用统一协同工作区锁，CLI/API 可生成只读离线依赖准备计划与有界 wheelhouse 审计；升级与能力边界见[整合审查](./docs/incoming-branches-review.md)。

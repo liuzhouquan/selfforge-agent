@@ -1,3 +1,5 @@
+> Historical v1 qualification record. Review found a large-integer error in the wait reference, mutable image use, and an incomplete model policy. Keep manifest/asset bytes unchanged; use [reviewed v2](./twenty-tasks-v2.md) for subsequent qualification and runs. The table below records the original narrow controls, not proof of all valid input behavior or any model success rate.
+
 # Frozen Twenty-Task Acceptance Suite and Execution Policy
 
 This document defines and freezes the formal 20-task reference-qualified benchmark suite (`suite-twenty-tasks.json`) and execution policy for `SF-EVAL-02`.

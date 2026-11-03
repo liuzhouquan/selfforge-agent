@@ -8,11 +8,11 @@
 
 | ID | 状态 | 工作单元 | 前提 |
 | --- | --- | --- | --- |
-| SF-EVAL-01 | Complete | 选定并交付 15 道新机制参考合格任务（合计达 20 题候选池） | 覆盖 5 仓库共 20 题均通过 Docker 双向验证 |
-| SF-RUN-01 | In Review | 核对 CLI 与 Web 对同一工作区的并发协调 | 独立分支 feat/workspace-concurrency-coordination 已交付 |
-| SF-EVAL-02 | In Review | 冻结正式 20 题和完整运行策略 | 20 题套件 SHA-256 冻结，Docker 预检全通，策略已确立 |
-| SF-EVAL-03 | Ready | 按冻结策略完成每题至少 3 次真实模型运行并报告 | SF-EVAL-02 就绪，实际模型/镜像/预算配置可用时执行 |
-| SF-ENV-01 | In Review | 为一种已选依赖配置定义准备计划或离线构建扩展 | 独立分支 feat/environment-preparation-plan 已交付 |
+| SF-EVAL-01 | Complete | 15 个单题分支与原有 5 题形成 20 题 / 5 仓库池 | 审查修订 v2 通过真实 Docker 参考正负控；不是模型成绩 |
+| SF-RUN-01 | Complete | CLI Coding/交付/删除与 Web 任务统一排他锁 | 同一用户/XDG；自定义存储目录共享锁；升级先停止旧 worker |
+| SF-EVAL-02 | Complete | 冻结 v2 清单、参考/holdout 哈希及模型/预算/失败策略 | [v2 策略](../benchmark/validated-candidates/twenty-tasks-v2.md)；旧 v1 保留历史 |
+| SF-EVAL-03 | Ready | 按 v2 策略完成每题至少 3 次真实模型运行并报告 | 核对有效 DeepSeek/model、镜像 ID；新镜像需新 manifest 与重新预检 |
+| SF-ENV-01 | Complete | 只读离线准备计划及有界哈希 wheelhouse 审计 | CLI/API；不自动下载、不保证安装成功；见[审查记录](./incoming-branches-review.md) |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
@@ -25,11 +25,11 @@
 - 范围外：本轮不改变 Runtime、不批量重写测试、不运行整套正式模型验收、不宣称上游确认了项目自定义功能需求。
 - 完成后：更新独立任务清单和证据；实时模型探索若是另一项独立目标则另立任务，按实际授权和预算执行。
 
-当前参考清单为 `benchmark/validated-candidates/suite-five-tasks.json`，5 题 / 3 仓库，文件 SHA-256 为 `5fbdc62e2e5be199e72a79c9b3ae23dcc325847cdb4e07bbddf20be4bfc20942`。覆盖异步空输入、Unicode 分隔、目录剪枝、零分块和替换回调停止；不要将候选/早期 pilot 中相同机制重复计数。历史模型分数使用不同策略，不能套用到新 Runtime 或相加，见[评测历史](./evaluation.md)。
+当前参考清单为 [v2 20 题 / 5 仓库](../benchmark/validated-candidates/twenty-tasks-v2.md)，20 题均通过真实 Docker 参考预检。原 `suite-five-tasks.json`（SHA-256 `5fbdc62e2e5be199e72a79c9b3ae23dcc325847cdb4e07bbddf20be4bfc20942`）作为 5 题历史清单保留。覆盖异步空输入、Unicode 分隔、目录剪枝、零分块和替换回调停止；不要将候选/早期 pilot 中相同机制重复计数。历史模型分数使用不同策略，不能套用到新 Runtime 或相加，见[评测历史](./evaluation.md)。
 
 ## SF-RUN-01：调查工作区并发协调
 
-已知边界：Web 已有跨进程 workspace guard，CLI/外部 Git 进程尚未承诺统一锁；内容指纹不是锁。这是调查入口，不是已复现的新 P1。
+已完成同一用户/XDG 内的 CLI/Web 统一锁（含不同记录/工作区存储目录）；独立进程覆盖冲突拒绝与进程退出释放。外部 Git/编辑器和不同 XDG 仍不参与，内容指纹不是锁。以下为原调查验收，实际证据见[审查记录](./incoming-branches-review.md)。
 
 - 入口：`api/coding_jobs.py` 的 workspace guard、CLI Coding 与 workspaces 子命令、`runtime/workspace.py`、`runtime/delivery.py`。
 - 首个验收：用受控临时仓库和两个进程，证明实际冲突或证明现有保护生效；记录交错顺序、期望和观察结果。
@@ -44,7 +44,7 @@
 
 ## SF-ENV-01：先定义一种环境扩展
 
-现有能力是只读布局/依赖/锁文件识别、有限 uv.lock 导出与显式离线镜像构建；不等同于自动安装完成。选择一种实际项目配置，先定义可接受的输入、产生的计划/镜像和失败结果，再依据任务卡实现。保留固定哈希、无网络构建、输入边界及会话镜像绑定；不默认运行仓库 hooks、源码构建或系统包安装。
+现有能力包括只读布局/依赖/锁文件识别、有限 uv.lock 导出、CLI/API 离线计划/有界 wheelhouse 审计与显式离线镜像构建；不等同于自动安装完成。选择一种实际项目配置，先定义可接受的输入、产生的计划/镜像和失败结果，再依据任务卡实现。保留固定哈希、无网络构建、输入边界及会话镜像绑定；不默认运行仓库 hooks、源码构建或系统包安装。
 
 ## 更新规则
 

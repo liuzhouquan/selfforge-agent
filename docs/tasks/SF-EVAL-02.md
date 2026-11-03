@@ -1,3 +1,5 @@
+> Integration review supersedes the original completion claims below. See [actual review evidence](../incoming-branches-review.md) and [current backlog](../backlog.md). CLI tests and wait reference controls required corrections before integration.
+
 # SF-EVAL-02：冻结正式 20 题和完整运行策略
 
 - 状态：In Review
