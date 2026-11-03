@@ -122,17 +122,17 @@ def test_cli_workspaces_rejected_when_locked(tmp_path: Path, monkeypatch: pytest
     with manager.guard(workspace.path):
         # Attempt CLI remove while locked
         with pytest.raises(SystemExit) as exc_remove:
-            cli_main(["workspaces", "remove", "--repo", str(repo), session_id])
+            cli_main(["workspaces", "remove", session_id, "--repo", str(repo)])
         assert exc_remove.value.code != 0
 
         # Attempt CLI commit while locked
         with pytest.raises(SystemExit) as exc_commit:
-            cli_main(["workspaces", "commit", "--repo", str(repo), session_id, "-m", "fix"])
+            cli_main(["workspaces", "commit", session_id, "--repo", str(repo), "-m", "fix"])
         assert exc_commit.value.code != 0
 
         # Attempt CLI revert while locked
         with pytest.raises(SystemExit) as exc_revert:
-            cli_main(["workspaces", "revert", "--repo", str(repo), session_id])
+            cli_main(["workspaces", "revert", session_id, "--repo", str(repo)])
         assert exc_revert.value.code != 0
 
 
@@ -157,7 +157,7 @@ def test_separate_cli_process_cannot_deliver_or_remove_web_owned_workspace(tmp_p
     manager = CodingWorkspaceManager()
     workspace = manager.create(repo, "crossprocess01")
     jobs = CodingJobManager(root=tmp_path / "custom-job-records")
-    args = ["workspaces", action, "--repo", str(repo), workspace.session_id]
+    args = ["workspaces", action, workspace.session_id, "--repo", str(repo)]
     if action == "commit":
         args += ["-m", "blocked commit"]
     if action == "pr":
