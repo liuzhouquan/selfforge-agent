@@ -64,3 +64,9 @@ The explicit CLI `sandbox build` command uses `runtime.images` to validate exact
 ## Task reference qualification
 
 `eval-validate` calls the benchmark module's shared preflight without creating a model. Optional external reference patches are frozen/hashed by `load_suite`; the qualification command requires one for every case, while legacy `eval-suite` manifests remain compatible. After the existing negative holdout control, Git validates and applies an allowed text patch in a fresh checkout. Independent visible and holdout copies must both pass nonempty selections. When a reference is provided, the same control runs before a live `eval-suite`. Reports contain hashes/counts, not patch source or model messages. See [benchmark.md](./benchmark.md) and the reference-qualified candidate contracts.
+
+## Shared ownership and dependency plans
+
+`runtime.workspace` owns the common advisory lock keyed by canonical workspace path within the user/XDG data home. CLI Coding/managed delivery/removal and `api.coding_jobs` acquire that same lock, independent of their record/worktree storage directories. External writers remain outside the protocol; stop old workers before the lock-directory migration.
+
+CLI `sandbox plan` and local `POST /api/sandbox/plan` call `runtime.environment.plan_environment_preparation`. Plans and `runtime.images` builds share strict hashed-requirement parsing and bounded wheel input reads. Plans return explicit export/download/build commands and hash-availability results without running them; only a real isolated build establishes installability. See [dependency images](./dependency-images.md) and [integration review](./incoming-branches-review.md).
