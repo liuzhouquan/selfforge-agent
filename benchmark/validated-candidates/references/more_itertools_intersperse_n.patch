@@ -1,0 +1,8 @@
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -979,3 +979,3 @@ def intersperse(e, iterable, n=1):
+     """
+-    if n == 0:
++    if n <= 0:
+         raise ValueError('n must be > 0')
+
