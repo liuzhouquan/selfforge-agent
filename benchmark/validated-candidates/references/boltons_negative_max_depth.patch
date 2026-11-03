@@ -1,0 +1,9 @@
+--- a/boltons/fileutils.py
++++ b/boltons/fileutils.py
+@@ -533,4 +533,6 @@ def iter_find_files(directory, patterns, ignored=None, include_dirs=False, max_d
+     ign_re = re.compile('|'.join([fnmatch.translate(p) for p in ignored]))
++    if max_depth is not None and max_depth < 0:
++        raise ValueError(f"max_depth must be non-negative or None, got {max_depth!r}")
+     directory = os.fspath(directory)
+     for root, dirs, files in os.walk(directory):
+         if max_depth is not None:
