@@ -93,7 +93,8 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         if workspace:
             print(f"Workspace: {workspace.path} (branch {workspace.branch}, "
                   f"base {workspace.base_sha[:12]})")
-        result = agent.run(args.task or "", resume=bool(args.resume))
+        with manager.guard(working_root, message=f"Workspace {working_root} is locked by another running task or process"):
+            result = agent.run(args.task or "", resume=bool(args.resume))
     except (ValueError, RuntimeError, OSError) as exc:
         parser.error(str(exc))
     cost_str = f", {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
@@ -129,7 +130,7 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         parser.error(str(exc))
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
     sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
@@ -259,7 +260,7 @@ def main() -> int:
                           help="Automatically prioritize risk hypotheses from the diff")
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command == "sandbox":
         if args.action == "detect":
             try:
@@ -347,7 +348,9 @@ def main() -> int:
             elif args.action == "remove":
                 if not args.session_id:
                     parser.error("workspaces remove requires a session ID")
-                workspace = manager.remove(args.repo, args.session_id)
+                workspace = manager.get(args.repo, args.session_id)
+                with manager.guard(workspace.path, message=f"Cannot remove: workspace {workspace.path} is currently locked"):
+                    workspace = manager.remove(args.repo, args.session_id)
                 print(f"Removed worktree {workspace.path}; branch {workspace.branch} remains")
             elif args.action == "diff":
                 if not args.session_id:
@@ -366,12 +369,13 @@ def main() -> int:
                 if not args.message:
                     parser.error("workspaces commit requires --message")
                 workspace = manager.get(args.repo, args.session_id)
-                res = commit_workspace(
-                    workspace,
-                    args.message,
-                    author_name=args.author_name,
-                    author_email=args.author_email,
-                )
+                with manager.guard(workspace.path, message=f"Cannot commit: workspace {workspace.path} is currently locked"):
+                    res = commit_workspace(
+                        workspace,
+                        args.message,
+                        author_name=args.author_name,
+                        author_email=args.author_email,
+                    )
                 print(f"Committed {res.commit_sha[:12]} on {res.branch}: {res.message}")
                 for path in res.files_committed:
                     print(f"  {path}")
@@ -383,15 +387,16 @@ def main() -> int:
                 workspace = manager.get(args.repo, args.session_id)
                 session_root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
                 session = SessionStore(session_root, args.session_id)
-                pr_res = create_pull_request(
-                    workspace,
-                    args.title,
-                    body=args.body,
-                    base_branch=args.base,
-                    remote=args.remote,
-                    draft=args.draft,
-                    session_store=session,
-                )
+                with manager.guard(workspace.path, message=f"Cannot create PR: workspace {workspace.path} is currently locked"):
+                    pr_res = create_pull_request(
+                        workspace,
+                        args.title,
+                        body=args.body,
+                        base_branch=args.base,
+                        remote=args.remote,
+                        draft=args.draft,
+                        session_store=session,
+                    )
                 print(f"Created Pull Request: {pr_res.pr_url}")
                 if pr_res.pr_number:
                     print(f"PR #{pr_res.pr_number} on {pr_res.branch} ({pr_res.commit_sha[:12]})")
@@ -401,7 +406,8 @@ def main() -> int:
                 workspace = manager.get(args.repo, args.session_id)
                 session_root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
                 session = SessionStore(session_root, args.session_id) if session_root.is_dir() else None
-                result = revert_workspace(workspace, session)
+                with manager.guard(workspace.path, message=f"Cannot revert: workspace {workspace.path} is currently locked"):
+                    result = revert_workspace(workspace, session)
                 if result.reverted_files:
                     print(f"Reverted {len(result.reverted_files)} files in workspace {workspace.path}:")
                     for f in result.reverted_files:
