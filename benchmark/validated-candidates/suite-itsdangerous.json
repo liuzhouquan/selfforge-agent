@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "itsdangerous_empty_secret_keys",
+      "repository": "../../.local/benchmark/repos/itsdangerous",
+      "revision": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "task": "In itsdangerous, Signer, Serializer, and their subclasses accept an empty sequence of secret keys (such as secret_key=[]) at initialization and silently produce an empty secret_keys list, which later crashes with IndexError when attempting to sign, unsign, derive a key, or access the secret_key property. Reject an empty secret_key sequence with ValueError mentioning secret_key at initialization time in _make_keys_list. Preserve existing behavior for single string/bytes and non-empty sequences. Add regression tests in tests/test_itsdangerous/test_signer.py and run the test suite.",
+      "allowed_changes": [
+        "src/itsdangerous/signer.py",
+        "tests/test_itsdangerous/test_signer.py"
+      ],
+      "holdout_test": "holdouts/test_itsdangerous_empty_secret_keys.py",
+      "agent_test_path": "tests/test_itsdangerous/test_signer.py",
+      "reference_patch": "references/itsdangerous_empty_secret_keys.patch",
+      "image": "selfforge-itsdangerous:locked"
+    }
+  ]
+}
