@@ -23,7 +23,7 @@ Locked `uv sync --locked --dev --default-index https://pypi.org/simple` succeede
 - V2 `eval-validate --test-timeout 30`: **20/20 reference-qualified in real Docker**, every baseline fails assertions; all reference visible/holdout selections pass nonempty with zero failures/errors/skips. No model was instantiated.
 - Private report SHA-256: `efd2aa4ce1aa4ddce583d939b3084c93e21442c200ccc42332028d1eebe43e03`; manifest SHA-256: `3b4aa3fa27c18d183af8ac109de05ca9bdef22294b911d13e70d287cfe5344b6`.
 - Local full combined `uv run --no-sync pytest -q`: **382 passed, no skips**, 307.51s, including all 11 Docker integration tests; one existing Starlette/httpx deprecation warning. One additional independent CLI Coding contention case was added afterward; the final concurrency selection passed **10/10**. These overlapping runs are not additive. Final CI collects 383 tests and its actual result is recorded in the PR evidence.
-- Ruff, whitespace, 170 local Markdown path links and common real-key/private-key pattern checks passed. All 18 original branch heads are preserved as ancestors. No runtime source changed after the full combined regression started.
+- Ruff, repair-patch whitespace, 184 final local Markdown path links and common real-key/private-key pattern checks passed. The complete imported diff retains 16 blank-at-EOF whitespace notices in frozen assets and archived task records; these are disclosed rather than changing historical manifest/holdout bytes for formatting. All 18 original branch heads are preserved as ancestors. No runtime source changed after the full combined regression started.
 
 | Case | Baseline assertion failures | Reference visible passes | Reference holdout passes |
 | --- | ---: | ---: | ---: |
