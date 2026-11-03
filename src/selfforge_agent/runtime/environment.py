@@ -1,6 +1,9 @@
 """Bind Coding sessions to one execution mode and immutable Docker image, and detect repository environment."""
 
+import hashlib
 import re
+import shlex
+import time
 import tomllib
 from pathlib import Path
 
@@ -11,6 +14,13 @@ from selfforge_agent.runtime.execution import (
     Executor,
     HostExecutor,
     resolve_docker_image,
+)
+from selfforge_agent.runtime.images import (
+    MAX_LOCK_BYTES,
+    _read,
+    parse_locked_requirements,
+    read_locked_wheels,
+    validate_image_tag,
 )
 from selfforge_agent.runtime.session import SessionStore
 
@@ -146,7 +156,7 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     if lock_path.stat().st_size > 5 * 1024 * 1024:
         raise ValueError("Lock file exceeds 5 MiB size limit")
 
-    content = lock_path.read_bytes()
+    content = _read(lock_path, 5 * 1024 * 1024)
     try:
         data = tomllib.loads(content.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
@@ -204,3 +214,128 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     if output_path is not None:
         output_path.write_text(result, encoding="utf-8")
     return result
+
+
+def plan_environment_preparation(
+    repository: Path,
+    *,
+    wheelhouse: Path | None = None,
+    tag: str | None = None,
+    lock_file: Path | None = None,
+    requirements_file: Path | None = None,
+) -> dict:
+    """Generate an offline dependency preparation plan and audit wheelhouse completeness."""
+    repo = repository.expanduser().resolve()
+    if not repo.is_dir():
+        raise ValueError(f"Repository directory does not exist: {repository}")
+
+    detected = detect_repository_environment(repo)
+    layout = detected["layout"]
+
+    req_text = ""
+    req_source_path: Path | None = None
+    export_needed = False
+
+    if requirements_file is not None:
+        p = requirements_file.expanduser().absolute()
+        if not p.is_file():
+            raise ValueError(f"Requirements file does not exist: {requirements_file}")
+        req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
+        req_source_path = p
+    elif lock_file is not None:
+        p = lock_file.expanduser().absolute()
+        if not p.is_file():
+            raise ValueError(f"Lock file does not exist: {lock_file}")
+        if p.name == "uv.lock" or p.suffix == ".toml":
+            req_text = export_hash_locked_requirements(p)
+            export_needed = True
+        else:
+            req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
+        req_source_path = p
+    else:
+        # Check standard locations in repo
+        uv_lock = repo / "uv.lock"
+        req_lock = repo / "requirements.lock"
+        if uv_lock.is_file():
+            req_text = export_hash_locked_requirements(uv_lock)
+            export_needed = True
+            req_source_path = uv_lock
+        elif req_lock.is_file():
+            req_text = _read(req_lock, MAX_LOCK_BYTES).decode("utf-8")
+            req_source_path = req_lock
+        else:
+            raise ValueError("No supported lockfile (uv.lock, requirements.lock) found in repository")
+
+    lock_bytes = req_text.encode("utf-8")
+    packages = parse_locked_requirements(lock_bytes)
+    req_sha256 = hashlib.sha256(lock_bytes).hexdigest()
+    target_tag = tag or "selfforge-dependencies:locked"
+    validate_image_tag(target_tag)
+    wheelhouse_path = wheelhouse.expanduser().absolute() if wheelhouse else None
+    wheels = read_locked_wheels(lock_bytes, packages, wheelhouse_path, time.monotonic() + 10)
+    existing_wheels = {"sha256:" + hashlib.sha256(data).hexdigest(): name
+                       for name, data in wheels.items()}
+
+    satisfied = []
+    missing = []
+    for pkg in packages:
+        hashes = set(pkg["hashes"])
+        matching_file = next((existing_wheels[h] for h in hashes if h in existing_wheels), None)
+        if matching_file:
+            satisfied.append({
+                "name": pkg["name"],
+                "version": pkg["version"],
+                "wheel_file": matching_file,
+            })
+        else:
+            missing.append({
+                "name": pkg["name"],
+                "version": pkg["version"],
+                "required_hashes": sorted(hashes),
+            })
+
+    ready = len(missing) == 0 and len(packages) > 0
+    whl_dest = str(wheelhouse_path) if wheelhouse_path else str(repo / "wheelhouse")
+    req_arg = str(req_source_path.with_name("selfforge-requirements.lock")
+                  if export_needed else req_source_path)
+    export_command = (shlex.join(["selfforge-agent", "sandbox", "export-lock", "--lock",
+                                  str(req_source_path), "--output", req_arg])
+                      if export_needed else None)
+    download_cmd = shlex.join([
+        "python", "-m", "pip", "download", "--isolated", "--index-url", "https://pypi.org/simple",
+        "--only-binary=:all:", "--require-hashes", "--dest", whl_dest, "-r", req_arg,
+    ])
+    build_cmd = shlex.join([
+        "selfforge-agent", "sandbox", "build", "--requirements", req_arg,
+        "--wheelhouse", whl_dest, "--tag", target_tag,
+    ])
+
+    return {
+        "version": 1,
+        "repository": str(repo),
+        "layout": layout,
+        "tag": target_tag,
+        "ready_to_build": ready,
+        "status": "ready" if ready else "pending_wheels",
+        "requirements_sha256": req_sha256,
+        "package_count": len(packages),
+        "packages": packages,
+        "wheelhouse": {
+            "path": str(wheelhouse_path) if wheelhouse_path else None,
+            "total_wheels": len(wheels),
+            "satisfied_count": len(satisfied),
+            "missing_count": len(missing),
+            "satisfied_packages": satisfied,
+            "missing_packages": missing,
+        },
+        "export_command": export_command,
+        "requirements_content": req_text,
+        "readiness_scope": "Hash-allowed inputs only; wheel format, platform and dependency resolution require build",
+        "download_command": download_cmd,
+        "build_command": build_cmd,
+        "safety_invariants": [
+            "Offline build only (--network=none)",
+            "Hash-locked wheels required (--require-hashes)",
+            "No arbitrary repository build scripts or hooks executed",
+        ],
+    }

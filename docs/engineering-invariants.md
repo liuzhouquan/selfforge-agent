@@ -36,6 +36,8 @@ Verification entry points: [Dependency images](./dependency-images.md), `tests/t
 
 - General Coding binds its execution environment inside the common Runtime after the Web workspace lock is acquired. Save only mode and immutable local Docker ID in the private session, use that ID for tools, and auto-reuse it when resume omits an image. Fail before model/tools on explicit image/mode mismatches or missing images; never pull/fallback silently. Legacy sessions invalidate test evidence before first environment binding. Web status/history exposes saved mode/ID; Host still requires explicit trust and its dependencies are not pinned. Keep preflight bounded by the task deadline.
 
+- Environment plans and builds share strict hashed-requirement parsing and bounded no-symlink wheel reads; emit shell-quoted explicit export/download/build steps and never execute them implicitly. See `docs/incoming-branches-review.md` and the v2 policy for current reference qualification.
+
 ## Private state, providers, Web jobs and workspaces
 
 Verification entry points: `tests/test_providers.py`, `tests/test_coding_jobs_durable.py`, `tests/test_coding_web.py`, `tests/test_web_origin.py`, `tests/test_workspace.py`.
@@ -49,6 +51,8 @@ Verification entry points: `tests/test_providers.py`, `tests/test_coding_jobs_du
 - Workspace listing validates metadata independently. Skip unreadable or mismatched records with a warning that identifies the metadata file; preserve records for manual recovery.
 
 - New sessions and traces are mode-0600 under the user data directory's `selfforge-agent/sessions/`; older sessions in repository `.selfforge/` or app `.workspaces/` remain resumable. `.local/providers.json` may contain a key. Never log or commit keys, generated reports, `.env`, virtual environments, or external course source.
+
+- CLI Coding and managed delivery/removal must share the Web advisory workspace lock within the same user/XDG home, independent of record/worktree storage roots. Stop old workers before the lock-namespace upgrade. External editors/Git and different XDG homes are not coordinated.
 
 ## JUnit, diagnostics and workspace evidence
 
@@ -88,7 +92,7 @@ Verification entry points: [Benchmark contract](./benchmark.md), [evaluation his
 
 - `eval-suite` is the repeatable general Coding evaluation path. Keep cases pinned to full local Git commit SHAs, holdout tests outside Agent repositories, a failing-assertion baseline check, fresh checkout per repeat, exact allowed change paths, and independent JUnit-backed visible and holdout verification. Run the visible selection on a separate copy before installing the holdout; require a passing nonempty selection and a passing nonempty holdout. Resolve each Docker image reference to an immutable local ID before running cases; host execution needs explicit trust. Freeze manifest bytes at evaluation start so the report hash identifies the loaded cases. Report actual failure categories, latency, and provider-reported tokens without raw provider error bodies, invented model success rates, or prices. The offline demo and three-repository exploratory pilot are separate from product acceptance targets in `docs/product-scope.md`.
 
-- Evaluation reports may include per-run step counts and tool names/success flags for diagnosing limits. Keep model messages, reasoning, tool output, test text, credentials, and private paths out of committed or published reports. Five reference-qualified tasks across three repositories and the separate three-task iterator/traversal run remain below the 20-task acceptance target; the three-task 9/9 result does not add three unique tasks. Keep all historical results separate; do not combine runs with different gates or repeat counts. An `agent_max_steps` attempt remains a failure even if its holdout passes.
+- Evaluation reports may include per-run step counts and tool names/success flags for diagnosing limits. Keep model messages, reasoning, tool output, test text, credentials, and private paths out of committed or published reports. The reviewed v2 pool has twenty reference-qualified cases across five repositories, but formal 20×3 live-model acceptance remains pending; the three-task 9/9 result does not add three unique tasks. Keep all historical results separate; do not combine runs with different gates or repeat counts. An `agent_max_steps` attempt remains a failure even if its holdout passes.
 
 - `eval-validate` reuses benchmark preflight and never constructs a model. References stay external and frozen (at most 256 KiB); apply only allowed text patches with Git path checks enabled. Require nonempty visible/holdout passes in separate copies. Invalid references must stop live evaluation before model construction. Legacy manifests without references remain compatible, but do not label them reference-qualified. Keep reference source out of Agent workspaces/conversations and reports; record hashes/counts instead.
 

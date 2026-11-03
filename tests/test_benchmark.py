@@ -424,6 +424,30 @@ def test_nine_task_candidate_manifest_and_holdouts_are_well_formed() -> None:
                    for path in case.allowed_changes)
 
 
+def test_twenty_task_frozen_suite_manifest_and_holdouts_are_well_formed() -> None:
+    manifest = (Path(__file__).parents[1]
+                / "benchmark/validated-candidates/suite-twenty-tasks.json")
+    suite = BenchmarkSuite.model_validate_json(manifest.read_bytes())
+    assert len(suite.cases) == 20
+    assert len({case.id for case in suite.cases}) == 20
+
+    manifest_sha = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert manifest_sha == "0a5bd935e7d0aa4b6b9a93ad101686a50c57af2cd1b4143accd5a3bc4e327fd8"
+
+    for case in suite.cases:
+        repository = (manifest.parent / case.repository).resolve()
+        holdout = (manifest.parent / case.holdout_test).resolve()
+        assert len(case.revision) == 40
+        assert holdout.is_file()
+        assert not holdout.is_relative_to(repository)
+        assert case.allowed_changes
+        assert all(not Path(path).is_absolute() and ".." not in Path(path).parts
+                   for path in case.allowed_changes)
+        if case.reference_patch:
+            patch = (manifest.parent / case.reference_patch).resolve()
+            assert patch.is_file()
+
+
 @pytest.mark.integration
 def test_suite_runs_agent_and_holdout_in_live_docker(tmp_path: Path) -> None:
     image = "selfforge-agent-sandbox:latest"
@@ -443,3 +467,30 @@ def test_suite_runs_agent_and_holdout_in_live_docker(tmp_path: Path) -> None:
     assert report["results"][0]["holdout_status"] == "passed"
     assert report["results"][0]["visible_status"] == "passed"
     assert report["image_id"].startswith("sha256:")
+
+
+
+def test_reviewed_twenty_suite_freezes_assets_and_execution_images() -> None:
+    root = Path(__file__).parents[1] / "benchmark/validated-candidates"
+    manifest = root / "suite-twenty-tasks-v2.json"
+    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == "3b4aa3fa27c18d183af8ac109de05ca9bdef22294b911d13e70d287cfe5344b6"
+    suite = BenchmarkSuite.model_validate_json(manifest.read_bytes())
+    assert len(suite.cases) == len({c.id for c in suite.cases}) == 20
+    assert len({c.repository for c in suite.cases}) == 5
+    inventory = root / "suite-twenty-tasks-v2.assets.json"
+    assert hashlib.sha256(inventory.read_bytes()).hexdigest() == "89bd73aaa068193257a7e5392632f2eedd831e3c9723cdf8ca5bd8fee001795d"
+    assets = json.loads(inventory.read_bytes())
+    assert set(assets) == {getattr(c, field) for c in suite.cases
+                           for field in ("reference_patch", "holdout_test")}
+    for relative, digest in assets.items():
+        path = (root / relative).resolve()
+        assert path.is_relative_to(root.resolve())
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    for case in suite.cases:
+        assert case.reference_patch
+        assert len(case.revision) == 40
+        assert case.image.startswith("sha256:") and len(case.image) == 71
+        assert case.allowed_changes
+        assert all(not Path(path).is_absolute() and ".." not in Path(path).parts
+                   for path in case.allowed_changes)
+        assert not (root / case.holdout_test).resolve().is_relative_to((root / case.repository).resolve())

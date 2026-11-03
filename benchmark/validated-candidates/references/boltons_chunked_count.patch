@@ -1,0 +1,7 @@
+--- a/boltons/iterutils.py
++++ b/boltons/iterutils.py
+@@ -304,2 +304,4 @@ def chunked(src, size, count=None, **kw):
+     """
++    if count is not None:
++        count = _validate_positive_int(count, 'chunk count', strictly_positive=False)
+     chunk_iter = chunked_iter(src, size, **kw)

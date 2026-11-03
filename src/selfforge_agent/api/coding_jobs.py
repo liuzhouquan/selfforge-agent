@@ -1,7 +1,5 @@
 """Durable local Web jobs with process-safe workspace ownership."""
 
-import fcntl
-import hashlib
 import json
 import os
 import re
@@ -15,7 +13,12 @@ from uuid import uuid4
 from selfforge_agent.runtime.agent import AgentResult, CodingAgent
 from selfforge_agent.runtime.execution import DockerExecutor
 from selfforge_agent.runtime.session import SessionStore
-from selfforge_agent.runtime.workspace import CodingWorkspace
+from selfforge_agent.runtime.workspace import (
+    CodingWorkspace,
+    try_workspace_lock,
+    unlock_workspace,
+    workspace_lock_path,
+)
 
 _JOB_ID = re.compile(r"[0-9a-f]{12}\Z")
 _ACTIVE = {"queued", "running"}
@@ -62,7 +65,7 @@ class CodingJobManager:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         self.root = (root or data_home / "selfforge-agent" / "jobs").expanduser().resolve()
         self.records = self.root / "records"
-        self.locks = self.root / "locks"
+        self.locks = (data_home / "selfforge-agent" / "locks").expanduser().resolve()
         self.cancellations = self.root / "cancel"
         for directory in (self.records, self.locks, self.cancellations):
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -81,22 +84,14 @@ class CodingJobManager:
         return self.cancellations / job_id
 
     def _lock_path(self, workspace: Path) -> Path:
-        digest = hashlib.sha256(str(workspace.resolve()).encode("utf-8")).hexdigest()
-        return self.locks / digest
+        return workspace_lock_path(workspace, root=self.locks)
 
     def _try_workspace_lock(self, workspace: Path) -> int | None:
-        fd = os.open(self._lock_path(workspace), os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            os.close(fd)
-            return None
-        return fd
+        return try_workspace_lock(workspace, root=self.locks)
 
     @staticmethod
     def _unlock(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        unlock_workspace(fd)
 
     @contextmanager
     def workspace_guard(self, workspace: Path):

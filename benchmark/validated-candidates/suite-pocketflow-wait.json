@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "pocketflow_wait_validation",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, Node and AsyncNode accept invalid retry wait values that may fail only after execution starts or produce an invalid delay. At construction, require wait to be a finite non-negative int or float; reject bool and non-numbers with TypeError mentioning wait, and reject negative or non-finite numbers with ValueError mentioning wait. Preserve zero and positive finite values. Add tests in tests/test_wait_validation.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_wait_validation.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_wait_validation.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_wait_validation.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}

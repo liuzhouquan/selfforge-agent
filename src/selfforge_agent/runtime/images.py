@@ -36,10 +36,13 @@ def _read(path: Path, limit: int) -> bytes:
     return contents
 
 
-def _inputs(requirements: Path, wheelhouse: Path, deadline: float) -> tuple[bytes, dict[str, bytes]]:
-    lock = _read(requirements, MAX_LOCK_BYTES)
+def parse_locked_requirements(lock: bytes) -> list[dict]:
+    """Parse the same deliberately small lock format for planning and building."""
+    if len(lock) > MAX_LOCK_BYTES:
+        raise ValueError("Dependency input size limit exceeded")
     lines = lock.decode("utf-8").replace("\r\n", "\n").replace("\\\n", " ").splitlines()
-    groups = []
+    packages = []
+    names = set()
     for line in lines:
         line = line.split("#", 1)[0].strip()
         if not line:
@@ -47,12 +50,27 @@ def _inputs(requirements: Path, wheelhouse: Path, deadline: float) -> tuple[byte
         if not _REQUIREMENT.fullmatch(line):
             raise ValueError("Lock requires exact name==version pins with SHA-256 hashes; "
                              "URLs, markers, extras and pip directives are unsupported")
-        groups.append(set(re.findall(r"sha256:([0-9a-f]{64})", line)))
-    if not groups or len(groups) > 200:
+        name, version = line.split()[0].split("==")
+        canonical = re.sub(r"[-_.]+", "-", name).lower()
+        if canonical in names:
+            raise ValueError("Duplicate requirement names are unsupported")
+        names.add(canonical)
+        packages.append({"name": name, "version": version,
+                         "hashes": sorted(set(re.findall(r"sha256:[0-9a-f]{64}", line)))})
+    if not packages or len(packages) > 200:
         raise ValueError("Lock must contain 1-200 hashed requirements")
-    allowed = set.union(*groups)
+    return packages
+
+
+def read_locked_wheels(lock: bytes, packages: list[dict], wheelhouse: Path | None,
+                       deadline: float) -> dict[str, bytes]:
+    """Read bounded, hash-allowed inputs; missing wheels are reported by the caller."""
+    if wheelhouse is None:
+        return {}
+    if wheelhouse.is_symlink() or not wheelhouse.is_dir():
+        raise ValueError("Wheelhouse must be a directory, not a symlink")
+    allowed = {h.removeprefix("sha256:") for pkg in packages for h in pkg["hashes"]}
     wheels = {}
-    seen = set()
     total = len(lock)
     for path in wheelhouse.glob("*.whl"):
         _remaining(deadline)
@@ -65,11 +83,24 @@ def _inputs(requirements: Path, wheelhouse: Path, deadline: float) -> tuple[byte
         if digest not in allowed:
             raise ValueError(f"Wheel hash is absent from lock: {path.name}")
         wheels[path.name] = data
-        seen.add(digest)
         total += len(data)
-    if any(not hashes.intersection(seen) for hashes in groups):
+    _remaining(deadline)
+    return wheels
+
+
+def _inputs(requirements: Path, wheelhouse: Path, deadline: float) -> tuple[bytes, dict[str, bytes]]:
+    lock = _read(requirements, MAX_LOCK_BYTES)
+    packages = parse_locked_requirements(lock)
+    wheels = read_locked_wheels(lock, packages, wheelhouse, deadline)
+    seen = {"sha256:" + hashlib.sha256(data).hexdigest() for data in wheels.values()}
+    if any(not set(pkg["hashes"]).intersection(seen) for pkg in packages):
         raise ValueError("Wheelhouse is missing a hash-matching wheel for a locked requirement")
     return lock, wheels
+
+
+def validate_image_tag(tag: str) -> None:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9_.-]+)?", tag):
+        raise ValueError("Use a local image name with an optional tag")
 
 
 def _docker(arguments: list[str], timeout: float, payload: bytes | None = None) -> str:
@@ -92,8 +123,7 @@ def build_dependency_image(requirements: Path, wheelhouse: Path, *,
                            tag: str, base_image: str = "selfforge-agent-sandbox:latest",
                            timeout: float = 300) -> dict:
     """Build only from explicit wheels; never execute repository build scripts."""
-    if not re.fullmatch(r"[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9_.-]+)?", tag):
-        raise ValueError("Use a local image name with an optional tag")
+    validate_image_tag(tag)
     if not base_image or base_image.startswith("-") or any(c.isspace() for c in base_image):
         raise ValueError("Invalid base image reference")
     if not 0 < timeout <= 1_800:

@@ -83,3 +83,11 @@ Session-binding regressions additionally cover CLI/API resume without an image, 
 
 
 After adding automatic session binding, the final full branch regression passed **170 tests**, with no skips and the same existing Starlette/httpx warning. Ruff, JavaScript syntax and Git whitespace checks passed. CLI and API tests cover omitted-image resume after retagging, and a fresh job manager reads the same saved ID from history. Chromium DOM-event checks confirmed that Continue clears the image override, submits `image: null`, restores the saved execution mode, and clears Host trust. Browser task submission was intercepted; no model provider was called.
+
+## Read-only preparation plan
+
+Use `selfforge-agent sandbox plan --repo /path/to/repo --wheelhouse /path/to/wheels --tag app:locked` or local `POST /api/sandbox/plan` with `repository`, optional `wheelhouse`, `tag`, `lock_file` and `requirements_file`. Plan generation does not invoke pip, Docker or network operations. API errors map to 400; CLI errors exit nonzero. There is no new graphical form.
+
+Requirements must satisfy the same bounded strict format as build, including continuations. Unsupported directives, unhashed pins, symlinks and unlocked extra wheels are rejected. A missing wheelhouse argument yields a pending plan; an explicitly invalid directory is an error. uv input produces hashed requirements content and a shell-quoted `export_command`; run that explicit step before the returned download/build commands. Explicit requirements inputs are interpreted as requirements regardless of filename.
+
+`ready_to_build` means all bounded hash-allowed inputs exist, not that wheels are valid archives, match the target interpreter/platform, or form a complete dependency solution. The actual isolated build remains required. Downloads are separate explicit network commands; no automatic install was added.

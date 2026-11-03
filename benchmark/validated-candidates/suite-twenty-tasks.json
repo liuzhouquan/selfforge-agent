@@ -1,0 +1,291 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "pocketflow_async_batch_empty",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "Make AsyncBatchNode and AsyncParallelBatchNode treat prep_async returning None as an empty batch, consistent with BatchNode and the default prep method. Their public run_async lifecycle must call post_async with an empty result and must not call exec_async for None or empty iterables. Preserve nonempty sequence/generator order and exception propagation. Add regression tests in tests/test_async_empty_prep.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_async_empty_prep.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_async_batch_empty.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_async_batch_empty.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "boltons_unicode_punctuation",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "Extend boltons.strutils.split_punct_ws and slugify to treat Unicode punctuation (category P*) as word separators. Preserve existing ASCII punctuation/whitespace behavior, Unicode letters, combining marks and Unicode non-punctuation symbols. This is an explicit feature extension. Add regression tests to tests/test_strutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/strutils.py",
+        "tests/test_strutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_unicode_punctuation.py",
+      "agent_test_path": "tests/test_strutils.py",
+      "reference_patch": "references/boltons_unicode_punctuation.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "boltons_depth_pruning",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "Make boltons.fileutils.iter_find_files honor max_depth as an actual traversal limit: do not scan descendants below the limit, rather than walking the whole tree and filtering results. Preserve current yielded file paths, pattern/ignored behavior, path-like and trailing-separator roots, unlimited max_depth=None, and include_dirs=True matches for child directory entries at the boundary. Ignored names must not become traversal exclusions. Add regression tests in tests/test_fileutils.py and run that file. This is a project-authored traversal efficiency fix.",
+      "allowed_changes": [
+        "boltons/fileutils.py",
+        "tests/test_fileutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_depth_pruning.py",
+      "agent_test_path": "tests/test_fileutils.py",
+      "reference_patch": "references/boltons_depth_pruning.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "more_itertools_zero_chunk_size",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "Extend more_itertools.chunked and sliced to reject n=0 with ValueError at call time (before iterator consumption), on empty and nonempty input, in both strict modes. Preserve positive-size lazy iteration, partial final chunks, strict divisibility errors, chunked(iterable, None), and existing negative-size error behavior. This intentionally tightens the current zero-size contract. Add regression methods to ChunkedTests and SlicedTests in tests/test_more.py. Run only those two classes; the full file has an unrelated 100-thread test exceeding the sandbox process limit.",
+      "allowed_changes": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_zero_chunks.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "ChunkedTests or SlicedTests",
+      "reference_patch": "references/more_itertools_zero_chunks.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "more_itertools_replace_limit",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "Extend more_itertools.replace with predicate short-circuiting: after count replacements have been made, stop calling pred and yield the unchanged remaining input. With count=0 never call pred. Preserve output values, single-use iterable/substitutes support, window_size overlap and short-tail behavior, unlimited count=None, invalid window_size errors, and callback/input exceptions before the limit (input errors must still propagate after the limit). This is an explicit callback-efficiency feature; do not change the documented windowing semantics or require new behavior for negative count. Add regression methods to ReplaceTests in tests/test_more.py and run that class. The broader file has an unrelated 100-thread test exceeding the sandbox process limit.",
+      "allowed_changes": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_replace_limit.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "ReplaceTests",
+      "reference_patch": "references/more_itertools_replace_limit.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "pocketflow_invalid_retries",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, Node(max_retries=0) and AsyncNode(max_retries=0) silently skip execution. Reject zero or negative max_retries at construction with a ValueError mentioning max_retries. Preserve behavior for positive values. Add a regression test in tests/test_max_retries_validation.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_max_retries_validation.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_invalid_retries.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_invalid_retries.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "pocketflow_wait_validation",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, Node and AsyncNode accept invalid retry wait values that may fail only after execution starts or produce an invalid delay. At construction, require wait to be a finite non-negative int or float; reject bool and non-numbers with TypeError mentioning wait, and reject negative or non-finite numbers with ValueError mentioning wait. Preserve zero and positive finite values. Add tests in tests/test_wait_validation.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_wait_validation.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_wait_validation.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_wait_validation.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "pocketflow_retry_count_type",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, Node and AsyncNode accept non-integer max_retries values and fail later during execution, while bool is silently treated as an integer. Reject bool and every non-integer max_retries at construction with TypeError mentioning max_retries. Keep positive integer retry counts valid. Add tests in tests/test_max_retries_type_validation.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_max_retries_type_validation.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_max_retries_type.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_retry_count_type.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "pocketflow_transition_validation",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, BaseNode.__sub__ requires action to be a string (raising TypeError('Action must be a string')), but BaseNode.next accepts arbitrary non-string action types and non-BaseNode successors without validation, causing late crashes during flow execution. Require action to be a string in BaseNode.next, raising TypeError('Action must be a string') if not. Require node to be an instance of BaseNode in BaseNode.next, raising TypeError('Successor must be an instance of BaseNode') if not. Preserve existing default transitions, conditional transitions, overwriting warnings, and return values. Add regression tests in tests/test_flow_basic.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_flow_basic.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_transition_validation.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_transition_validation.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "boltons_negative_max_depth",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons.fileutils.iter_find_files, max_depth is documented as a traversal depth where 0 includes the starting directory. Reject negative max_depth values with ValueError mentioning max_depth instead of silently returning no matches. Preserve max_depth=None, zero, and positive behavior. Add tests to tests/test_fileutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/fileutils.py",
+        "tests/test_fileutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_negative_max_depth.py",
+      "agent_test_path": "tests/test_fileutils.py",
+      "reference_patch": "references/boltons_negative_max_depth.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "boltons_windowed_size",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons.iterutils, windowed and windowed_iter accept non-positive window sizes (size <= 0), where size=0 silently yields no windows and negative sizes fail later in itertools.tee. Reject every non-positive integer size (<= 0) with ValueError mentioning window size at call time, consistent with chunked using _validate_positive_int. Preserve positive size sliding window behavior and fill options. Add regression tests to tests/test_iterutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/iterutils.py",
+        "tests/test_iterutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_windowed_size.py",
+      "agent_test_path": "tests/test_iterutils.py",
+      "reference_patch": "references/boltons_windowed_size.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "boltons_chunked_count",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons.iterutils, chunked accepts an optional count parameter. Passing a negative count (count < 0) bypasses parameter validation and crashes internally in itertools.islice with a standard library error. Validate count using _validate_positive_int(count, 'chunk count', strictly_positive=False) when count is not None, raising ValueError mentioning chunk count on negative count. Preserve count=0, positive count, count=None, and fill keyword arguments. Add regression tests to tests/test_iterutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/iterutils.py",
+        "tests/test_iterutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_chunked_count.py",
+      "agent_test_path": "tests/test_iterutils.py",
+      "reference_patch": "references/boltons_chunked_count.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "more_itertools_negative_split_maxsplit",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "In more_itertools.more, split_at, split_before, split_after, and split_when document maxsplit=-1 as the unlimited sentinel and non-negative values as bounded split counts. Reject maxsplit values below -1 with ValueError mentioning maxsplit in all four functions. Preserve -1, zero, and positive behavior. Add tests to tests/test_more.py and run the four split test classes.",
+      "allowed_changes": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_split_maxsplit.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "SplitAtTests or SplitBeforeTest or SplitAfterTest or SplitWhenTests",
+      "reference_patch": "references/more_itertools_split_maxsplit.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "more_itertools_grouper_size",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "In more_itertools.recipes.grouper, n=0 or a negative n silently returns an empty iterator. Reject every non-positive integer n with ValueError when grouper is called, for all incomplete modes (fill, ignore, strict). Preserve positive-size behavior and the existing invalid-mode error. Add regression tests to tests/test_recipes.py and run that test file.",
+      "allowed_changes": [
+        "more_itertools/recipes.py",
+        "tests/test_recipes.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_grouper_size.py",
+      "agent_test_path": "tests/test_recipes.py",
+      "agent_test_keyword": "GrouperTests",
+      "reference_patch": "references/more_itertools_grouper_size.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "more_itertools_intersperse_n",
+      "repository": "../../.local/benchmark/repos/more-itertools",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719",
+      "task": "In more_itertools.intersperse, non-positive separation n <= 0 is inconsistent: n=0 raises ValueError('n must be > 0'), while negative n falls through to chunked and raises ValueError('n must be at least 0'). Consistently reject all non-positive integers n <= 0 with ValueError('n must be > 0') at call time. Preserve positive separation behavior, empty iterables, and fill values. Add regression tests to IntersperseTest in tests/test_more.py and run that class.",
+      "allowed_changes": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "holdout_test": "holdouts/test_more_itertools_intersperse_n.py",
+      "agent_test_path": "tests/test_more.py",
+      "agent_test_keyword": "IntersperseTest",
+      "reference_patch": "references/more_itertools_intersperse_n.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "itsdangerous_empty_secret_keys",
+      "repository": "../../.local/benchmark/repos/itsdangerous",
+      "revision": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "task": "In itsdangerous, Signer, Serializer, and their subclasses accept an empty sequence of secret keys (such as secret_key=[]) at initialization and silently produce an empty secret_keys list, which later crashes with IndexError when attempting to sign, unsign, derive a key, or access the secret_key property. Reject an empty secret_key sequence with ValueError mentioning secret_key at initialization time in _make_keys_list. Preserve existing behavior for single string/bytes and non-empty sequences. Add regression tests in tests/test_itsdangerous/test_signer.py and run the test suite.",
+      "allowed_changes": [
+        "src/itsdangerous/signer.py",
+        "tests/test_itsdangerous/test_signer.py"
+      ],
+      "holdout_test": "holdouts/test_itsdangerous_empty_secret_keys.py",
+      "agent_test_path": "tests/test_itsdangerous/test_signer.py",
+      "reference_patch": "references/itsdangerous_empty_secret_keys.patch",
+      "image": "selfforge-itsdangerous:locked"
+    },
+    {
+      "id": "itsdangerous_negative_max_age",
+      "repository": "../../.local/benchmark/repos/itsdangerous",
+      "revision": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "task": "In itsdangerous, TimestampSigner.unsign, validate, TimedSerializer.loads, and URLSafeTimedSerializer.loads accept a negative max_age (max_age < 0). A negative max_age currently bypasses input validation: unsign and loads raise SignatureExpired even on fresh signatures or return False in validate, rather than signaling invalid arguments. Reject any negative max_age (max_age < 0) with ValueError('max_age must be >= 0') at the start of TimestampSigner.unsign before signature checking. Preserve existing behavior for positive max_age, max_age=0, and max_age=None. Add regression tests in tests/test_itsdangerous/test_timed.py and run that file.",
+      "allowed_changes": [
+        "src/itsdangerous/timed.py",
+        "tests/test_itsdangerous/test_timed.py"
+      ],
+      "holdout_test": "holdouts/test_itsdangerous_negative_max_age.py",
+      "agent_test_path": "tests/test_itsdangerous/test_timed.py",
+      "agent_test_keyword": "test_max_age",
+      "reference_patch": "references/itsdangerous_negative_max_age.patch",
+      "image": "selfforge-itsdangerous:locked"
+    },
+    {
+      "id": "jmespath_split_function",
+      "repository": "../../.local/benchmark/repos/jmespath",
+      "revision": "2812594e69d43098ef60f81f4efc404c071b0418",
+      "task": "Register a built-in split function in jmespath.functions.Functions with signature requiring two string arguments: the subject string and the separator. When the separator is non-empty, split the subject on the separator and return a list of string parts. When the separator is empty, split the subject into individual Unicode characters (returning an empty list for an empty subject). Preserve existing function arity and type checks (raising ArityError or JMESPathTypeError for invalid calls), and keep existing built-in functions unchanged. Add regression test methods to TestFunctions in tests/test_functions.py and run that file.",
+      "allowed_changes": [
+        "jmespath/functions.py",
+        "tests/test_functions.py"
+      ],
+      "holdout_test": "holdouts/test_jmespath_split_function.py",
+      "agent_test_path": "tests/test_functions.py",
+      "reference_patch": "references/jmespath_split_function.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "jmespath_replace_function",
+      "repository": "../../.local/benchmark/repos/jmespath",
+      "revision": "2812594e69d43098ef60f81f4efc404c071b0418",
+      "task": "Register a built-in replace function in jmespath.functions.Functions with signature requiring three string arguments: the subject string, the search string, and the replacement string. Replace all occurrences of the search string with the replacement string and return the resulting string. Preserve existing function arity and type checks (raising ArityError or JMESPathTypeError for invalid calls), and keep existing built-in functions unchanged. Add regression test methods to TestFunctions in tests/test_functions.py and run that file.",
+      "allowed_changes": [
+        "jmespath/functions.py",
+        "tests/test_functions.py"
+      ],
+      "holdout_test": "holdouts/test_jmespath_replace_function.py",
+      "agent_test_path": "tests/test_functions.py",
+      "reference_patch": "references/jmespath_replace_function.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    },
+    {
+      "id": "jmespath_lower_function",
+      "repository": "../../.local/benchmark/repos/jmespath",
+      "revision": "2812594e69d43098ef60f81f4efc404c071b0418",
+      "task": "Register a built-in lower function in jmespath.functions.Functions with signature requiring a single string argument. Convert all characters in the string argument to lowercase and return the resulting string. Preserve existing function arity and type checks (raising ArityError or JMESPathTypeError for invalid calls), and keep existing built-in functions unchanged. Add regression test methods to TestFunctions in tests/test_functions.py and run that file.",
+      "allowed_changes": [
+        "jmespath/functions.py",
+        "tests/test_functions.py"
+      ],
+      "holdout_test": "holdouts/test_jmespath_lower_function.py",
+      "agent_test_path": "tests/test_functions.py",
+      "reference_patch": "references/jmespath_lower_function.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}

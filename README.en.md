@@ -33,7 +33,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect bounded diffs, commit, create PRs, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
-| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent visible/unseen tests, image IDs and failure categories; optional external reference fixes are checked before model calls. Five tasks passed reference qualification; a separate three-task, three-repeat DeepSeek run scored 9/9; formal 20-task acceptance remains open |
+| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent visible/unseen tests, image IDs and failure categories; optional external reference fixes are checked before model calls. [Twenty cases across five repositories passed Docker reference qualification](./benchmark/validated-candidates/twenty-tasks-v2.md); a separate three-task, three-repeat DeepSeek run scored 9/9; formal 20-task acceptance remains open |
 
 Bounded JUnit diagnostics feed test failures back into the same Coding Agent for inspection, repair and retesting. Run the live-model demo with a configured provider and Docker image:
 
@@ -193,7 +193,7 @@ On 2026-10-17, one local run produced **2/2** for offline protocol fixtures and 
 
 On 2026-10-30, the two reference-qualified tasks with Runtime budget feedback scored **5/6** on DeepSeek with three repeats and unchanged limits. One attempt reached the step cap and failed its independent visible tests. All six called the official test tool; this small sample does not establish a success-rate improvement or increase the acceptance task count. See the [budget-feedback follow-up](./docs/runtime-budget.md) for per-run results and limitations.
 
-The reference-qualified set now covers **5 tasks / 3 repositories**, all with passing Docker negative/positive controls. A separate fixed-policy run of depth pruning, zero chunks and replacement callback short-circuiting scored **9/9** on DeepSeek `deepseek-flash` (three repeats each), with all independent visible/holdout tests passing. These small project-authored tasks are reported separately from the historical 5/6 runs and do not complete the twenty-task acceptance set. See [iterator/traversal evaluation](./benchmark/validated-candidates/iterator-traversal.md) for contracts, per-attempt results and limitations.
+The earlier reference-qualified set covered **5 tasks / 3 repositories**, all with passing Docker negative/positive controls. A separate fixed-policy run of depth pruning, zero chunks and replacement callback short-circuiting scored **9/9** on DeepSeek `deepseek-flash` (three repeats each), with all independent visible/holdout tests passing. These small project-authored tasks are reported separately from the historical 5/6 runs and do not complete the twenty-task acceptance set. See [iterator/traversal evaluation](./benchmark/validated-candidates/iterator-traversal.md) for contracts, per-attempt results and limitations.
 
 ## Specialized Workflows: PR Review
 
@@ -201,8 +201,10 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, qualify tasks individually, then freeze the twenty-task acceptance policy with at least three attempts per task. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
+The [twenty-case v2 suite and policy](./benchmark/validated-candidates/twenty-tasks-v2.md) passed reference qualification; next, complete its three live-model attempts per case. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
 
 ## Development and agent collaboration
 
 New contributors and coding agents start with [AGENTS.md](./AGENTS.md) and the [development guide](./docs/development.md), then take one task through the [collaboration workflow](./docs/agent-workflow.md). The [task template](./docs/task-template.md) records scope, acceptance and handoff; read [engineering invariants](./docs/engineering-invariants.md) by affected module. Roadmap items are directions, and audit records describe pinned versions; neither is a request to implement everything in one branch. See [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+CLI/Web now share cooperative workspace ownership. CLI/API provide read-only offline dependency plans and bounded wheelhouse audits. The [v2 policy](./benchmark/validated-candidates/twenty-tasks-v2.md) is frozen; its 60 live-model attempts remain pending. See [integration review](./docs/incoming-branches-review.md) for upgrade instructions and limits.
