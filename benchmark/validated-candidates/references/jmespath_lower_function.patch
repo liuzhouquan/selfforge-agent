@@ -1,0 +1,31 @@
+--- a/jmespath/functions.py
++++ b/jmespath/functions.py
+@@ -245,6 +245,10 @@ class Functions(metaclass=FunctionRegistry):
+     def _func_join(self, separator, array):
+         return separator.join(array)
+ 
++    @signature({'types': ['string']})
++    def _func_lower(self, arg):
++        return arg.lower()
++
+     @signature({'types': ['expref']}, {'types': ['array']})
+     def _func_map(self, expref, arg):
+         result = []
+--- a/tests/test_functions.py
++++ b/tests/test_functions.py
+@@ -55,3 +55,14 @@ class TestFunctions(unittest.TestCase):
+         self.assertEqual(
+             str(exception),
+             'Expected at least 1 argument for function not_null(), received 0')
++
++    def test_lower_function(self):
++        self.assertEqual(jmespath.search('lower(@)', 'HELLO WORLD'), 'hello world')
++        self.assertEqual(jmespath.search('lower(@)', 'FooBarBaz'), 'foobarbaz')
++        self.assertEqual(jmespath.search('lower(@)', ''), '')
++        with self.assertRaises(exceptions.JMESPathTypeError):
++            jmespath.search('lower(@)', 123)
++        with self.assertRaises(exceptions.ArityError):
++            jmespath.search('lower()', 'foo')
++        with self.assertRaises(exceptions.ArityError):
++            jmespath.search('lower(@, @)', 'foo')
+
