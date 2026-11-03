@@ -138,3 +138,101 @@ def test_plan_environment_api_endpoint(tmp_path: Path) -> None:
     assert plan["tag"] == "api-plan:1.0"
     assert plan["status"] == "pending_wheels"
     assert plan["package_count"] == 2
+
+
+@pytest.mark.parametrize("text", ["--extra-index-url https://example.invalid\n", "flask>=3\n", "flask==3.0.0\n", "flask==3.0.0 --hash=md5:abcd\n"])
+def test_plan_rejects_unsupported_lock(tmp_path, text):
+    (tmp_path / "requirements.lock").write_text(text)
+    with pytest.raises(ValueError):
+        plan_environment_preparation(tmp_path)
+
+
+def test_plan_continuations_and_exported_commands(tmp_path):
+    import shlex
+    wheelhouse = tmp_path / "wheels;echo unsafe"
+    wheelhouse.mkdir()
+    wheel = wheelhouse / "demo-1-py3-none-any.whl"
+    wheel.write_bytes(b"demo")
+    digest = hashlib.sha256(b"demo").hexdigest()
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("demo==1 \\\n    --hash=sha256:" + digest + "\n")
+    plan = plan_environment_preparation(tmp_path, wheelhouse=wheelhouse)
+    assert plan["ready_to_build"]
+    assert shlex.split(plan["download_command"])[-3:] == [str(wheelhouse), "-r", str(lock)]
+    lock.unlink()
+    wheel.unlink()
+    (tmp_path / "uv.lock").write_text(SAMPLE_UV_LOCK)
+    plan = plan_environment_preparation(tmp_path, wheelhouse=wheelhouse)
+    assert "uv.lock" not in shlex.split(plan["download_command"])[-1]
+    assert plan["export_command"]
+
+
+def test_plan_rejects_extra_or_symlink_wheel(tmp_path):
+    (tmp_path / "requirements.lock").write_text("demo==1 --hash=sha256:" + "0" * 64)
+    wheelhouse = tmp_path / "wheels"
+    wheelhouse.mkdir()
+    wheel = wheelhouse / "demo-1-py3-none-any.whl"
+    wheel.write_bytes(b"unknown")
+    with pytest.raises(ValueError, match="absent from lock"):
+        plan_environment_preparation(tmp_path, wheelhouse=wheelhouse)
+    wheel.unlink()
+    wheel.symlink_to(tmp_path / "requirements.lock")
+    with pytest.raises(ValueError, match="symlink"):
+        plan_environment_preparation(tmp_path, wheelhouse=wheelhouse)
+
+
+def test_plan_rejects_unsafe_tag(tmp_path):
+    (tmp_path / "uv.lock").write_text(SAMPLE_UV_LOCK)
+    with pytest.raises(ValueError, match="image name"):
+        plan_environment_preparation(tmp_path, tag="tag; touch injected")
+
+
+@pytest.mark.parametrize("kind", ["lock", "wheelhouse"])
+def test_plan_api_preserves_symlink_checks(tmp_path, kind):
+    from fastapi.testclient import TestClient
+
+    from selfforge_agent.api.app import app
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    lock = repo / "requirements.lock"
+    lock.write_text("demo==1 --hash=sha256:" + "0" * 64)
+    payload = {"repository": str(repo)}
+    if kind == "lock":
+        link = tmp_path / "symlink.lock"
+        link.symlink_to(lock)
+        payload["requirements_file"] = str(link)
+    else:
+        target = tmp_path / "wheels"
+        target.mkdir()
+        link = tmp_path / "link-wheels"
+        link.symlink_to(target)
+        payload["wheelhouse"] = str(link)
+    response = TestClient(app).post("/api/sandbox/plan", json=payload)
+    assert response.status_code == 400
+    assert "symlink" in response.json()["detail"]
+
+
+def test_plan_reuses_bounded_dependency_inputs(tmp_path, monkeypatch):
+    from selfforge_agent.runtime import images
+    lock = tmp_path / "requirements.lock"
+    data = b"wheel"
+    lock.write_text("demo==1 --hash=sha256:" + hashlib.sha256(data).hexdigest())
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    (wheels / "demo-1-py3-none-any.whl").write_bytes(data)
+    monkeypatch.setattr(images, "MAX_WHEEL_BYTES", 4)
+    with pytest.raises(ValueError, match="size limit"):
+        plan_environment_preparation(tmp_path, wheelhouse=wheels)
+    lock.write_bytes(b"x" * (images.MAX_LOCK_BYTES + 1))
+    with pytest.raises(ValueError, match="size limit"):
+        plan_environment_preparation(tmp_path)
+
+
+@pytest.mark.parametrize("filename", ["requirements.toml", "uv.lock"])
+def test_explicit_requirements_format_does_not_depend_on_filename(tmp_path, filename):
+    import shlex
+    requirements = tmp_path / filename
+    requirements.write_text("demo==1 --hash=sha256:" + "0" * 64)
+    plan = plan_environment_preparation(tmp_path, requirements_file=requirements)
+    assert plan["export_command"] is None
+    assert shlex.split(plan["download_command"])[-1] == str(requirements)

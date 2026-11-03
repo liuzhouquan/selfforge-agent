@@ -93,8 +93,6 @@ def test_coding_job_manager_shares_lock_with_workspace_guard(tmp_path: Path) -> 
     workspace = manager.create(repo, "sessiontestlock01")
 
     job_mgr = CodingJobManager(root=tmp_path / "jobs")
-    # Point locks to the same directory
-    job_mgr.locks = manager.locks_root
 
     # When job manager holds the workspace guard
     with job_mgr.workspace_guard(workspace.path):
@@ -124,16 +122,51 @@ def test_cli_workspaces_rejected_when_locked(tmp_path: Path, monkeypatch: pytest
     with manager.guard(workspace.path):
         # Attempt CLI remove while locked
         with pytest.raises(SystemExit) as exc_remove:
-            cli_main(["workspaces", "remove", "--repo", str(repo), "--session-id", session_id])
+            cli_main(["workspaces", "remove", "--repo", str(repo), session_id])
         assert exc_remove.value.code != 0
 
         # Attempt CLI commit while locked
         with pytest.raises(SystemExit) as exc_commit:
-            cli_main(["workspaces", "commit", "--repo", str(repo), "--session-id", session_id, "-m", "fix"])
+            cli_main(["workspaces", "commit", "--repo", str(repo), session_id, "-m", "fix"])
         assert exc_commit.value.code != 0
 
         # Attempt CLI revert while locked
         with pytest.raises(SystemExit) as exc_revert:
-            cli_main(["workspaces", "revert", "--repo", str(repo), "--session-id", session_id])
+            cli_main(["workspaces", "revert", "--repo", str(repo), session_id])
         assert exc_revert.value.code != 0
 
+
+
+def test_custom_storage_roots_do_not_split_workspace_ownership(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    manager = CodingWorkspaceManager(root=tmp_path / "custom-worktrees")
+    jobs = CodingJobManager(root=tmp_path / "custom-jobs")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    with manager.guard(workspace), pytest.raises(ValueError, match="running"), jobs.workspace_guard(workspace):
+        pass
+
+
+@pytest.mark.parametrize("action", ["remove", "revert", "commit", "pr"])
+def test_separate_cli_process_cannot_deliver_or_remove_web_owned_workspace(tmp_path, monkeypatch, action):
+    import os
+    import subprocess
+    import sys
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    repo = _init_repo(tmp_path / "repo")
+    manager = CodingWorkspaceManager()
+    workspace = manager.create(repo, "crossprocess01")
+    jobs = CodingJobManager(root=tmp_path / "custom-job-records")
+    args = ["workspaces", action, "--repo", str(repo), workspace.session_id]
+    if action == "commit":
+        args += ["-m", "blocked commit"]
+    if action == "pr":
+        args += ["--title", "blocked PR"]
+    with jobs.workspace_guard(workspace.path):
+        result = subprocess.run([sys.executable, "-m", "selfforge_agent.cli", *args],
+                                check=False, capture_output=True, text=True, timeout=10, env=os.environ.copy())
+    assert result.returncode == 2
+    assert "locked" in result.stderr
+    assert workspace.path.is_dir()
+    assert (workspace.path / "file.txt").read_text() == "hello\n"
+    assert git(workspace.path, "status", "--porcelain") == ""

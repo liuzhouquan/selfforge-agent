@@ -38,6 +38,9 @@ def try_workspace_lock(workspace: Path, root: Path | None = None) -> int | None:
     except BlockingIOError:
         os.close(fd)
         return None
+    except BaseException:
+        os.close(fd)
+        raise
     return fd
 
 
@@ -75,7 +78,7 @@ class CodingWorkspaceManager:
     def __init__(self, root: Path | None = None) -> None:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         self.root = (root or data_home / "selfforge-agent" / "worktrees").expanduser().resolve()
-        self.locks_root = (root.parent / "locks" if root else None)
+        self.locks_root = None
 
     def guard(self, workspace: Path | CodingWorkspace,
               message: str = "Workspace is locked by another task or process"):

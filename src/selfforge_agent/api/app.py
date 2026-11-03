@@ -317,14 +317,14 @@ def repository_environment(repository: str, client: Request) -> dict:
 @app.post("/api/sandbox/plan")
 def sandbox_plan(request: EnvironmentPlanRequest, client: Request) -> dict:
     _require_local(client)
-    repo = Path(request.repository).expanduser().resolve()
+    repo = Path(request.repository).expanduser().absolute()
     try:
         return plan_environment_preparation(
             repo,
-            wheelhouse=Path(request.wheelhouse).expanduser().resolve() if request.wheelhouse else None,
+            wheelhouse=Path(request.wheelhouse).expanduser().absolute() if request.wheelhouse else None,
             tag=request.tag,
-            lock_file=Path(request.lock_file).expanduser().resolve() if request.lock_file else None,
-            requirements_file=Path(request.requirements_file).expanduser().resolve() if request.requirements_file else None,
+            lock_file=Path(request.lock_file).expanduser().absolute() if request.lock_file else None,
+            requirements_file=Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None,
         )
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

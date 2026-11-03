@@ -65,7 +65,7 @@ class CodingJobManager:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         self.root = (root or data_home / "selfforge-agent" / "jobs").expanduser().resolve()
         self.records = self.root / "records"
-        self.locks = (root / "locks" if root else data_home / "selfforge-agent" / "locks").expanduser().resolve()
+        self.locks = (data_home / "selfforge-agent" / "locks").expanduser().resolve()
         self.cancellations = self.root / "cancel"
         for directory in (self.records, self.locks, self.cancellations):
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
