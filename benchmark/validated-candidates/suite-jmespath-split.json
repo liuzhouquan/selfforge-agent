@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "jmespath_split_function",
+      "repository": "../../.local/benchmark/repos/jmespath",
+      "revision": "2812594e69d43098ef60f81f4efc404c071b0418",
+      "task": "Register a built-in split function in jmespath.functions.Functions with signature requiring two string arguments: the subject string and the separator. When the separator is non-empty, split the subject on the separator and return a list of string parts. When the separator is empty, split the subject into individual Unicode characters (returning an empty list for an empty subject). Preserve existing function arity and type checks (raising ArityError or JMESPathTypeError for invalid calls), and keep existing built-in functions unchanged. Add regression test methods to TestFunctions in tests/test_functions.py and run that file.",
+      "allowed_changes": [
+        "jmespath/functions.py",
+        "tests/test_functions.py"
+      ],
+      "holdout_test": "holdouts/test_jmespath_split_function.py",
+      "agent_test_path": "tests/test_functions.py",
+      "reference_patch": "references/jmespath_split_function.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
+
