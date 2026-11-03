@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "boltons_windowed_size",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons.iterutils, windowed and windowed_iter accept non-positive window sizes (size <= 0), where size=0 silently yields no windows and negative sizes fail later in itertools.tee. Reject every non-positive integer size (<= 0) with ValueError mentioning window size at call time, consistent with chunked using _validate_positive_int. Preserve positive size sliding window behavior and fill options. Add regression tests to tests/test_iterutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/iterutils.py",
+        "tests/test_iterutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_windowed_size.py",
+      "agent_test_path": "tests/test_iterutils.py",
+      "reference_patch": "references/boltons_windowed_size.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
