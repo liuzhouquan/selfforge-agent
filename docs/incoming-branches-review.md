@@ -22,7 +22,8 @@ Locked `uv sync --locked --dev --default-index https://pypi.org/simple` succeede
 - After runtime fixes: environment-plan/concurrency selection **26 passed**; earlier wider consumer selection **71 passed** (overlapping, not additive).
 - V2 `eval-validate --test-timeout 30`: **20/20 reference-qualified in real Docker**, every baseline fails assertions; all reference visible/holdout selections pass nonempty with zero failures/errors/skips. No model was instantiated.
 - Private report SHA-256: `efd2aa4ce1aa4ddce583d939b3084c93e21442c200ccc42332028d1eebe43e03`; manifest SHA-256: `3b4aa3fa27c18d183af8ac109de05ca9bdef22294b911d13e70d287cfe5344b6`.
-- Final full regression, static checks and delivered commit/CI: recorded below after final combined verification.
+- Local full combined `uv run --no-sync pytest -q`: **382 passed, no skips**, 307.51s, including all 11 Docker integration tests; one existing Starlette/httpx deprecation warning. One additional independent CLI Coding contention case was added afterward; the final concurrency selection passed **10/10**. These overlapping runs are not additive. Final CI collects 383 tests and its actual result is recorded in the PR evidence.
+- Ruff, whitespace, 170 local Markdown path links and common real-key/private-key pattern checks passed. All 18 original branch heads are preserved as ancestors. No runtime source changed after the full combined regression started.
 
 | Case | Baseline assertion failures | Reference visible passes | Reference holdout passes |
 | --- | ---: | ---: | ---: |
@@ -57,4 +58,4 @@ Formal 20×3 live-model acceptance is pending. Historical small model runs stay 
 
 ## Handoff
 
-Integration status and exact tested/delivered SHAs belong in the PR's final evidence. Next independent development unit: formal model evaluation under the frozen v2 policy after verifying effective provider/model and required local images; retain all failures and incomplete attempts. Do not treat reference qualification as a model score.
+The reviewed runtime-fix commit is `503eb96`; evaluation fixes are `29f08d4`, integrated at `521ef59`. Subsequent changes add one Coding contention case and documentation. Integration status and the exact final CI-tested/delivered SHA belong in the PR's evidence. Next independent development unit: formal model evaluation under the frozen v2 policy after verifying effective provider/model and required local images; retain all failures and incomplete attempts. Do not treat reference qualification as a model score.

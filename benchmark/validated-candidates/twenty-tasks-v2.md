@@ -44,7 +44,7 @@ uv run --no-sync selfforge-agent eval-suite \
   --output .local/benchmark/twenty-v2-model-repeat3.json
 ```
 
-The evaluator repeats baseline/reference preflight before constructing models. Inspect the actual provider/model fields of **every attempt**; configuration or identity mismatches invalidate comparison and must remain disclosed. Stop rather than quietly reroute on provider failure; preserve all attempted-run evidence. An interrupted sweep is incomplete, not a 60-run score. No automatic reruns to replace failures.
+The evaluator repeats baseline/reference preflight before constructing models. Inspect the actual provider/model fields of **every attempt**; configuration or identity mismatches invalidate comparison and must remain disclosed. Provider failures remain failed attempts; never change providers or replace failures with reruns. Preserve all attempted-run evidence. An interrupted sweep is incomplete, not a 60-run score. No automatic reruns to replace failures.
 
 ## Outcomes and accounting
 

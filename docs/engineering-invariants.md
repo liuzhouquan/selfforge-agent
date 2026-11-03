@@ -36,6 +36,8 @@ Verification entry points: [Dependency images](./dependency-images.md), `tests/t
 
 - General Coding binds its execution environment inside the common Runtime after the Web workspace lock is acquired. Save only mode and immutable local Docker ID in the private session, use that ID for tools, and auto-reuse it when resume omits an image. Fail before model/tools on explicit image/mode mismatches or missing images; never pull/fallback silently. Legacy sessions invalidate test evidence before first environment binding. Web status/history exposes saved mode/ID; Host still requires explicit trust and its dependencies are not pinned. Keep preflight bounded by the task deadline.
 
+- Environment plans and builds share strict hashed-requirement parsing and bounded no-symlink wheel reads; emit shell-quoted explicit export/download/build steps and never execute them implicitly. See `docs/incoming-branches-review.md` and the v2 policy for current reference qualification.
+
 ## Private state, providers, Web jobs and workspaces
 
 Verification entry points: `tests/test_providers.py`, `tests/test_coding_jobs_durable.py`, `tests/test_coding_web.py`, `tests/test_web_origin.py`, `tests/test_workspace.py`.
@@ -49,6 +51,8 @@ Verification entry points: `tests/test_providers.py`, `tests/test_coding_jobs_du
 - Workspace listing validates metadata independently. Skip unreadable or mismatched records with a warning that identifies the metadata file; preserve records for manual recovery.
 
 - New sessions and traces are mode-0600 under the user data directory's `selfforge-agent/sessions/`; older sessions in repository `.selfforge/` or app `.workspaces/` remain resumable. `.local/providers.json` may contain a key. Never log or commit keys, generated reports, `.env`, virtual environments, or external course source.
+
+- CLI Coding and managed delivery/removal must share the Web advisory workspace lock within the same user/XDG home, independent of record/worktree storage roots. Stop old workers before the lock-namespace upgrade. External editors/Git and different XDG homes are not coordinated.
 
 ## JUnit, diagnostics and workspace evidence
 
@@ -95,5 +99,3 @@ Verification entry points: [Benchmark contract](./benchmark.md), [evaluation his
 - The reference-qualified asset paths include a cumulative `benchmark/validated-candidates/suite-five-tasks.json` and a three-case iterator/traversal delta manifest. Keep historical manifests frozen, disclose explicit feature contracts and upstream source evidence, and preserve compatibility controls (directory matches at depth boundaries, ignored-name semantics, lazy iteration and predicate/input exceptions). The zero-chunk case overlaps an earlier pilot; do not add overlapping mechanisms to the unique acceptance count. See `benchmark/validated-candidates/iterator-traversal.md` for actual qualification/model evidence and fixed execution policy.
 
 - Benchmark live visible and holdout verification use separate final-workspace copies created before either selection runs. Preserve that independence for trusted Host runners too; visible tests may write files and must not change the hidden snapshot. `test_benchmark_isolation.py` covers both false success and false failure. Separate copies do not sandbox Host code or defend against malicious absolute-path access.
-
-- CLI Coding and managed delivery/removal must share the Web advisory workspace lock within the same user/XDG home, independent of record/worktree storage roots. Stop old workers before the lock-namespace upgrade. External editors/Git and different XDG homes are not coordinated. Environment plans and builds share strict hashed-requirement parsing and bounded no-symlink wheel reads; emit shell-quoted explicit export/download/build steps and never execute them implicitly. See `docs/incoming-branches-review.md` and the v2 policy for current reference qualification.

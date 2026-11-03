@@ -201,7 +201,7 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-Next, qualify tasks individually, then freeze the twenty-task acceptance policy with at least three attempts per task. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
+The [twenty-case v2 suite and policy](./benchmark/validated-candidates/twenty-tasks-v2.md) passed reference qualification; next, complete its three live-model attempts per case. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
 
 ## Development and agent collaboration
 

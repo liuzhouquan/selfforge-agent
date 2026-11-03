@@ -147,7 +147,7 @@ def test_custom_storage_roots_do_not_split_workspace_ownership(tmp_path, monkeyp
         pass
 
 
-@pytest.mark.parametrize("action", ["remove", "revert", "commit", "pr"])
+@pytest.mark.parametrize("action", ["remove", "revert", "commit", "pr", "code"])
 def test_separate_cli_process_cannot_deliver_or_remove_web_owned_workspace(tmp_path, monkeypatch, action):
     import os
     import subprocess
@@ -162,6 +162,11 @@ def test_separate_cli_process_cannot_deliver_or_remove_web_owned_workspace(tmp_p
         args += ["-m", "blocked commit"]
     if action == "pr":
         args += ["--title", "blocked PR"]
+    if action == "code":
+        args = ["code", "--repo", str(workspace.path), "--workspace", "direct",
+                "--sandbox", "host", "--trust-local", "--model", "fixture",
+                "--base-url", "http://127.0.0.1:9", "--time-budget", "1", "--max-steps", "1",
+                "--task", "Do not run: workspace already owned"]
     with jobs.workspace_guard(workspace.path):
         result = subprocess.run([sys.executable, "-m", "selfforge_agent.cli", *args],
                                 check=False, capture_output=True, text=True, timeout=10, env=os.environ.copy())

@@ -1,3 +1,5 @@
+> Integration review supersedes the original completion claims below. See [actual review evidence](../incoming-branches-review.md) and [current backlog](../backlog.md). The incoming implementations needed fixes before integration.
+
 # SF-ENV-01：为锁定依赖配置定义离线环境准备计划与检查
 
 - 状态：In Review

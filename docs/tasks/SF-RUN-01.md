@@ -1,3 +1,5 @@
+> Integration review supersedes the original completion claims below. See [actual review evidence](../incoming-branches-review.md) and [current backlog](../backlog.md). The incoming implementations needed fixes before integration.
+
 # SF-RUN-01：调查并统一 CLI 与 Web 对同一工作区的并发协调
 
 - 状态：In Review
