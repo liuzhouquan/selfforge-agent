@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "pocketflow_retry_count_type",
+      "repository": "../../.local/benchmark/repos/pocketflow",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c",
+      "task": "In PocketFlow, Node and AsyncNode accept non-integer max_retries values and fail later during execution, while bool is silently treated as an integer. Reject bool and every non-integer max_retries at construction with TypeError mentioning max_retries. Keep positive integer retry counts valid. Add tests in tests/test_max_retries_type_validation.py and run the repository tests.",
+      "allowed_changes": [
+        "pocketflow/__init__.py",
+        "tests/test_max_retries_type_validation.py"
+      ],
+      "holdout_test": "holdouts/test_pocketflow_max_retries_type.py",
+      "agent_test_path": "tests",
+      "reference_patch": "references/pocketflow_retry_count_type.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
