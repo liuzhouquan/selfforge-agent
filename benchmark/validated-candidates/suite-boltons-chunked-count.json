@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "boltons_chunked_count",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons.iterutils, chunked accepts an optional count parameter. Passing a negative count (count < 0) bypasses parameter validation and crashes internally in itertools.islice with a standard library error. Validate count using _validate_positive_int(count, 'chunk count', strictly_positive=False) when count is not None, raising ValueError mentioning chunk count on negative count. Preserve count=0, positive count, count=None, and fill keyword arguments. Add regression tests to tests/test_iterutils.py and run that file.",
+      "allowed_changes": [
+        "boltons/iterutils.py",
+        "tests/test_iterutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_chunked_count.py",
+      "agent_test_path": "tests/test_iterutils.py",
+      "reference_patch": "references/boltons_chunked_count.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
