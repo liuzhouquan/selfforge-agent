@@ -158,3 +158,25 @@ files = [
     assert env["has_hash_lock"] is True
     assert "poetry.lock" in env["lock_files"]
     assert not any("No hash-locked requirements found" in w for w in env["warnings"])
+
+
+def test_detect_pipfile_lock_with_hashes_sets_has_hash_lock(tmp_path: Path) -> None:
+    repo = _init_git(tmp_path / "pipfile_repo")
+    (repo / "Pipfile.lock").write_text(
+        """
+{
+    "_meta": {"hash": {"sha256": "0000000000000000000000000000000000000000000000000000000000000000"}},
+    "default": {
+        "flask": {
+            "version": "==3.0.0",
+            "hashes": ["sha256:1111111111111111111111111111111111111111111111111111111111111111"]
+        }
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    env = detect_repository_environment(repo)
+    assert env["has_hash_lock"] is True
+    assert "Pipfile.lock" in env["lock_files"]
+    assert not any("No hash-locked requirements found" in w for w in env["warnings"])

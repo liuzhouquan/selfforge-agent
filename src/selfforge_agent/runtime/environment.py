@@ -1,6 +1,7 @@
 """Bind Coding sessions to one execution mode and immutable Docker image, and detect repository environment."""
 
 import hashlib
+import json
 import re
 import shlex
 import time
@@ -152,85 +153,120 @@ def bind_environment(executor: Executor | None, session: SessionStore, *,
 
 
 def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = None) -> str:
-    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from a uv.lock or poetry.lock file."""
+    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from a uv.lock, poetry.lock, or Pipfile.lock file."""
     if not lock_path.is_file():
         raise ValueError(f"Lock file does not exist: {lock_path}")
     if lock_path.stat().st_size > 5 * 1024 * 1024:
         raise ValueError("Lock file exceeds 5 MiB size limit")
 
     content = _read(lock_path, 5 * 1024 * 1024)
-    try:
-        data = tomllib.loads(content.decode("utf-8"))
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise ValueError(f"Failed to parse lock file as TOML: {exc}") from exc
-
-    packages = data.get("package", [])
-    if not isinstance(packages, list) or not packages:
-        raise ValueError("Lock file contains no packages")
-
-    metadata_files = data.get("metadata", {}).get("files", {})
-    if not isinstance(metadata_files, dict):
-        metadata_files = {}
+    is_json = lock_path.name == "Pipfile.lock" or lock_path.suffix == ".json" or content.lstrip().startswith(b"{")
 
     requirements: dict[str, tuple[str, str, set[str]]] = {}
-    for pkg in packages:
-        if not isinstance(pkg, dict):
-            raise ValueError("Invalid package entry in lock file")  # noqa: TRY004 - malformed file data
-        name = pkg.get("name")
-        version = pkg.get("version")
-        source = pkg.get("source", {})
-        if isinstance(source, dict) and (
-            any(key in source for key in ("editable", "virtual", "directory"))
-            or source.get("type") in ("git", "directory", "editable", "virtual")
-        ):
-            continue
-        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", name)
-                or not isinstance(version, str)
-                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,199}", version)):
-            raise ValueError("Invalid package name or version in lock file")
 
-        hashes: set[str] = set()
+    if is_json:
+        try:
+            data = json.loads(content.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(f"Failed to parse lock file as JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("Lock file contains no packages")
 
-        # uv.lock wheels format
-        wheels = pkg.get("wheels", [])
-        if isinstance(wheels, list):
-            for wheel in wheels:
-                if isinstance(wheel, dict) and "hash" in wheel:
-                    h = wheel["hash"]
-                    if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
-                        hashes.add(h)
-        elif wheels:
-            raise ValueError("Invalid wheel list in lock file")
+        default_sec = data.get("default")
+        develop_sec = data.get("develop")
+        if not isinstance(default_sec, dict) and not isinstance(develop_sec, dict):
+            raise ValueError("Lock file contains no packages")
+        if not default_sec and not develop_sec:
+            raise ValueError("Lock file contains no packages")
 
-        # uv.lock sdist format
-        sdist = pkg.get("sdist")
-        if isinstance(sdist, dict) and "hash" in sdist:
-            h = sdist["hash"]
-            if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
-                hashes.add(h)
+        for section in ("default", "develop"):
+            pkgs = data.get(section)
+            if not isinstance(pkgs, dict):
+                continue
+            for name, pkg in pkgs.items():
+                if not isinstance(pkg, dict):
+                    raise ValueError("Invalid package entry in lock file")  # noqa: TRY004 - malformed file data
+                if pkg.get("editable") is True or any(k in pkg for k in ("git", "file", "path", "ref")):
+                    continue
+                raw_ver = pkg.get("version")
+                if not isinstance(raw_ver, str):
+                    raise ValueError("Invalid package name or version in lock file")  # noqa: TRY004 - malformed file data
+                version = raw_ver.lstrip("=")
+                if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", name)
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,199}", version)):
+                    raise ValueError("Invalid package name or version in lock file")
+                hashes: set[str] = set()
+                raw_hashes = pkg.get("hashes", [])
+                if isinstance(raw_hashes, list):
+                    for h in raw_hashes:
+                        if isinstance(h, str):
+                            if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
+                                hashes.add(h)
+                            elif re.fullmatch(r"[0-9a-fA-F]{64}", h):
+                                hashes.add(f"sha256:{h}")
+                if not hashes:
+                    raise ValueError("Lock file includes an external package without supported SHA-256 hashes")
+                key = re.sub(r"[-_.]+", "-", name).lower()
+                if key in requirements:
+                    if requirements[key][1] != version:
+                        raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
+                    requirements[key][2].update(hashes)
+                else:
+                    requirements[key] = (name, version, hashes)
+    else:
+        try:
+            data = tomllib.loads(content.decode("utf-8"))
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(f"Failed to parse lock file as TOML: {exc}") from exc
 
-        # poetry.lock files format
-        files = pkg.get("files", [])
-        if isinstance(files, list):
-            for file_entry in files:
-                if isinstance(file_entry, dict) and "hash" in file_entry:
-                    h = file_entry["hash"]
-                    if isinstance(h, str):
-                        if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
+        packages = data.get("package", [])
+        if not isinstance(packages, list) or not packages:
+            raise ValueError("Lock file contains no packages")
+
+        metadata_files = data.get("metadata", {}).get("files", {})
+        if not isinstance(metadata_files, dict):
+            metadata_files = {}
+
+        for pkg in packages:
+            if not isinstance(pkg, dict):
+                raise ValueError("Invalid package entry in lock file")  # noqa: TRY004 - malformed file data
+            name = pkg.get("name")
+            version = pkg.get("version")
+            source = pkg.get("source", {})
+            if isinstance(source, dict) and (
+                any(key in source for key in ("editable", "virtual", "directory"))
+                or source.get("type") in ("git", "directory", "editable", "virtual")
+            ):
+                continue
+            if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", name)
+                    or not isinstance(version, str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,199}", version)):
+                raise ValueError("Invalid package name or version in lock file")
+
+            hashes = set()
+
+            # uv.lock wheels format
+            wheels = pkg.get("wheels", [])
+            if isinstance(wheels, list):
+                for wheel in wheels:
+                    if isinstance(wheel, dict) and "hash" in wheel:
+                        h = wheel["hash"]
+                        if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
                             hashes.add(h)
-                        elif re.fullmatch(r"[0-9a-fA-F]{64}", h):
-                            hashes.add(f"sha256:{h}")
-                elif isinstance(file_entry, str):
-                    if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", file_entry):
-                        hashes.add(file_entry)
-                    elif re.fullmatch(r"[0-9a-fA-F]{64}", file_entry):
-                        hashes.add(f"sha256:{file_entry}")
+            elif wheels:
+                raise ValueError("Invalid wheel list in lock file")
 
-        # poetry 1.0 metadata.files format
-        if not hashes and name in metadata_files:
-            meta_entries = metadata_files[name]
-            if isinstance(meta_entries, list):
-                for file_entry in meta_entries:
+            # uv.lock sdist format
+            sdist = pkg.get("sdist")
+            if isinstance(sdist, dict) and "hash" in sdist:
+                h = sdist["hash"]
+                if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
+                    hashes.add(h)
+
+            # poetry.lock files format
+            files = pkg.get("files", [])
+            if isinstance(files, list):
+                for file_entry in files:
                     if isinstance(file_entry, dict) and "hash" in file_entry:
                         h = file_entry["hash"]
                         if isinstance(h, str):
@@ -244,15 +280,33 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
                         elif re.fullmatch(r"[0-9a-fA-F]{64}", file_entry):
                             hashes.add(f"sha256:{file_entry}")
 
-        if not hashes:
-            raise ValueError("Lock file includes an external package without supported SHA-256 hashes")
-        key = re.sub(r"[-_.]+", "-", name).lower()
-        if key in requirements:
-            if requirements[key][1] != version:
-                raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
-            requirements[key][2].update(hashes)
-        else:
-            requirements[key] = (name, version, hashes)
+            # poetry 1.0 metadata.files format
+            if not hashes and name in metadata_files:
+                meta_entries = metadata_files[name]
+                if isinstance(meta_entries, list):
+                    for file_entry in meta_entries:
+                        if isinstance(file_entry, dict) and "hash" in file_entry:
+                            h = file_entry["hash"]
+                            if isinstance(h, str):
+                                if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", h):
+                                    hashes.add(h)
+                                elif re.fullmatch(r"[0-9a-fA-F]{64}", h):
+                                    hashes.add(f"sha256:{h}")
+                        elif isinstance(file_entry, str):
+                            if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", file_entry):
+                                hashes.add(file_entry)
+                            elif re.fullmatch(r"[0-9a-fA-F]{64}", file_entry):
+                                hashes.add(f"sha256:{file_entry}")
+
+            if not hashes:
+                raise ValueError("Lock file includes an external package without supported SHA-256 hashes")
+            key = re.sub(r"[-_.]+", "-", name).lower()
+            if key in requirements:
+                if requirements[key][1] != version:
+                    raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
+                requirements[key][2].update(hashes)
+            else:
+                requirements[key] = (name, version, hashes)
 
     if not requirements:
         raise ValueError("No hashed requirements found in lock file")
@@ -295,21 +349,20 @@ def plan_environment_preparation(
         p = lock_file.expanduser().absolute()
         if not p.is_file():
             raise ValueError(f"Lock file does not exist: {lock_file}")
-        is_toml_lock = (
-            p.name in {"uv.lock", "poetry.lock"}
-            or p.suffix == ".toml"
-            or "poetry" in p.name.lower()
-            or "uv" in p.name.lower()
+        is_structured_lock = (
+            p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
+            or p.suffix in {".toml", ".json"}
+            or any(kw in p.name.lower() for kw in ("poetry", "uv", "pipfile"))
         )
-        if not is_toml_lock:
+        if not is_structured_lock:
             try:
                 with p.open("r", encoding="utf-8", errors="ignore") as h:
                     sample = h.read(4096)
-                if "[[package]]" in sample:
-                    is_toml_lock = True
+                if "[[package]]" in sample or sample.lstrip().startswith("{"):
+                    is_structured_lock = True
             except OSError:
                 pass
-        if is_toml_lock:
+        if is_structured_lock:
             req_text = export_hash_locked_requirements(p)
             export_needed = True
         else:
@@ -319,6 +372,7 @@ def plan_environment_preparation(
         # Check standard locations in repo
         uv_lock = repo / "uv.lock"
         poetry_lock = repo / "poetry.lock"
+        pipfile_lock = repo / "Pipfile.lock"
         req_lock = repo / "requirements.lock"
         if uv_lock.is_file():
             req_text = export_hash_locked_requirements(uv_lock)
@@ -328,11 +382,15 @@ def plan_environment_preparation(
             req_text = export_hash_locked_requirements(poetry_lock)
             export_needed = True
             req_source_path = poetry_lock
+        elif pipfile_lock.is_file():
+            req_text = export_hash_locked_requirements(pipfile_lock)
+            export_needed = True
+            req_source_path = pipfile_lock
         elif req_lock.is_file():
             req_text = _read(req_lock, MAX_LOCK_BYTES).decode("utf-8")
             req_source_path = req_lock
         else:
-            raise ValueError("No supported lockfile (uv.lock, poetry.lock, requirements.lock) found in repository")
+            raise ValueError("No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository")
 
     lock_bytes = req_text.encode("utf-8")
     packages = parse_locked_requirements(lock_bytes)

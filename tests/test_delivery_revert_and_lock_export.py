@@ -1,5 +1,6 @@
 """Tests for workspace revert workflow, lock export, and repair environment configuration."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,9 +12,9 @@ from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager
 
 
-def test_revert_workspace_restores_tracked_and_deletes_untracked(demo_repo: tuple[Path, str, str]) -> None:
+def test_revert_workspace_restores_tracked_and_deletes_untracked(demo_repo: tuple[Path, str, str], tmp_path: Path) -> None:
     repo, _base, _head = demo_repo
-    manager = CodingWorkspaceManager()
+    manager = CodingWorkspaceManager(root=tmp_path / "worktrees")
     session_id = "reverttest01"
     workspace = manager.create(repo, session_id)
     session_root = manager.session_root(repo, session_id)
@@ -246,5 +247,108 @@ files = [
 """
     lock_file = tmp_path / "poetry.lock"
     lock_file.write_text(lock_content, encoding="utf-8")
+    with pytest.raises(ValueError, match="Version forks require a target-aware export"):
+        export_hash_locked_requirements(lock_file)
+
+
+def test_export_hash_locked_requirements_from_pipfile_lock(tmp_path: Path) -> None:
+    sample_pipfile_lock = json.dumps({
+        "_meta": {
+            "hash": {"sha256": "0" * 64},
+            "pipfile-spec": 6,
+            "requires": {"python_version": "3.11"},
+        },
+        "default": {
+            "requests": {
+                "hashes": [
+                    "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                ],
+                "index": "pypi",
+                "version": "==2.31.0",
+            },
+            "urllib3": {
+                "hashes": [
+                    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                ],
+                "version": "==2.0.7",
+            },
+        },
+        "develop": {
+            "pytest": {
+                "hashes": [
+                    "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                ],
+                "version": "==8.0.0",
+            },
+        },
+    })
+    lock_file = tmp_path / "Pipfile.lock"
+    lock_file.write_text(sample_pipfile_lock, encoding="utf-8")
+    exported = export_hash_locked_requirements(lock_file)
+    lines = exported.strip().splitlines()
+    assert len(lines) == 3
+    assert "pytest==8.0.0" in lines[0]
+    assert "requests==2.31.0" in lines[1]
+    assert "--hash=sha256:1111111111111111111111111111111111111111111111111111111111111111" in lines[1]
+    assert "--hash=sha256:2222222222222222222222222222222222222222222222222222222222222222" in lines[1]
+    assert "urllib3==2.0.7 --hash=sha256:3333333333333333333333333333333333333333333333333333333333333333" in lines[2]
+
+
+def test_export_hash_locked_requirements_pipfile_missing_hashes_raises(tmp_path: Path) -> None:
+    sample_pipfile_lock = json.dumps({
+        "default": {
+            "unhashed": {
+                "version": "==1.0.0",
+                "hashes": [],
+            },
+        },
+    })
+    lock_file = tmp_path / "Pipfile.lock"
+    lock_file.write_text(sample_pipfile_lock, encoding="utf-8")
+    with pytest.raises(ValueError, match="Lock file includes an external package without supported SHA-256 hashes"):
+        export_hash_locked_requirements(lock_file)
+
+
+def test_export_hash_locked_requirements_pipfile_skips_editable_and_vcs(tmp_path: Path) -> None:
+    sample_pipfile_lock = json.dumps({
+        "default": {
+            "my-git-pkg": {
+                "git": "https://github.com/example/my-git-pkg.git",
+                "ref": "main",
+            },
+            "my-editable": {
+                "editable": True,
+                "path": ".",
+            },
+            "six": {
+                "version": "==1.16.0",
+                "hashes": ["sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"],
+            },
+        },
+    })
+    lock_file = tmp_path / "Pipfile.lock"
+    lock_file.write_text(sample_pipfile_lock, encoding="utf-8")
+    exported = export_hash_locked_requirements(lock_file)
+    assert exported.strip() == "six==1.16.0 --hash=sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"
+
+
+def test_export_hash_locked_requirements_pipfile_version_conflict_raises(tmp_path: Path) -> None:
+    sample_pipfile_lock = json.dumps({
+        "default": {
+            "pkg": {
+                "version": "==1.0.0",
+                "hashes": ["sha256:1111111111111111111111111111111111111111111111111111111111111111"],
+            },
+        },
+        "develop": {
+            "pkg": {
+                "version": "==2.0.0",
+                "hashes": ["sha256:2222222222222222222222222222222222222222222222222222222222222222"],
+            },
+        },
+    })
+    lock_file = tmp_path / "Pipfile.lock"
+    lock_file.write_text(sample_pipfile_lock, encoding="utf-8")
     with pytest.raises(ValueError, match="Version forks require a target-aware export"):
         export_hash_locked_requirements(lock_file)

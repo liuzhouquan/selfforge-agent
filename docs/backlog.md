@@ -14,6 +14,7 @@
 | SF-EVAL-03 | Ready | 按 v2 策略完成每题至少 3 次真实模型运行并报告 | 核对有效 DeepSeek/model、镜像 ID；新镜像需新 manifest 与重新预检 |
 | SF-ENV-01 | Complete | 只读离线准备计划及有界哈希 wheelhouse 审计 | CLI/API；不自动下载、不保证安装成功；见[审查记录](./incoming-branches-review.md) |
 | SF-ENV-02 | In Review | 支持 Poetry 锁文件哈希识别与环境离线计划导出 | CLI/API 支持 poetry.lock 识别与 export-lock；见[任务卡](./tasks/SF-ENV-02.md) |
+| SF-ENV-03 | In Review | 支持 Pipfile.lock (Pipenv) 格式哈希识别与离线计划导出 | CLI/API 支持 Pipfile.lock 识别与 export-lock；见[任务卡](./tasks/SF-ENV-03.md) |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
