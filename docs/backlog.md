@@ -13,7 +13,7 @@
 | SF-EVAL-02 | Complete | 冻结 v2 清单、参考/holdout 哈希及模型/预算/失败策略 | [v2 策略](../benchmark/validated-candidates/twenty-tasks-v2.md)；旧 v1 保留历史 |
 | SF-EVAL-03 | Complete | 按 v2 策略完成每题 3 次真实模型运行并报告 | 20 题 × 3 次 = 60 次已完成，53/60（88.33%）；环境来源记录有限，见 [评测记录](./evaluation.md) |
 | SF-ENV-01 | Complete | 只读离线准备计划及有界哈希 wheelhouse 审计 | CLI/API；不自动下载、不保证安装成功；见[审查记录](./incoming-branches-review.md) |
-
+| SF-RUN-02 | Complete | 倒数第二轮与末轮预算提示纠正 | PR #38；仅改进提示并保留既有执行保护，未验证模型成功率提升 |
 | SF-EVAL-04 | Ready | 在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置 | 单独补来源元数据与相关回归；不重跑或改写旧 53/60 结果 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
