@@ -11,8 +11,10 @@
 | SF-EVAL-01 | Complete | 15 个单题分支与原有 5 题形成 20 题 / 5 仓库池 | 审查修订 v2 通过真实 Docker 参考正负控；不是模型成绩 |
 | SF-RUN-01 | Complete | CLI Coding/交付/删除与 Web 任务统一排他锁 | 同一用户/XDG；自定义存储目录共享锁；升级先停止旧 worker |
 | SF-EVAL-02 | Complete | 冻结 v2 清单、参考/holdout 哈希及模型/预算/失败策略 | [v2 策略](../benchmark/validated-candidates/twenty-tasks-v2.md)；旧 v1 保留历史 |
-| SF-EVAL-03 | Ready | 按 v2 策略完成每题至少 3 次真实模型运行并报告 | 核对有效 DeepSeek/model、镜像 ID；新镜像需新 manifest 与重新预检 |
+| SF-EVAL-03 | In Review | 按 v2 策略完成 20 题 × 3 次真实模型运行并报告 | PR #37 记录 53/60（88.33%）通过，待审核合并 |
 | SF-ENV-01 | Complete | 只读离线准备计划及有界哈希 wheelhouse 审计 | CLI/API；不自动下载、不保证安装成功；见[审查记录](./incoming-branches-review.md) |
+| SF-RUN-02 | In Review | 关键轮次（倒数第二轮/末轮未验证）运行预算引导与收尾保护 | PR #38 已通过 CI 4m59s，待审核合并 |
+| SF-RUN-03 | In Progress | 准确记录中断、超时与异常场景下的步数归因 | 解决中途超时/取消/异常导致 steps 重置归零的问题；见 [SF-RUN-03](tasks/SF-RUN-03.md) |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
