@@ -167,3 +167,75 @@ def test_stop_during_compaction_prevents_model_request(
     assert result.status == stop and result.steps == 0
     assert not model.requests
     assert not any(event["event"] == "turn_budget" for event in session.trace_events())
+
+
+def test_budget_guidance_distinguishes_penultimate_and_final_unverified_turns() -> None:
+    from selfforge_agent.runtime.control import budget_notice
+
+    # Plenty of budget left (remaining_turns = 4)
+    early = budget_notice(step=1, max_steps=4, remaining_seconds=120, tests_passed=False)["content"]
+    assert "Plan time for run_tests" in early
+    assert "Penultimate" not in early
+    assert "Final turn" not in early
+
+    # Budget near exhaustion (remaining_turns = 3)
+    near = budget_notice(step=2, max_steps=4, remaining_seconds=120, tests_passed=False)["content"]
+    assert "Budget is nearly exhausted" in near
+    assert "before the final turn" in near
+    assert "Penultimate" not in near
+
+    # Penultimate turn (remaining_turns = 2): final opportunity to run tools/tests
+    penultimate = budget_notice(step=3, max_steps=4, remaining_seconds=120, tests_passed=False)["content"]
+    assert "Penultimate turn" in penultimate
+    assert "final opportunity to run tools and tests" in penultimate
+    assert "run_tests on this turn" in penultimate
+
+    # Final turn without verification (remaining_turns = 1, tests_passed=False)
+    final_unverified = budget_notice(step=4, max_steps=4, remaining_seconds=120, tests_passed=False)["content"]
+    assert "Final turn without passing verification" in final_unverified
+    assert "calling any tool will exhaust the step budget" in final_unverified
+    assert "before the final turn" not in final_unverified  # Must not tell model on final turn to act before it!
+
+    # Time budget pressure with plenty of turns (remaining_turns = 10, remaining_seconds = 30)
+    time_pressure = budget_notice(step=1, max_steps=10, remaining_seconds=30, tests_passed=False)["content"]
+    assert "Budget is nearly exhausted" in time_pressure
+    assert "Penultimate" not in time_pressure
+    assert "Final turn" not in time_pressure
+
+
+def test_budget_feedback_penultimate_and_final_unverified_agent_flow(tmp_path: Path) -> None:
+    session, tools = setup(tmp_path)
+    # 3 turns total:
+    # Turn 1: edit_file (remaining_turns=3)
+    # Turn 2: read_file (remaining_turns=2, penultimate turn)
+    # Turn 3: answer() (remaining_turns=1, final turn without verification)
+    model = Model([
+        call("edit_file", {"path": "app.py", "old_text": "return 0", "new_text": "return 1"}, 1),
+        call("read_file", {"path": "app.py"}, 2),
+        answer(),
+    ])
+    result = CodingAgent(model, tools, session, max_steps=3).run("Fix value")
+    assert result.status == "unverified"
+    assert result.steps == 3
+    assert "Penultimate turn" in notices(model.requests[1])[0]
+    assert "Final turn without passing verification" in notices(model.requests[2])[0]
+    assert "before the final turn" not in notices(model.requests[2])[0]
+    assert model.schemas[2]  # Schemas remain available on unverified final turn
+
+
+def test_budget_feedback_final_turn_tool_call_exhausts_steps(tmp_path: Path) -> None:
+    session, tools = setup(tmp_path)
+    # 3 turns total:
+    # Turn 1: edit_file (remaining_turns=3)
+    # Turn 2: read_file (remaining_turns=2, penultimate turn)
+    # Turn 3: call tool on final turn (remaining_turns=1) -> executes, but ends with max_steps
+    model = Model([
+        call("edit_file", {"path": "app.py", "old_text": "return 0", "new_text": "return 1"}, 1),
+        call("read_file", {"path": "app.py"}, 2),
+        call("read_file", {"path": "app.py"}, 3),
+    ])
+    result = CodingAgent(model, tools, session, max_steps=3).run("Fix value")
+    assert result.status == "max_steps"
+    assert result.steps == 3
+    assert result.tools_used == 3
+    assert "Final turn without passing verification" in notices(model.requests[2])[0]
