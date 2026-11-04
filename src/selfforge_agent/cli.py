@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
     sandbox.add_argument("action", choices=["build", "detect", "export-lock", "plan"])
     sandbox.add_argument("--repo", type=Path, default=Path.cwd())
-    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock file for export-lock action")
+    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock or poetry.lock file for export-lock action")
     sandbox.add_argument("--requirements", type=Path)
     sandbox.add_argument("--wheelhouse", type=Path)
     sandbox.add_argument("--tag")

@@ -15,6 +15,7 @@
 | SF-ENV-01 | Complete | 只读离线准备计划及有界哈希 wheelhouse 审计 | CLI/API；不自动下载、不保证安装成功；见[审查记录](./incoming-branches-review.md) |
 | SF-RUN-02 | Complete | 倒数第二轮与末轮预算提示纠正 | PR #38；仅改进提示并保留既有执行保护，未验证模型成功率提升 |
 | SF-RUN-03 | Complete | 中断、超时与异常下保留已完成模型轮次数 | PR #39；当前模型调用未返回不计入，工具阶段异常保留当前轮 |
+| SF-ENV-02 | Complete | 有限 Poetry/uv 锁文件哈希识别与离线导出 | PR #40；条件标记和版本分叉拒绝，VCS/本地源排除范围见依赖文档 |
 | SF-EVAL-04 | Ready | 在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置 | 单独补来源元数据与相关回归；不重跑或改写旧 53/60 结果 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
