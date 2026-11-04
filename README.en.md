@@ -33,7 +33,7 @@ This demo checks the protocol and execution path; live model results are below. 
 | Coding workspaces | Implemented | New tasks default to a persistent branch and worktree from committed HEAD; resume, inspect bounded diffs, commit, create PRs, and explicitly clean up |
 | PR Review / Repair | Implemented | Web review and checkout; repair edits use the constrained shared Tool Registry, Docker execution, JUnit evidence, and JSONL traces, while its proposal loop remains separate |
 | Targeted test generation | Implemented (up to three candidates) | Optionally target a review risk on an added line; feed failed outcomes into another attempt and stop at the first Base-pass/Head-assertion-fail result |
-| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent visible/unseen tests, image IDs and failure categories; optional external reference fixes are checked before model calls. [Twenty cases across five repositories passed Docker reference qualification](./benchmark/validated-candidates/twenty-tasks-v2.md); a separate three-task, three-repeat DeepSeek run scored 9/9; formal 20-task acceptance remains open |
+| Repeatable Coding evaluation | Implemented (harness) | Pinned Git commits, independent visible/unseen tests, image IDs and failure categories; optional external reference fixes are checked before model calls. [Twenty cases across five repositories passed Docker reference qualification](./benchmark/validated-candidates/twenty-tasks-v2.md); a separate three-task, three-repeat DeepSeek run scored 9/9; the first v2 measurement scored 53/60, with provenance limits in the evaluation record |
 
 Bounded JUnit diagnostics feed test failures back into the same Coding Agent for inspection, repair and retesting. Run the live-model demo with a configured provider and Docker image:
 
@@ -201,10 +201,10 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-The [twenty-case v2 suite and policy](./benchmark/validated-candidates/twenty-tasks-v2.md) passed reference qualification; next, complete its three live-model attempts per case. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
+The [twenty-case v2 suite and policy](./benchmark/validated-candidates/twenty-tasks-v2.md) passed reference qualification; its first three-attempt-per-case measurement scored 53/60 with provenance limitations; see the evaluation record. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
 
 ## Development and agent collaboration
 
 New contributors and coding agents start with [AGENTS.md](./AGENTS.md) and the [development guide](./docs/development.md), then take one task through the [collaboration workflow](./docs/agent-workflow.md). The [task template](./docs/task-template.md) records scope, acceptance and handoff; read [engineering invariants](./docs/engineering-invariants.md) by affected module. Roadmap items are directions, and audit records describe pinned versions; neither is a request to implement everything in one branch. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-CLI/Web now share cooperative workspace ownership. CLI/API provide read-only offline dependency plans and bounded wheelhouse audits. The [v2 policy](./benchmark/validated-candidates/twenty-tasks-v2.md) is frozen; its 60 live-model attempts remain pending. See [integration review](./docs/incoming-branches-review.md) for upgrade instructions and limits.
+CLI/Web now share cooperative workspace ownership. CLI/API provide read-only offline dependency plans and bounded wheelhouse audits. The [v2 policy](./benchmark/validated-candidates/twenty-tasks-v2.md) is frozen; its first 60 live-model attempts scored 53/60 with provenance limitations. See [integration review](./docs/incoming-branches-review.md) for upgrade instructions and limits.
