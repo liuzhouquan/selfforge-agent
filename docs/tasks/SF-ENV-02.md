@@ -75,3 +75,7 @@
 ## Handoff
 
 - 交付状态：本地实现与测试完成，等待创建 PR。
+
+## Review corrections
+
+Six independent regressions failed on the incoming implementation: malformed metadata at the real API boundary, erased markers, uppercase SHA-256 incompatibility, hashes beyond the first read chunk, filename-substring misclassification and reading symlinks during format detection. They now exercise the shared bounded reader and finite structured-lock parser in `runtime/lockfiles.py`. Full Poetry dependency resolution is not claimed; exclusions and target-aware limits are in `docs/dependency-images.md`. The original feature commits are retained; review fixes are separate.
