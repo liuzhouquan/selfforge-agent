@@ -141,3 +141,110 @@ def test_github_repair_request_supports_image_and_timeout() -> None:
     )
     assert req.image == "custom-image:1.0"
     assert req.timeout == 120.0
+
+
+def test_export_hash_locked_requirements_from_poetry_lock(tmp_path: Path) -> None:
+    sample_poetry_lock = """
+[[package]]
+name = "flask"
+version = "3.0.0"
+description = "A simple framework"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "flask-3.0.0-py3-none-any.whl", hash = "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+    {file = "flask-3.0.0.tar.gz", hash = "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+]
+
+[[package]]
+name = "click"
+version = "8.1.7"
+files = [
+    {file = "click-8.1.7-py3-none-any.whl", hash = "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+]
+"""
+    lock_file = tmp_path / "poetry.lock"
+    lock_file.write_text(sample_poetry_lock, encoding="utf-8")
+    exported = export_hash_locked_requirements(lock_file)
+    lines = exported.strip().splitlines()
+    assert len(lines) == 2
+    assert lines[0] == "click==8.1.7 --hash=sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    assert "flask==3.0.0" in lines[1]
+    assert "--hash=sha256:1111111111111111111111111111111111111111111111111111111111111111" in lines[1]
+    assert "--hash=sha256:2222222222222222222222222222222222222222222222222222222222222222" in lines[1]
+
+
+def test_export_hash_locked_requirements_poetry_v1_metadata(tmp_path: Path) -> None:
+    poetry_v1_lock = """
+[[package]]
+name = "six"
+version = "1.16.0"
+
+[metadata.files]
+six = [
+    {file = "six-1.16.0-py2.py3-none-any.whl", hash = "sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"},
+]
+"""
+    lock_file = tmp_path / "poetry.lock"
+    lock_file.write_text(poetry_v1_lock, encoding="utf-8")
+    exported = export_hash_locked_requirements(lock_file)
+    assert exported.strip() == (
+        "six==1.16.0 --hash=sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"
+    )
+
+
+def test_export_hash_locked_requirements_poetry_skips_editable_and_git(tmp_path: Path) -> None:
+    lock_content = """
+[[package]]
+name = "my-internal-pkg"
+version = "0.1.0"
+source = { type = "git", url = "https://github.com/example/my-internal-pkg.git" }
+
+[[package]]
+name = "six"
+version = "1.16.0"
+files = [
+    {file = "six-1.16.0-py2.py3-none-any.whl", hash = "8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"},
+]
+"""
+    lock_file = tmp_path / "poetry.lock"
+    lock_file.write_text(lock_content, encoding="utf-8")
+    exported = export_hash_locked_requirements(lock_file)
+    lines = exported.strip().splitlines()
+    assert len(lines) == 1
+    assert lines[0] == "six==1.16.0 --hash=sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"
+
+
+def test_export_hash_locked_requirements_poetry_missing_hashes_raises(tmp_path: Path) -> None:
+    lock_content = """
+[[package]]
+name = "unhashed-pkg"
+version = "1.0.0"
+files = []
+"""
+    lock_file = tmp_path / "poetry.lock"
+    lock_file.write_text(lock_content, encoding="utf-8")
+    with pytest.raises(ValueError, match="Lock file includes an external package without supported SHA-256 hashes"):
+        export_hash_locked_requirements(lock_file)
+
+
+def test_export_hash_locked_requirements_poetry_version_conflict_raises(tmp_path: Path) -> None:
+    lock_content = """
+[[package]]
+name = "pkg"
+version = "1.0.0"
+files = [
+    {file = "pkg-1.0.0.whl", hash = "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+]
+
+[[package]]
+name = "pkg"
+version = "2.0.0"
+files = [
+    {file = "pkg-2.0.0.whl", hash = "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+]
+"""
+    lock_file = tmp_path / "poetry.lock"
+    lock_file.write_text(lock_content, encoding="utf-8")
+    with pytest.raises(ValueError, match="Version forks require a target-aware export"):
+        export_hash_locked_requirements(lock_file)

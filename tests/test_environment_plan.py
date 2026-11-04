@@ -236,3 +236,79 @@ def test_explicit_requirements_format_does_not_depend_on_filename(tmp_path, file
     plan = plan_environment_preparation(tmp_path, requirements_file=requirements)
     assert plan["export_command"] is None
     assert shlex.split(plan["download_command"])[-1] == str(requirements)
+
+
+def test_plan_environment_with_poetry_lock(tmp_path: Path) -> None:
+    sample_poetry_lock = """
+[[package]]
+name = "flask"
+version = "3.0.0"
+files = [
+    {file = "flask-3.0.0-py3-none-any.whl", hash = "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+]
+
+[[package]]
+name = "click"
+version = "8.1.7"
+files = [
+    {file = "click-8.1.7-py3-none-any.whl", hash = "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+]
+"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "poetry.lock").write_text(sample_poetry_lock, encoding="utf-8")
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+
+    plan = plan_environment_preparation(repo, wheelhouse=wheelhouse, tag="poetry-app:locked")
+    assert plan["version"] == 1
+    assert plan["status"] == "pending_wheels"
+    assert plan["ready_to_build"] is False
+    assert plan["package_count"] == 2
+    assert "poetry.lock" in plan["export_command"]
+
+
+def test_plan_environment_with_explicit_poetry_lock(tmp_path: Path) -> None:
+    sample_poetry_lock = """
+[[package]]
+name = "six"
+version = "1.16.0"
+files = [
+    {file = "six-1.16.0-py2.py3-none-any.whl", hash = "sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"},
+]
+"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    lock = repo / "custom_poetry.lock"
+    lock.write_text(sample_poetry_lock, encoding="utf-8")
+
+    plan = plan_environment_preparation(repo, lock_file=lock)
+    assert plan["version"] == 1
+    assert plan["package_count"] == 1
+    assert "custom_poetry.lock" in plan["export_command"]
+
+
+def test_cli_sandbox_export_lock_poetry(monkeypatch, capsys, tmp_path: Path) -> None:
+    from selfforge_agent.cli import main
+
+    sample_poetry_lock = """
+[[package]]
+name = "six"
+version = "1.16.0"
+files = [
+    {file = "six-1.16.0-py2.py3-none-any.whl", hash = "sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2"},
+]
+"""
+    lock = tmp_path / "poetry.lock"
+    lock.write_text(sample_poetry_lock, encoding="utf-8")
+    out_file = tmp_path / "requirements.txt"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["selfforge-agent", "sandbox", "export-lock", "--lock", str(lock), "--output", str(out_file)],
+    )
+    assert main() == 0
+    captured = capsys.readouterr()
+    assert f"Exported hash-locked requirements to {out_file}" in captured.out
+    assert out_file.is_file()
+    assert "six==1.16.0 --hash=sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2" in out_file.read_text(encoding="utf-8")

@@ -120,3 +120,41 @@ def test_cli_sandbox_detect(monkeypatch, capsys, tmp_path: Path) -> None:
     captured = capsys.readouterr()
     assert "pyproject.toml" in captured.out
     assert "layout" in captured.out.lower()
+
+
+def test_detect_uv_lock_with_hashes_sets_has_hash_lock(tmp_path: Path) -> None:
+    repo = _init_git(tmp_path / "uv_repo")
+    (repo / "uv.lock").write_text(
+        """
+version = 1
+[[package]]
+name = "flask"
+version = "3.0.0"
+wheels = [
+    { url = "https://example.com/flask.whl", hash = "sha256:1111111111111111111111111111111111111111111111111111111111111111" }
+]
+""",
+        encoding="utf-8",
+    )
+    env = detect_repository_environment(repo)
+    assert env["has_hash_lock"] is True
+    assert not any("No hash-locked requirements found" in w for w in env["warnings"])
+
+
+def test_detect_poetry_lock_with_hashes_sets_has_hash_lock(tmp_path: Path) -> None:
+    repo = _init_git(tmp_path / "poetry_repo")
+    (repo / "poetry.lock").write_text(
+        """
+[[package]]
+name = "flask"
+version = "3.0.0"
+files = [
+    { file = "flask-3.0.0-py3-none-any.whl", hash = "sha256:1111111111111111111111111111111111111111111111111111111111111111" }
+]
+""",
+        encoding="utf-8",
+    )
+    env = detect_repository_environment(repo)
+    assert env["has_hash_lock"] is True
+    assert "poetry.lock" in env["lock_files"]
+    assert not any("No hash-locked requirements found" in w for w in env["warnings"])
