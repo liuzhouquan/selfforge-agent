@@ -2,7 +2,7 @@
 
 - 状态：Ready for Review
 - Owner：Antigravity Agent
-- 基线：`7eabefc21124d6fe8e2bc8a6190805ea969a6eb0`
+- 基线：`7eabefc67439432001921e5dbe81aad50b2bfc18`
 - 分支：`feat/runtime-step-attribution-on-interruption`
 - 依赖：PR #36 已合并入 main；PR #37 发现 `more_itertools_replace_limit` r3 报告 `steps=0 tools=4`
 - PR：[PR #39](https://github.com/liuzhouquan/selfforge-agent/pull/39)
@@ -66,3 +66,5 @@
 | `git diff --check` | 差异检查 | `feat/runtime-step-attribution-on-interruption` | Clean (0 issues) |
 
 
+
+审查补充：steps 表示本次 run 已返回的模型轮次，不是工具数或会话累计轮数。超时模型调用本身不计入；工具阶段异常保留该已返回模型轮次。原 53/60 报告保持冻结，不用新的遥测规则改写历史计数。
