@@ -22,7 +22,7 @@ from selfforge_agent.runtime.images import (
     read_locked_wheels,
     validate_image_tag,
 )
-from selfforge_agent.runtime.lockfiles import export_toml_requirements
+from selfforge_agent.runtime.lockfiles import export_pipfile_requirements, export_toml_requirements
 from selfforge_agent.runtime.session import SessionStore
 
 
@@ -152,14 +152,16 @@ def bind_environment(executor: Executor | None, session: SessionStore, *,
 
 
 def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = None) -> str:
-    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from a uv.lock or poetry.lock file."""
+    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from a uv.lock, poetry.lock or Pipfile.lock file."""
     if not lock_path.is_file():
         raise ValueError(f"Lock file does not exist: {lock_path}")
     if lock_path.stat().st_size > 5 * 1024 * 1024:
         raise ValueError("Lock file exceeds 5 MiB size limit")
 
     content = _read(lock_path, 5 * 1024 * 1024)
-    result = export_toml_requirements(content)
+    is_json = (lock_path.name == "Pipfile.lock" or lock_path.suffix == ".json"
+               or content.lstrip().startswith(b"{"))
+    result = export_pipfile_requirements(content) if is_json else export_toml_requirements(content)
     if output_path is not None:
         output_path.write_text(result, encoding="utf-8")
     return result
@@ -196,8 +198,9 @@ def plan_environment_preparation(
         if not p.is_file():
             raise ValueError(f"Lock file does not exist: {lock_file}")
         contents = _read(p, 5 * 1024 * 1024)
-        is_toml_lock = (p.name in {"uv.lock", "poetry.lock"} or p.suffix == ".toml"
-                        or b"[[package]]" in contents)
+        is_toml_lock = (p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
+                        or p.suffix in {".toml", ".json"}
+                        or b"[[package]]" in contents or contents.lstrip().startswith(b"{"))
         if is_toml_lock:
             req_text = export_hash_locked_requirements(p)
             export_needed = True
@@ -208,6 +211,7 @@ def plan_environment_preparation(
         # Check standard locations in repo
         uv_lock = repo / "uv.lock"
         poetry_lock = repo / "poetry.lock"
+        pipfile_lock = repo / "Pipfile.lock"
         req_lock = repo / "requirements.lock"
         if uv_lock.is_file():
             req_text = export_hash_locked_requirements(uv_lock)
@@ -217,11 +221,15 @@ def plan_environment_preparation(
             req_text = export_hash_locked_requirements(poetry_lock)
             export_needed = True
             req_source_path = poetry_lock
+        elif pipfile_lock.is_file():
+            req_text = export_hash_locked_requirements(pipfile_lock)
+            export_needed = True
+            req_source_path = pipfile_lock
         elif req_lock.is_file():
             req_text = _read(req_lock, MAX_LOCK_BYTES).decode("utf-8")
             req_source_path = req_lock
         else:
-            raise ValueError("No supported lockfile (uv.lock, poetry.lock, requirements.lock) found in repository")
+            raise ValueError("No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository")
 
     lock_bytes = req_text.encode("utf-8")
     packages = parse_locked_requirements(lock_bytes)
