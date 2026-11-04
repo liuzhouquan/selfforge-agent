@@ -31,7 +31,7 @@
 
 已有一套原生 Tool Calling Runtime、受限工具、会话/轨迹、Docker 执行、Web 工作台、持久 worktree、非空 JUnit 与内容指纹证据，以及显式 commit/PR 交付。已有只读依赖/布局发现、有限锁导出、只读离线准备计划/有界 wheelhouse 审计、离线镜像准备、风险排序、堆栈关联、交互审批和可选配置费率估算。
 
-正式 20 题 × 每题至少 3 次真实模型验收仍未完成；自动安装构建环境、因果反事实验证和模型专用精确 Tokenizer 仍开放。Repair proposer loop 仍独立。详细状态以产品边界为准，下一步从 Backlog 选择，不重复实现已合并能力。
+v2 首轮 20 题 × 3 次真实模型测量为 53/60，历史环境来源记录有限，见[评测记录](./evaluation.md)；自动安装构建环境、因果反事实验证和模型专用精确 Tokenizer 仍开放。Repair proposer loop 仍独立。详细状态以产品边界为准，下一步从 Backlog 选择，不重复实现已合并能力。
 
 当前不增加多 Agent 产品编排、通用 MCP 平台、额外 RAG、大型前端或另一套 Runtime；开发时多人/agent 分工与产品内的 Multi-Agent 能力是两件事。
 

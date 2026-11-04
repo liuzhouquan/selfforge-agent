@@ -33,7 +33,7 @@ uv run python examples/coding_demo.py
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、查看有界 Diff、提交改动并创建 PR、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |
 | 针对性测试生成 | Implemented（最多 3 个候选） | 可关联 PR 新增行上的审查风险；失败结果回填后重试，首个 Base 通过且 Head 断言失败的候选给出差异证据 |
-| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。[20 题 / 5 仓库通过 Docker 参考预检](./benchmark/validated-candidates/twenty-tasks-v2.md)；三题各 3 次 DeepSeek 运行 9/9，正式 20 题 × 3 次模型验收尚未完成 |
+| 可重复 Coding 评测 | Implemented（评测工具） | 固定 Git commit、独立可见/隐藏测试、锁定镜像与失败分类；支持模型调用前验证外部参考补丁。[20 题 / 5 仓库通过 Docker 参考预检](./benchmark/validated-candidates/twenty-tasks-v2.md)；三题各 3 次 DeepSeek 运行 9/9，v2 首轮模型测量 53/60；环境来源记录限制见评测记录 |
 
 失败测试会通过有界 JUnit 诊断回填给同一个 Coding Agent，它可读取相关代码、修复并重测。可运行真实模型演示（需配置供应商和 Docker 镜像）：
 
@@ -201,7 +201,7 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-已完成 [20 题 / 5 仓库参考预检与 v2 策略冻结](./benchmark/validated-candidates/twenty-tasks-v2.md)；下一步按该策略完成每题至少 3 次真实模型验收。已有显式 commit/PR 交付和只读环境发现；自动依赖安装、更广的环境配置仍开放。一次接手一个工作单元，见[可接手任务](./docs/backlog.md)与[产品边界](./docs/product-scope.md)。
+已完成 [20 题 / 5 仓库参考预检与 v2 策略冻结](./benchmark/validated-candidates/twenty-tasks-v2.md)；已完成首轮 53/60 测量；下一步补齐未来评测来源元数据并改进失败恢复，见[评测记录](./docs/evaluation.md)。已有显式 commit/PR 交付和只读环境发现；自动依赖安装、更广的环境配置仍开放。一次接手一个工作单元，见[可接手任务](./docs/backlog.md)与[产品边界](./docs/product-scope.md)。
 
 ## 开发与 Agent 协作
 
