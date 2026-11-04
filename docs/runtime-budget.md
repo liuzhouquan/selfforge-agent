@@ -2,9 +2,19 @@
 
 The shared Coding loop sends the model its current turn number, remaining turns
 (including the final answer), remaining wall time, and post-write `run_tests`
-verification state. In the last three turns or last 45 seconds, it asks the model
-to prioritize required edits, the task's actual test selection, and a final answer.
-A successful `bash` command does not supply verification evidence.
+verification state. It distinguishes critical turn boundaries:
+- **Final turn with passing verification** (`remaining_turns == 1 and tests_passed`):
+  tools are disabled (`final_only`), prompting a final answer.
+- **Final turn without passing verification** (`remaining_turns == 1 and not tests_passed`):
+  tools remain available, but the notice explicitly warns that calling any tool
+  will exhaust the step budget and result in `max_steps`, prompting a clean
+  `unverified` final answer if no further tools are run.
+- **Penultimate turn without passing verification** (`remaining_turns == 2 and not tests_passed`):
+  explicitly informs the model that this is its final opportunity to run tools and
+  `run_tests` to achieve a verified completion before the final answer turn.
+- **Near-budget exhaustion** (`remaining_turns <= 3 or remaining_seconds <= 45`):
+  prompts the model to avoid optional exploration, prioritize required edits and
+  `run_tests`, and warns that `bash` commands do not establish test verification.
 
 This is model guidance, not an automatic completion rule. The existing cap still
 counts **every** model call. The Runtime does not add an extra summary turn, run

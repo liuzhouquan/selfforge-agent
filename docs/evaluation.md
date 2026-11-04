@@ -1,5 +1,63 @@
 # Evaluation record
 
+## Formal twenty-task v2 model evaluation — 2026-11-04
+
+The frozen 20-task benchmark manifest [`benchmark/validated-candidates/suite-twenty-tasks-v2.json`](../benchmark/validated-candidates/suite-twenty-tasks-v2.json) (SHA-256 `3b4aa3fa27c18d183af8ac109de05ca9bdef22294b911d13e70d287cfe5344b6`) was evaluated under the frozen [v2 execution policy](../benchmark/validated-candidates/twenty-tasks-v2.md).
+
+The evaluation executed 20 tasks across 5 distinct real repositories, 3 independent repeats each, yielding **60 independent live model attempts** using DeepSeek `deepseek-flash` without fallback, in Docker with `--network=none` isolation.
+
+- **Total Successes**: **53 / 60** (**88.33%**)
+- **Failure Distribution** (7 failed attempts):
+  - `agent_max_steps`: 4 attempts (step limit 18 reached)
+  - `agent_timed_out`: 1 attempt (wall-clock limit 180s reached)
+  - `holdout_assertion_failed`: 2 attempts (unseen holdout assertion failure)
+  - Zero provider HTTP errors (`agent_error_codes: {}`)
+- **Total Duration**: 1,692.396 seconds (~28.2 minutes)
+- **Token Usage**: 2,595,928 tokens (Prompt: 2,437,520 / Completion: 158,408). No prices are inferred.
+- **Docker Images**:
+  - `sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20` (`selfforge-agent-sandbox:latest`, 18 cases)
+  - `sha256:205fa9f663b395ace68468c42cfdfdb6c0b180593504c67d913634f962860da6` (`selfforge-itsdangerous:locked`, 2 cases)
+- **Raw Report**: Saved in ignored `.local/benchmark/twenty-v2-model-repeat3.json`.
+
+### Per-Case Summary
+
+| Case | Repository | Pinned SHA | Complete Successes | Failure Reasons |
+| --- | --- | --- | ---: | --- |
+| `pocketflow_async_batch_empty` | pocketflow | `f74d023f` | 3/3 | None |
+| `boltons_unicode_punctuation` | boltons | `d31d821d` | 3/3 | None |
+| `boltons_depth_pruning` | boltons | `d31d821d` | 2/3 | Repeat 1: `holdout_assertion_failed` |
+| `more_itertools_zero_chunk_size` | more-itertools | `4aeb4338` | 2/3 | Repeat 1: `agent_max_steps` (passed tests, but 18 steps) |
+| `more_itertools_replace_limit` | more-itertools | `4aeb4338` | 1/3 | Repeat 2: `agent_max_steps`; Repeat 3: `agent_timed_out` |
+| `pocketflow_invalid_retries` | pocketflow | `f74d023f` | 1/3 | Repeat 2 & 3: `agent_max_steps` |
+| `pocketflow_wait_validation` | pocketflow | `f74d023f` | 2/3 | Repeat 2: `holdout_assertion_failed` |
+| `pocketflow_retry_count_type` | pocketflow | `f74d023f` | 3/3 | None |
+| `pocketflow_transition_validation` | pocketflow | `f74d023f` | 3/3 | None |
+| `boltons_negative_max_depth` | boltons | `d31d821d` | 3/3 | None |
+| `boltons_windowed_size` | boltons | `d31d821d` | 3/3 | None |
+| `boltons_chunked_count` | boltons | `d31d821d` | 3/3 | None |
+| `more_itertools_negative_split_maxsplit` | more-itertools | `4aeb4338` | 3/3 | None |
+| `more_itertools_grouper_size` | more-itertools | `4aeb4338` | 3/3 | None |
+| `more_itertools_intersperse_n` | more-itertools | `4aeb4338` | 3/3 | None |
+| `itsdangerous_empty_secret_keys` | itsdangerous | `672971d6` | 3/3 | None |
+| `itsdangerous_negative_max_age` | itsdangerous | `672971d6` | 3/3 | None |
+| `jmespath_split_function` | jmespath | `2812594e` | 3/3 | None |
+| `jmespath_replace_function` | jmespath | `2812594e` | 3/3 | None |
+| `jmespath_lower_function` | jmespath | `2812594e` | 3/3 | None |
+
+**Takeaways**:
+1. 15 out of 20 tasks (75%) achieved a perfect 3/3 success rate across all three independent attempts.
+2. The primary failure mode was budget exhaustion (`agent_max_steps` on complex loop tasks such as `pocketflow_invalid_retries` and `more_itertools_replace_limit`), rather than code corruption or provider errors.
+3. In accordance with invariant rules, runs reaching the step limit are strictly classified as failures even if the agent's edits happen to pass the test selection.
+4. This represents the first complete 60-attempt measurement on the v2 task set, with the provenance limits below.
+
+### Review evidence and limits
+
+An independent review recomputed all 60 unique `(case, repeat)` entries, 20×3 coverage, success/failure counts, duration and provider token totals from the private report. All attempts report DeepSeek `deepseek-flash`; its 20 preflight image/reference/holdout digests match the frozen v2 assets. The raw report SHA-256 is `951e78b24f56071c9823d5f9268c87b1436a0d8bc2ec5f2fe633fe59955c459e`.
+
+[Sanitized per-attempt results](../benchmark/results/twenty-v2-model-repeat3.summary.json) preserve all successes/failures, selected test counts, durations, provider/model identity and tokens, without messages, reasoning, test text, tool output, credentials or private paths. The operator record identifies application baseline `7eabefc67439432001921e5dbe81aad50b2bfc18` and the documented 18/180s/30s/no-fallback invocation. The original report does not embed that application SHA, Python/Docker versions, endpoint or invocation; temporary sessions were discarded by the harness. These historical details and absence of discarded trials cannot be independently reconstructed. This provenance gap is disclosed rather than backfilled from today's environment; a fully documented repeatability claim remains unsupported.
+
+This is a project-authored, validation-heavy set across real repositories, not a general coding benchmark or proof of broad difficulty coverage. The result predates PR #38 guidance and PR #39 telemetry changes; neither improvement was model-evaluated by this run. The timed-out attempt's `steps=0` is the old telemetry defect, not evidence that zero turns executed. Preserve all seven failed attempts.
+
 ## Reference-qualified iterator/traversal tasks — 2026-10-30
 
 Five distinct project-authored tasks across PocketFlow, boltons and

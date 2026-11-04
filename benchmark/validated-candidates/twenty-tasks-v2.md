@@ -1,6 +1,6 @@
 # Reviewed twenty-case suite — policy v2
 
-This is a project-authored set of 20 cases across five real repositories, mostly constructor/input-validation contracts and small string/iterator extensions. These are not 20 upstream-confirmed bugs, a broad difficulty benchmark, or a measured Agent success rate. Overlapping earlier pilots count once. Formal 60-run model evaluation has **not** been performed under this policy.
+This is a project-authored set of 20 cases across five real repositories, mostly constructor/input-validation contracts and small string/iterator extensions. These are not 20 upstream-confirmed bugs, a broad difficulty benchmark, or a measured Agent success rate. Overlapping earlier pilots count once. At policy freeze, formal 60-run model evaluation had not been performed. The subsequent 2026-11-04 measurement scored **53/60**, with missing historical provenance fields disclosed in [the evaluation record](../../docs/evaluation.md); it does not establish performance for later Runtime changes.
 
 ## Frozen inputs
 
