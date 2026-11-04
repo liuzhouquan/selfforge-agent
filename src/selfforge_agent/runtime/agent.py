@@ -140,6 +140,7 @@ class CodingAgent:
         self.session.record_status("running")
         deadline = time.monotonic() + self.time_budget
         tools_used = 0
+        completed_steps = 0
         try:
             if self.cancel.is_set():
                 return self._finish("cancelled", "", 0, tools_used)
@@ -150,12 +151,12 @@ class CodingAgent:
             tests_passed = tests_passed and self.session.verification_passed()
             for step in range(1, self.max_steps + 1):
                 if self.cancel.is_set():
-                    return self._finish("cancelled", "", step - 1, tools_used)
+                    return self._finish("cancelled", "", completed_steps, tools_used)
                 if tests_passed:
                     tests_passed = self._verification_current(tested_snapshot, deadline)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return self._finish("timed_out", "", step - 1, tools_used)
+                    return self._finish("timed_out", "", completed_steps, tools_used)
                 final_only = step == self.max_steps and tests_passed
                 notice = budget_notice(step=step, max_steps=self.max_steps,
                                        remaining_seconds=remaining, tests_passed=tests_passed)
@@ -171,9 +172,9 @@ class CodingAgent:
                 request_messages = messages[:position] + [notice] + messages[position:]
                 remaining = deadline - time.monotonic()
                 if self.cancel.is_set():
-                    return self._finish("cancelled", "", step - 1, tools_used)
+                    return self._finish("cancelled", "", completed_steps, tools_used)
                 if remaining <= 0:
-                    return self._finish("timed_out", "", step - 1, tools_used)
+                    return self._finish("timed_out", "", completed_steps, tools_used)
                 self.session.trace("turn_budget", step=step, max_steps=self.max_steps,
                                    remaining_turns=self.max_steps - step + 1,
                                    remaining_seconds=round(remaining, 3),
@@ -182,6 +183,7 @@ class CodingAgent:
                 turn = self.model.complete(request_messages,
                                            [] if final_only else self.tools.schemas(),
                                            min(45, remaining))
+                completed_steps = step
                 self.session.trace("model_call", provider=turn.provider, model=turn.model,
                                    duration_seconds=round(time.monotonic() - started, 3),
                                    usage=turn.usage.model_dump() if turn.usage else None,
@@ -264,14 +266,14 @@ class CodingAgent:
                                             "content": outcome.content})
             return self._finish("max_steps", "", self.max_steps, tools_used)
         except KeyboardInterrupt:
-            return self._finish("cancelled", "", 0, tools_used)
+            return self._finish("cancelled", "", completed_steps, tools_used)
         except ModelCallCancelled:
-            return self._finish("cancelled", "", 0, tools_used)
+            return self._finish("cancelled", "", completed_steps, tools_used)
         except ModelCallTimedOut as exc:
             self.session.trace("error", error_type=type(exc).__name__, message=str(exc))
-            return self._finish("timed_out", "", 0, tools_used, str(exc))
+            return self._finish("timed_out", "", completed_steps, tools_used, str(exc))
         except TimeoutError as exc:
-            return self._finish("timed_out", "", 0, tools_used, str(exc))
+            return self._finish("timed_out", "", completed_steps, tools_used, str(exc))
         except (RuntimeError, ValueError, OSError) as exc:
             self.session.trace("error", error_type=type(exc).__name__, message=str(exc)[:300])
-            return self._finish("failed", "", 0, tools_used, str(exc))
+            return self._finish("failed", "", completed_steps, tools_used, str(exc))
