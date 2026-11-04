@@ -56,7 +56,7 @@
 1. `boltons_depth_pruning` (Repeat 1): `holdout_assertion_failed`。Agent 状态 completed，visible 测试通过，但隐藏 holdout 发生断言失败。
 2. `more_itertools_zero_chunk_size` (Repeat 1): `agent_max_steps`。Agent 修改完成且 visible/holdout 测试均通过，但耗尽了 18 步上限未提前退出，严格依规计为失败。
 3. `more_itertools_replace_limit` (Repeat 2): `agent_max_steps`。Agent 在复杂生成器短路场景下耗尽 18 步，测试未通过。
-4. `more_itertools_replace_limit` (Repeat 3): `agent_timed_out`。Agent 耗尽 180 秒任务时间预算，已有源文件改动；原报告的 steps=0 是旧遥测缺陷，不能据此推断未执行工具或未修改文件。
+4. `more_itertools_replace_limit` (Repeat 3): `agent_timed_out`。Agent 耗尽 180 秒任务时间预算，最终变更列表为空；原报告的 steps=0 是旧遥测缺陷，不能据此推断未执行过工具。
 5. `pocketflow_invalid_retries` (Repeat 2): `agent_max_steps`。Agent 耗尽 18 步（visible 与 holdout 测试均通过，但超步数上限）。
 6. `pocketflow_invalid_retries` (Repeat 3): `agent_max_steps`。Agent 耗尽 18 步（visible 失败，holdout 通过）。
 7. `pocketflow_wait_validation` (Repeat 2): `holdout_assertion_failed`。Agent 完成并使 visible 测试通过，但 holdout 断言失败。
