@@ -5,7 +5,7 @@
 - 基线：7eabefc88e76a6ce4e89bbd8f8d6ea87a7114251（已核对 origin/main）
 - 分支 / 所属 worktree：feat/eval-twenty-tasks-model-run
 - 依赖：Docker daemon 与两组本地镜像（`selfforge-agent-sandbox:latest` / `selfforge-itsdangerous:locked`）；5 个被测仓库检出在指定 SHA；DeepSeek API Key 有效可用。
-- PR：待提交审核
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/37
 
 ## 目标与范围
 
