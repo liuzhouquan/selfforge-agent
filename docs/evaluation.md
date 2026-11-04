@@ -48,7 +48,15 @@ The evaluation executed 20 tasks across 5 distinct real repositories, 3 independ
 1. 15 out of 20 tasks (75%) achieved a perfect 3/3 success rate across all three independent attempts.
 2. The primary failure mode was budget exhaustion (`agent_max_steps` on complex loop tasks such as `pocketflow_invalid_retries` and `more_itertools_replace_limit`), rather than code corruption or provider errors.
 3. In accordance with invariant rules, runs reaching the step limit are strictly classified as failures even if the agent's edits happen to pass the test selection.
-4. This represents the first complete, reproducible 20-task baseline under the frozen v2 policy.
+4. This represents the first complete 60-attempt measurement on the v2 task set, with the provenance limits below.
+
+### Review evidence and limits
+
+An independent review recomputed all 60 unique `(case, repeat)` entries, 20×3 coverage, success/failure counts, duration and provider token totals from the private report. All attempts report DeepSeek `deepseek-flash`; its 20 preflight image/reference/holdout digests match the frozen v2 assets. The raw report SHA-256 is `951e78b24f56071c9823d5f9268c87b1436a0d8bc2ec5f2fe633fe59955c459e`.
+
+[Sanitized per-attempt results](../benchmark/results/twenty-v2-model-repeat3.summary.json) preserve all successes/failures, selected test counts, durations, provider/model identity and tokens, without messages, reasoning, test text, tool output, credentials or private paths. The operator record identifies application baseline `7eabefc67439432001921e5dbe81aad50b2bfc18` and the documented 18/180s/30s/no-fallback invocation. The original report does not embed that application SHA, Python/Docker versions, endpoint or invocation; temporary sessions were discarded by the harness. These historical details and absence of discarded trials cannot be independently reconstructed. This provenance gap is disclosed rather than backfilled from today's environment; a fully documented repeatability claim remains unsupported.
+
+This is a project-authored, validation-heavy set across real repositories, not a general coding benchmark or proof of broad difficulty coverage. The result predates PR #38 guidance and PR #39 telemetry changes; neither improvement was model-evaluated by this run. The timed-out attempt's `steps=0` is the old telemetry defect, not evidence that zero turns executed. Preserve all seven failed attempts.
 
 ## Reference-qualified iterator/traversal tasks — 2026-10-30
 

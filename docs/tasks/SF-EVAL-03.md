@@ -2,7 +2,7 @@
 
 - 状态：Complete
 - Owner：Antigravity Agent
-- 基线：7eabefc88e76a6ce4e89bbd8f8d6ea87a7114251（已核对 origin/main）
+- 基线：7eabefc67439432001921e5dbe81aad50b2bfc18（已核对 origin/main）
 - 分支 / 所属 worktree：feat/eval-twenty-tasks-model-run
 - 依赖：Docker daemon 与两组本地镜像（`selfforge-agent-sandbox:latest` / `selfforge-itsdangerous:locked`）；5 个被测仓库检出在指定 SHA；DeepSeek API Key 有效可用。
 - PR：https://github.com/liuzhouquan/selfforge-agent/pull/37
@@ -15,7 +15,7 @@
 - 原来状态：已有冻结的 v2 清单（SHA-256 `3b4aa3fa27c18d183af8ac109de05ca9bdef22294b911d13e70d287cfe5344b6`）并通过真实 Docker 20/20 参考预检，但尚未在冻结策略下完成 20 题 × 3 次真实模型评测。
 - 本次完成后：
   1. **环境与供应商前置核实**：核实生效供应商为 DeepSeek，精确模型 ID 为 `deepseek-flash`，endpoint 为 `https://api.deepseek.com`，无回退；核查本地两组镜像 ID 与 5 个目标仓库 SHA 完全匹配。
-  2. **模型全量评测执行**：严格按 v2 策略运行 20 题 × 3 次 = 60 次独立 Docker 运行（每题每次全新检出，18 步上限，180s 任务预算，30s 测试超时，无网络隔离，独立可见与隐藏测试）。
+  2. **模型全量评测执行**：严格按 v2 策略运行 20 题 × 3 次 = 60 次独立 Docker 运行（每题每次全新检出，18 步上限，180s 任务预算，30s 测试超时，网络禁用隔离，独立可见与隐藏测试）。
   3. **结果与失败分类客观记录**：全部 60 次运行结果输出至 `.local/benchmark/twenty-v2-model-repeat3.json`（私有忽略目录），记录通过率、失败分类、耗时及供应商上报 token，不提交原始会话、密钥或源码缓存。
   4. **文档与基线记录**：在 `docs/evaluation.md` 记录真实评测数据，更新任务卡与待办状态。
 - 本次不做：不顺带加入其他功能，不修改已冻结的清单、参考补丁或 holdout；不人为过滤或替换失败运行；不猜测或推算未经配置费率的模型账单金额。
@@ -56,7 +56,7 @@
 1. `boltons_depth_pruning` (Repeat 1): `holdout_assertion_failed`。Agent 状态 completed，visible 测试通过，但隐藏 holdout 发生断言失败。
 2. `more_itertools_zero_chunk_size` (Repeat 1): `agent_max_steps`。Agent 修改完成且 visible/holdout 测试均通过，但耗尽了 18 步上限未提前退出，严格依规计为失败。
 3. `more_itertools_replace_limit` (Repeat 2): `agent_max_steps`。Agent 在复杂生成器短路场景下耗尽 18 步，测试未通过。
-4. `more_itertools_replace_limit` (Repeat 3): `agent_timed_out`。Agent 耗尽 180 秒任务时间预算，未修改文件。
+4. `more_itertools_replace_limit` (Repeat 3): `agent_timed_out`。Agent 耗尽 180 秒任务时间预算，已有源文件改动；原报告的 steps=0 是旧遥测缺陷，不能据此推断未执行工具或未修改文件。
 5. `pocketflow_invalid_retries` (Repeat 2): `agent_max_steps`。Agent 耗尽 18 步（visible 与 holdout 测试均通过，但超步数上限）。
 6. `pocketflow_invalid_retries` (Repeat 3): `agent_max_steps`。Agent 耗尽 18 步（visible 失败，holdout 通过）。
 7. `pocketflow_wait_validation` (Repeat 2): `holdout_assertion_failed`。Agent 完成并使 visible 测试通过，但 holdout 断言失败。
@@ -77,3 +77,5 @@
 - 最近验证：`eval-suite` 60 次模型运行完成（成功率 88.33%），`ruff check .` 与 `git diff --check` clean。
 - 仍在运行：无。
 - 下一步：创建 Pull Request 将 `feat/eval-twenty-tasks-model-run` 提交审核并合并入 `main`。
+
+审查补充：原报告缺少 Python/Docker 版本及应用完整 SHA；短 SHA/预算来自操作记录，未补造历史环境数据。公开脱敏逐次结果及完整证据边界见 [评测记录](../evaluation.md)。60 次测量已完成，完整环境来源记录仍有限制。
