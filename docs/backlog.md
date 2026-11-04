@@ -11,10 +11,13 @@
 | SF-EVAL-01 | Complete | 15 个单题分支与原有 5 题形成 20 题 / 5 仓库池 | 审查修订 v2 通过真实 Docker 参考正负控；不是模型成绩 |
 | SF-RUN-01 | Complete | CLI Coding/交付/删除与 Web 任务统一排他锁 | 同一用户/XDG；自定义存储目录共享锁；升级先停止旧 worker |
 | SF-EVAL-02 | Complete | 冻结 v2 清单、参考/holdout 哈希及模型/预算/失败策略 | [v2 策略](../benchmark/validated-candidates/twenty-tasks-v2.md)；旧 v1 保留历史 |
-| SF-EVAL-03 | Ready | 按 v2 策略完成每题至少 3 次真实模型运行并报告 | 核对有效 DeepSeek/model、镜像 ID；新镜像需新 manifest 与重新预检 |
+| SF-EVAL-03 | Complete | 按 v2 策略完成每题 3 次真实模型运行并报告 | 20 题 × 3 次 = 60 次已完成，53/60（88.33%）；环境来源记录有限，见 [评测记录](./evaluation.md) |
 | SF-ENV-01 | Complete | 只读离线准备计划及有界哈希 wheelhouse 审计 | CLI/API；不自动下载、不保证安装成功；见[审查记录](./incoming-branches-review.md) |
-| SF-ENV-02 | In Review | 支持 Poetry 锁文件哈希识别与环境离线计划导出 | CLI/API 支持 poetry.lock 识别与 export-lock；见[任务卡](./tasks/SF-ENV-02.md) |
-| SF-ENV-03 | In Review | 支持 Pipfile.lock (Pipenv) 格式哈希识别与离线计划导出 | CLI/API 支持 Pipfile.lock 识别与 export-lock；见[任务卡](./tasks/SF-ENV-03.md) |
+| SF-RUN-02 | Complete | 倒数第二轮与末轮预算提示纠正 | PR #38；仅改进提示并保留既有执行保护，未验证模型成功率提升 |
+| SF-RUN-03 | Complete | 中断、超时与异常下保留已完成模型轮次数 | PR #39；当前模型调用未返回不计入，工具阶段异常保留当前轮 |
+| SF-ENV-02 | Complete | 有限 Poetry/uv 锁文件哈希识别与离线导出 | PR #40；条件标记和版本分叉拒绝，VCS/本地源排除范围见依赖文档 |
+| SF-ENV-03 | Complete | 有限 Pipfile.lock 哈希识别与离线导出 | PR #41；default/develop 严格校验，条件标记拒绝，不替代 Pipenv 解析器 |
+| SF-EVAL-04 | Ready | 在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置 | 单独补来源元数据与相关回归；不重跑或改写旧 53/60 结果 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
