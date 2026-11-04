@@ -5,7 +5,7 @@
 - 基线：`7eabefc21124d6fe8e2bc8a6190805ea969a6eb0`
 - 分支：`feat/runtime-budget-turn-guidance`
 - 依赖：PR #36 已合并入 main；PR #37 发现 57%（4/7）评测失败为 `agent_max_steps`
-- PR：待创建
+- PR：[PR #38](https://github.com/liuzhouquan/selfforge-agent/pull/38)
 
 ## 目标与范围
 
