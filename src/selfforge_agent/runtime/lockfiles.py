@@ -59,7 +59,7 @@ def export_toml_requirements(content: bytes) -> str:
     """Export uv or Poetry package pins; skip explicit local/VCS source entries."""
     try:
         data = tomllib.loads(content.decode("utf-8"))
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, RecursionError) as exc:
         raise ValueError(f"Failed to parse lock file as TOML: {exc}") from exc
     packages = data.get("package", [])
     if not isinstance(packages, list) or not packages:
