@@ -5,7 +5,7 @@
 - 基线：`6090dcc5c5188f4c207b1406ce9b3297a731ef8c`（依赖 PR #40）
 - 分支 / 所属 worktree：`feat/environment-pipfile-lock-support`
 - 依赖：PR #40 (`feat/environment-poetry-lock-support`)
-- PR：待创建
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/41
 
 ## 目标与范围
 
