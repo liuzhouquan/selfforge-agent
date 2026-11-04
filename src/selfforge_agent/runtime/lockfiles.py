@@ -93,3 +93,48 @@ def export_toml_requirements(content: bytes) -> str:
             hashes.update(_file_hashes(metadata_files[name], "metadata.files"))
         _add(requirements, name, package.get("version"), hashes)
     return _render(requirements)
+
+
+def _unique_object(pairs: list[tuple]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON keys in lock file")
+        result[key] = value
+    return result
+
+
+def export_pipfile_requirements(content: bytes) -> str:
+    """Export unconditional exact pins from default and develop, rejecting malformed sections."""
+    import json
+
+    try:
+        data = json.loads(content.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
+        raise ValueError("Failed to parse lock file as JSON") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Lock file contains no packages")  # noqa: TRY004 - file data
+    if "_meta" in data and not isinstance(data["_meta"], dict):
+        raise ValueError("Invalid Pipfile metadata in lock file")
+    for name in ("default", "develop"):
+        if name in data and not isinstance(data[name], dict):
+            raise ValueError("Invalid Pipfile section in lock file")
+    if not data.get("default") and not data.get("develop"):
+        raise ValueError("Lock file contains no packages")
+    requirements: dict = {}
+    for section in ("default", "develop"):
+        for name, package in data.get(section, {}).items():
+            if not isinstance(package, dict):
+                raise ValueError("Invalid package entry in lock file")  # noqa: TRY004 - file data
+            if package.get("editable") is True or any(k in package for k in ("git", "file", "path", "ref")):
+                continue
+            _unconditional(package)
+            version = package.get("version")
+            if not isinstance(version, str) or not version.startswith("=="):
+                raise ValueError("Invalid exact package version in lock file")
+            raw_hashes = package.get("hashes", [])
+            if not isinstance(raw_hashes, list) or any(not isinstance(h, str) for h in raw_hashes):
+                raise ValueError("Invalid hash list in lock file")
+            hashes = set().union(*(_hash(h) for h in raw_hashes)) if raw_hashes else set()
+            _add(requirements, name, version[2:], hashes)
+    return _render(requirements)

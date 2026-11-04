@@ -65,3 +65,60 @@ def test_format_detection_does_not_read_symlink(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="symlink"):
         plan_environment_preparation(tmp_path, lock_file=p)
     assert p not in opened and target not in opened
+
+
+def pipfile(tmp_path, *, extra=None, version="==1", default=None):
+    import json
+    package = {"version": version, "hashes": ["sha256:" + "a" * 64], **(extra or {})}
+    payload = {"default": {"demo": package}} if default is None else {"default": default, "develop": {"demo": package}}
+    p = tmp_path / "Pipfile.lock"
+    p.write_text(json.dumps(payload))
+    return p
+
+
+def test_pipfile_does_not_drop_invalid_sections(tmp_path):
+    p = pipfile(tmp_path, default=["invalid"])
+    with pytest.raises(ValueError, match="section"):
+        export_hash_locked_requirements(p)
+
+
+def test_pipfile_does_not_erase_markers(tmp_path):
+    p = pipfile(tmp_path, extra={"markers": "sys_platform == 'win32'"})
+    with pytest.raises(ValueError, match="target-aware"):
+        export_hash_locked_requirements(p)
+
+
+@pytest.mark.parametrize("version", ["1", "=1", "===1"])
+def test_pipfile_requires_exact_pin_syntax(tmp_path, version):
+    p = pipfile(tmp_path, version=version)
+    with pytest.raises(ValueError, match="version"):
+        export_hash_locked_requirements(p)
+
+
+def test_pipfile_duplicate_keys_are_not_silently_overwritten(tmp_path):
+    p = pipfile(tmp_path)
+    text = p.read_text()
+    text = text.replace('{"default":', '{"default": {}, "default":', 1)
+    p.write_text(text)
+    with pytest.raises(ValueError, match="Duplicate"):
+        export_hash_locked_requirements(p)
+
+
+def test_pipfile_uppercase_hashes_work_through_real_api(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from selfforge_agent.api.app import app
+    pipfile(tmp_path, extra={"hashes": ["sha256:" + "A" * 64]})
+    response = TestClient(app).post("/api/sandbox/plan", json={"repository": str(tmp_path)})
+    assert response.status_code == 200
+    assert response.json()["packages"][0]["hashes"] == ["sha256:" + "a" * 64]
+
+
+
+def test_deep_pipfile_json_is_a_client_error(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from selfforge_agent.api.app import app
+    (tmp_path / "Pipfile.lock").write_text('{"default":' + '[' * 1200 + '0' + ']' * 1200 + '}')
+    response = TestClient(app).post("/api/sandbox/plan", json={"repository": str(tmp_path)})
+    assert response.status_code == 400

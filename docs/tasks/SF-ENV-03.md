@@ -2,7 +2,7 @@
 
 - 状态：In Review
 - Owner：Antigravity Agent
-- 基线：`6090dcc5c5188f4c207b1406ce9b3297a731ef8c`（依赖 PR #40）
+- 基线：`6090dccf83678cae02636593e27a3ba664168b29`（依赖 PR #40）
 - 分支 / 所属 worktree：`feat/environment-pipfile-lock-support`
 - 依赖：PR #40 (`feat/environment-poetry-lock-support`)
 - PR：https://github.com/liuzhouquan/selfforge-agent/pull/41
@@ -75,3 +75,7 @@
 ## Handoff
 
 - 交付状态：本地实现与测试完成，等待创建 PR。
+
+## Review corrections
+
+Seven regression cases failed against the incoming Pipfile implementation before the fix: malformed sections being dropped, condition markers erased, three nonexact version spellings accepted, duplicate JSON keys overwritten, and uppercase hashes failing through the real API. The related environment/builder suite passed 79 tests after fixes (overlapping selections are not additive). Deep malformed JSON has a separate API400 regression. Shared strict package/hash validation lives in `runtime/lockfiles.py`; finite-profile source exclusions and target limits are explicit in the dependency guide. Original commits and assertions remain preserved.
