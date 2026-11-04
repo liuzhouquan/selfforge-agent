@@ -5,7 +5,7 @@
 - 基线：`7eabefc21124d6fe8e2bc8a6190805ea969a6eb0`
 - 分支：`feat/runtime-step-attribution-on-interruption`
 - 依赖：PR #36 已合并入 main；PR #37 发现 `more_itertools_replace_limit` r3 报告 `steps=0 tools=4`
-- PR：待创建
+- PR：[PR #39](https://github.com/liuzhouquan/selfforge-agent/pull/39)
 
 ## 目标与范围
 
