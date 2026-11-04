@@ -47,7 +47,7 @@ v2 首轮 20 题 × 3 次真实模型测量为 53/60，历史环境来源记录�
 | --- | --- | --- |
 | Native loop、预算、恢复、上下文、审批 | `runtime/agent.py`、`runtime/session.py`、`runtime/context.py`、`runtime/control.py` | `test_runtime.py`、`test_runtime_recovery.py`、`test_runtime_composition.py`、`test_runtime_budget.py`、`test_context*.py`；[Runtime 约束](./engineering-invariants.md#runtime-model-protocol-and-context) |
 | 文件/搜索/执行器与暂存 | `runtime/tools.py`、`runtime/execution.py` | `test_runtime.py`、`test_docker_staging.py`；[工具与沙箱](./engineering-invariants.md#tools-sandbox-and-dependency-environments) |
-| 依赖准备、环境绑定与发现 | `runtime/images.py`、`runtime/environment.py` | `test_dependency_images.py`、`test_session_environment.py`、`test_environment_detection.py`、`test_delivery_revert_and_lock_export.py`；[依赖镜像](./dependency-images.md) |
+| 依赖准备、环境绑定与发现 | `runtime/images.py`、`runtime/environment.py`、`runtime/lockfiles.py` | `test_dependency_images.py`、`test_session_environment.py`、`test_environment_detection.py`、`test_delivery_revert_and_lock_export.py`；[依赖镜像](./dependency-images.md) |
 | 模型、回退和配置 | `runtime/model.py`、`providers.py`、`integrations/model_http.py`、`coding/model_client.py` | `test_model_deadline.py`、`test_providers.py`、`test_repair_agent.py` |
 | Web 任务、序列化、锁、取消、UI | `api/coding_jobs.py`、`api/app.py`、`api/static/` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py`、`test_session_metrics.py`；[状态与 Web 约束](./engineering-invariants.md#private-state-providers-web-jobs-and-workspaces) |
 | 工作区、Diff、提交/PR/还原 | `runtime/workspace.py`、`runtime/workspace_diff.py`、`runtime/delivery.py` | `test_workspace.py`、`test_workspace_delivery.py`、`test_delivery_safety.py`；[交付契约](./pr-delivery.md) |
