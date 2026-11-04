@@ -5,7 +5,7 @@
 - 基线：`7eabefc67439432001921e5dbe81aad50b2bfc18`
 - 分支 / 所属 worktree：`feat/environment-poetry-lock-support`
 - 依赖：无
-- PR：待创建
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/40
 
 ## 目标与范围
 
