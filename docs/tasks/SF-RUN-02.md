@@ -2,18 +2,18 @@
 
 - 状态：Ready for Review
 - Owner：Antigravity Agent
-- 基线：`7eabefc21124d6fe8e2bc8a6190805ea969a6eb0`
+- 基线：`7eabefc67439432001921e5dbe81aad50b2bfc18`
 - 分支：`feat/runtime-budget-turn-guidance`
 - 依赖：PR #36 已合并入 main；PR #37 发现 57%（4/7）评测失败为 `agent_max_steps`
 - PR：[PR #38](https://github.com/liuzhouquan/selfforge-agent/pull/38)
 
 ## 目标与范围
 
-在 20 题 × 3 次真实模型评测（SF-EVAL-03）中，57%（4/7）的失败为 `agent_max_steps`。其中两例（`more_itertools_zero_chunk_size` r1 与 `pocketflow_invalid_retries` r2）在第 18 步（最大步数）成功执行并通过了 `run_tests`，但因处于最大步数末轮，工具执行完成后循环即刻终止，无后续轮次输出最终答复，导致被判定为 `max_steps` 失败。另外两例在预算耗尽前大量调用 `bash`（单次达 13-17 次）进行探索与非官方验证，未在有限步数内调用 `run_tests`。
+在 20 题 × 3 次真实模型评测（SF-EVAL-03）中，57%（4/7）的失败为 `agent_max_steps`。其中两例（`more_itertools_zero_chunk_size` r1 与 `pocketflow_invalid_retries` r2）在第 18 步（最大步数）成功执行并通过了 `run_tests`，但因处于最大步数末轮，工具执行完成后循环即刻终止，无后续轮次输出最终答复，导致被判定为 `max_steps` 失败。另两例的工具元数据分别为：`more_itertools_replace_limit` r2 调用 11 次 bash、0 次 run_tests；`pocketflow_invalid_retries` r3 调用 12 次 bash、1 次 run_tests，最后一次工具是 edit_file。后者不能描述为从未调用 run_tests。
 
 分析发现：
 1. 倒数第二轮（`remaining_turns == 2`，即第 `max_steps - 1` 步）：旧提示词与普通预算不足提示词混淆，未明确该轮是能执行工具/测试并留有最终答复轮次的**最后机会**。
-2. 最后一轮未通过测试（`remaining_turns == 1 and not tests_passed`）：旧代码存在语义自相矛盾的提示词：“prioritize the required edits and run_tests ... before the final turn”（在最后一轮提示“在最后一轮前完成”），导致模型误认为最后一轮仍应调用测试工具，消耗末轮导致 `max_steps`。
+2. 最后一轮未通过测试（`remaining_turns == 1 and not tests_passed`）：旧代码存在语义自相矛盾的提示词：“prioritize the required edits and run_tests ... before the final turn”（在最后一轮提示“在最后一轮前完成”），可能影响模型的收尾选择；这是基于可复现提示矛盾的待验证假设，现有记录不证明该提示导致了真实模型失败。
 3. 预算紧张时（`remaining_turns <= 3` 或 `remaining_seconds <= 45`）：未警告避免使用 `bash` 代替 `run_tests` 进行非官方验证。
 
 本次改进：
@@ -62,3 +62,5 @@
 | `uv run --no-sync ruff check .` | 静态检查 | `feat/runtime-budget-turn-guidance` | All checks passed |
 | `git diff --check` | 差异检查 | `feat/runtime-budget-turn-guidance` | Clean (0 issues) |
 
+
+审查补充：本次源码仅改变 budget_notice，不新增执行层工具保护。原有 final_only 门槛保持；脚本化回归证明协议/退出状态，尚未以真实模型对照试验证明成功率提升。评测剖析已按私有报告的工具元数据纠正。
