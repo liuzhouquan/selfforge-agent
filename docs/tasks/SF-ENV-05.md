@@ -1,11 +1,11 @@
 # SF-ENV-05：离线依赖 Wheelhouse 完整性审计与就绪度诊断
 
-- 状态：In Progress
+- 状态：In Review
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/environment-wheelhouse-audit`
 - 依赖：无（基于已合并的 PR #41 / main）
-- PR：待创建
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/44
 
 ## 目标与范围
 
