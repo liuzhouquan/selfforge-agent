@@ -277,4 +277,3 @@ def format_eval_diff(diff: dict[str, Any], format: str = "markdown") -> str:
             lines.append(f"  {reason}: {counts['before']} -> {counts['after']} ({counts['delta']:+d})")
 
     return "\n".join(lines) + "\n"
-

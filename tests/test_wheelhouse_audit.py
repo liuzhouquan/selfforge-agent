@@ -207,4 +207,3 @@ def test_api_sandbox_audit_endpoint(tmp_path: Path) -> None:
     assert report["ready"] is True
     assert report["package_count"] == 1
     assert report["matched_count"] == 1
-

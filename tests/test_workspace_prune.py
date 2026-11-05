@@ -229,4 +229,3 @@ def test_workspace_prune_cli_session_id_rejected(tmp_path: Path, monkeypatch, ca
 
     with pytest.raises(SystemExit):
         main(["workspaces", "prune", "extra_session_id", "--repo", str(repo)])
-
