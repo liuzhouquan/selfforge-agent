@@ -5,7 +5,7 @@
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`，PR #41 合并后）
 - 分支 / 所属 worktree：`feat/environment-pip-compile-lock-support`
 - 依赖：PR #41 (`feat/environment-pipfile-lock-support`)
-- PR：待创建
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/43
 
 ## 目标与范围
 
