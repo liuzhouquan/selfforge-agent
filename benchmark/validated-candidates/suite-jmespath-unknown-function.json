@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "jmespath_unknown_function_suggestions",
+      "repository": "../../.local/benchmark/repos/jmespath",
+      "revision": "2812594e69d43098ef60f81f4efc404c071b0418",
+      "task": "Extend JMESPath unknown function diagnostics with 'did you mean' suggestions and an evaluation option. In jmespath.exceptions, update UnknownFunctionError to accept (function_name, similar=None), storing self.function_name and self.similar, and formatting str as 'Unknown function: <name>(), did you mean: <similar>()?' when similar is provided, or 'Unknown function: <name>()' when similar is None. In jmespath.functions.Functions.call_function, accept an optional suggest=True parameter; when function_name is not in FUNCTION_TABLE, use difflib.get_close_matches with cutoff 0.6 to find the closest match from registered functions and pass it as similar to UnknownFunctionError when suggest is True. In jmespath.visitor.Options, add suggest_functions=True (defaulting to True) and pass suggest=self._options.suggest_functions from TreeInterpreter.visit_function_expression to call_function. Preserve existing function arity and type checks, and keep existing built-in functions unchanged. Add regression test methods to TestFunctions in tests/test_functions.py and run that file.",
+      "allowed_changes": [
+        "jmespath/exceptions.py",
+        "jmespath/functions.py",
+        "jmespath/visitor.py",
+        "tests/test_functions.py"
+      ],
+      "holdout_test": "holdouts/test_jmespath_unknown_function.py",
+      "agent_test_path": "tests/test_functions.py",
+      "reference_patch": "references/jmespath_unknown_function.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
