@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -252,6 +253,22 @@ def _image_id(image: str) -> str:
     return resolve_docker_image(image)
 
 
+def _safe_provider_url(value: object) -> str:
+    """Keep public origins and standard API paths; omit credential-bearing URL components."""
+    try:
+        parts = urlsplit(str(value))
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            return ""
+        host = parts.hostname
+        host = f"[{host}]" if ":" in host else host
+        if parts.port is not None:
+            host += f":{parts.port}"
+        path = parts.path if parts.path in {"", "/", "/v1", "/api", "/api/v1", "/openai/v1"} else ""
+        return urlunsplit((parts.scheme, host, path, "", ""))
+    except ValueError:
+        return ""
+
+
 def _detect_app_commit_sha() -> str | None:
     """Detect the commit SHA of the running selfforge-agent application."""
     env_sha = os.environ.get("SELFFORGE_APP_COMMIT_SHA") or os.environ.get("SELFFORGE_COMMIT_SHA")
@@ -260,7 +277,8 @@ def _detect_app_commit_sha() -> str | None:
         if re.fullmatch(r"[0-9a-f]{40}", clean):
             return clean
 
-    candidates = [Path(__file__).resolve().parents[3], Path.cwd()]
+    source_root = Path(__file__).resolve().parents[3]
+    candidates = [source_root] if (source_root / ".git").exists() else []
     for repo_dir in candidates:
         try:
             result = subprocess.run(
@@ -277,6 +295,18 @@ def _detect_app_commit_sha() -> str | None:
         except (OSError, subprocess.TimeoutExpired):
             continue
     return None
+
+
+def _detect_app_dirty() -> bool | None:
+    root = Path(__file__).resolve().parents[3]
+    if not (root / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+                                capture_output=True, text=True, check=False, timeout=5)
+        return bool(result.stdout.strip()) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def _detect_docker_version(timeout: float = 5.0) -> str | None:
@@ -540,27 +570,6 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
     if not 1 <= repeats <= 20 or not 1 <= max_steps <= 100 or time_budget <= 0 or test_timeout <= 0:
         raise ValueError("Invalid benchmark repeat, step, or time limit")
     started_at = datetime.now(UTC).isoformat()
-    manifest_bytes, suite, cases, images, baselines = _preflight(
-        manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
-        test_timeout=test_timeout)
-    artifact_root = (prepare_artifacts(failure_artifacts, [case.repository for case in cases])
-                     if failure_artifacts is not None else None)
-    outcomes = [_run_once(case, repeat, model_factory, sandbox=sandbox,
-                          trusted_host=trusted_host,
-                          image=images[case.spec.id]["id"] if images else image,
-                          max_steps=max_steps,
-                          time_budget=time_budget, test_timeout=test_timeout,
-                          failure_artifacts=artifact_root)
-                for case in cases for repeat in range(1, repeats + 1)]
-    completed_at = datetime.now(UTC).isoformat()
-    successes = sum(item.success for item in outcomes)
-    counts = Counter(item.reason for item in outcomes if not item.success)
-    agent_errors = Counter(item.agent_error_code for item in outcomes if item.agent_error_code)
-    image_ids = {item["id"] for item in images.values()}
-    by_case = {case.spec.id: {
-        "successes": sum(item.success for item in outcomes if item.case == case.spec.id),
-        "runs": repeats,
-    } for case in cases}
     sanitized_providers: list[dict[str, str]] = []
     if providers is not None:
         for p in providers:
@@ -568,24 +577,13 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
                 sanitized_providers.append({
                     "name": str(p.get("name", "")),
                     "model": str(p.get("model", "")),
-                    "base_url": str(p.get("base_url", "")),
+                    "base_url": _safe_provider_url(p.get("base_url", "")),
                 })
             else:
                 sanitized_providers.append({
                     "name": str(getattr(p, "name", "")),
                     "model": str(getattr(p, "model", "")),
-                    "base_url": str(getattr(p, "base_url", "")),
-                })
-    else:
-        seen = set()
-        for item in outcomes:
-            key = (item.provider, item.model)
-            if key not in seen and (item.provider or item.model):
-                seen.add(key)
-                sanitized_providers.append({
-                    "name": item.provider,
-                    "model": item.model,
-                    "base_url": "",
+                    "base_url": _safe_provider_url(getattr(p, "base_url", "")),
                 })
     commit_sha = _detect_app_commit_sha()
     provenance = {
@@ -601,9 +599,47 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
             "repeats": repeats,
         },
         "providers": sanitized_providers,
+        "app_dirty": _detect_app_dirty(),
+        "app_commit_source": ("environment_declared" if any(re.fullmatch(r"[0-9a-fA-F]{40}", os.environ.get(k, "").strip()) for k in ("SELFFORGE_APP_COMMIT_SHA", "SELFFORGE_COMMIT_SHA")) else "source_git" if commit_sha else "unavailable"),
+        "docker_version_scope": "engine_or_client" if sandbox == "docker" else None,
+        "context_budget": 8000,
+        "provider_config_source": "configured" if providers is not None else "observed",
         "started_at": started_at,
-        "completed_at": completed_at,
+        "completed_at": None,
     }
+    manifest_bytes, suite, cases, images, baselines = _preflight(
+        manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
+        test_timeout=test_timeout)
+    artifact_root = (prepare_artifacts(failure_artifacts, [case.repository for case in cases])
+                     if failure_artifacts is not None else None)
+    outcomes = [_run_once(case, repeat, model_factory, sandbox=sandbox,
+                          trusted_host=trusted_host,
+                          image=images[case.spec.id]["id"] if images else image,
+                          max_steps=max_steps,
+                          time_budget=time_budget, test_timeout=test_timeout,
+                          failure_artifacts=artifact_root)
+                for case in cases for repeat in range(1, repeats + 1)]
+    completed_at = datetime.now(UTC).isoformat()
+    provenance["completed_at"] = completed_at
+    successes = sum(item.success for item in outcomes)
+    counts = Counter(item.reason for item in outcomes if not item.success)
+    agent_errors = Counter(item.agent_error_code for item in outcomes if item.agent_error_code)
+    image_ids = {item["id"] for item in images.values()}
+    by_case = {case.spec.id: {
+        "successes": sum(item.success for item in outcomes if item.case == case.spec.id),
+        "runs": repeats,
+    } for case in cases}
+    if providers is None:
+        seen = set()
+        for item in outcomes:
+            key = (item.provider, item.model)
+            if key not in seen and (item.provider or item.model):
+                seen.add(key)
+                sanitized_providers.append({
+                    "name": item.provider,
+                    "model": item.model,
+                    "base_url": "",
+                })
     return {
         "version": 1,
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),

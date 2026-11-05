@@ -653,3 +653,25 @@ def test_cli_eval_suite_outputs_provenance(tmp_path: Path, monkeypatch: pytest.M
     assert "provenance" in payload
     assert payload["provenance"]["commit_sha"] == "a" * 40
     assert payload["provenance"]["budgets"]["max_steps"] == 12
+
+
+def test_provenance_strips_url_credentials_and_records_start_identity(tmp_path, monkeypatch):
+    manifest, _ = _manifest(tmp_path)
+    monkeypatch.setenv("SELFFORGE_APP_COMMIT_SHA", "a" * 40)
+    def once(case, repeat, _factory, **_kwargs):
+        monkeypatch.setenv("SELFFORGE_APP_COMMIT_SHA", "b" * 40)
+        return BenchmarkOutcome(case.spec.id, repeat, True, "passed", "completed", ["app.py"],
+                                "passed", 1, 0, 0, 0, 0.1, "fixture", "scripted", 0, 0, 0)
+    monkeypatch.setattr(benchmark, "_run_once", once)
+    report = evaluate_suite(manifest, ScriptedModel, sandbox="host", trusted_host=True,
+        providers=[{"name": "custom", "model": "fixture", "base_url": "https://user:secret@api.example/v1?token=hidden#private"}])
+    assert report["provenance"]["app_commit_sha"] == "a" * 40
+    assert report["provenance"]["providers"][0]["base_url"] == "https://api.example/v1"
+    assert all(s not in json.dumps(report) for s in ("secret", "hidden", "private"))
+
+
+def test_installed_application_does_not_claim_working_directory_commit(tmp_path, monkeypatch):
+    monkeypatch.delenv("SELFFORGE_APP_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("SELFFORGE_COMMIT_SHA", raising=False)
+    monkeypatch.setattr(benchmark, "__file__", str(tmp_path / "site-packages/selfforge_agent/runtime/benchmark.py"))
+    assert benchmark._detect_app_commit_sha() is None

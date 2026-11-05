@@ -97,3 +97,5 @@
 - 最近验证：`uv run --no-sync pytest -q`（416 passed）与 `uv run --no-sync pytest -q -m integration`（11 passed）
 - 仍在运行：无
 - 下一步：等待 PR #42 审查合并；合并后推进下一个 Ready 工作单元
+
+Review: provenance is captured before preflight/model execution. Installed packages never fall back to the task working directory's Git SHA. Environment SHAs are labelled declared; source dirty state is recorded where available. URLs omit userinfo/query/fragment and retain only public standard endpoint paths; uncommon paths are omitted. Docker version remains explicitly engine-or-client evidence, not proof of both. Historical reports are not modified.
