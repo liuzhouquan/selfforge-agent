@@ -2,12 +2,15 @@
 
 import hashlib
 import json
+import platform
+import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from selfforge_agent.providers import TokenUsage
+from selfforge_agent.providers import ProviderConfig, TokenUsage
 from selfforge_agent.runtime import benchmark
 from selfforge_agent.runtime.benchmark import (
     BenchmarkCase,
@@ -494,3 +497,181 @@ def test_reviewed_twenty_suite_freezes_assets_and_execution_images() -> None:
         assert all(not Path(path).is_absolute() and ".." not in Path(path).parts
                    for path in case.allowed_changes)
         assert not (root / case.holdout_test).resolve().is_relative_to((root / case.repository).resolve())
+
+
+def test_evaluate_suite_records_run_provenance(tmp_path: Path) -> None:
+    manifest, _ = _manifest(tmp_path)
+    report = evaluate_suite(
+        manifest, ScriptedModel, repeats=2, sandbox="host", trusted_host=True,
+        max_steps=5, time_budget=60, test_timeout=15,
+    )
+    assert "provenance" in report
+    prov = report["provenance"]
+    assert re.fullmatch(r"[0-9a-f]{40}", prov["commit_sha"])
+    assert prov["app_commit_sha"] == prov["commit_sha"]
+    assert prov["python_version"] == platform.python_version()
+    assert prov["platform"] == platform.platform()
+    assert prov["docker_version"] is None
+    assert prov["budgets"] == {
+        "max_steps": 5,
+        "time_budget": 60,
+        "test_timeout": 15,
+        "repeats": 2,
+    }
+    assert isinstance(prov["providers"], list)
+    assert isinstance(prov["started_at"], str)
+    assert isinstance(prov["completed_at"], str)
+    start_dt = datetime.fromisoformat(prov["started_at"])
+    end_dt = datetime.fromisoformat(prov["completed_at"])
+    assert start_dt <= end_dt
+
+
+def test_evaluate_suite_sanitizes_providers(tmp_path: Path) -> None:
+    manifest, _ = _manifest(tmp_path)
+    providers = [
+        ProviderConfig(
+            name="deepseek", label="DeepSeek", model="deepseek-flash",
+            base_url="https://api.deepseek.com", key="sk-super-secret-key-1",
+            status_url="https://status.deepseek.com",
+        ),
+        {
+            "name": "custom", "model": "llama-3", "base_url": "http://127.0.0.1:8000",
+            "key": "sk-super-secret-key-2", "api_key": "sk-super-secret-key-3",
+        },
+    ]
+    report = evaluate_suite(
+        manifest, ScriptedModel, sandbox="host", trusted_host=True,
+        providers=providers,
+    )
+    assert "provenance" in report
+    prov = report["provenance"]
+    assert prov["providers"] == [
+        {"name": "deepseek", "model": "deepseek-flash", "base_url": "https://api.deepseek.com"},
+        {"name": "custom", "model": "llama-3", "base_url": "http://127.0.0.1:8000"},
+    ]
+    report_json = json.dumps(report)
+    assert "sk-super-secret-key-1" not in report_json
+    assert "sk-super-secret-key-2" not in report_json
+    assert "sk-super-secret-key-3" not in report_json
+    for p in prov["providers"]:
+        assert "key" not in p
+        assert "api_key" not in p
+
+
+def test_detect_app_commit_sha_helper(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from selfforge_agent.runtime.benchmark import _detect_app_commit_sha
+
+    # 1. Environment variable override with uppercase normalization
+    dummy_sha = "A" * 40
+    monkeypatch.setenv("SELFFORGE_APP_COMMIT_SHA", dummy_sha)
+    assert _detect_app_commit_sha() == dummy_sha.lower()
+
+    # 2. Invalid env var ignored
+    monkeypatch.setenv("SELFFORGE_APP_COMMIT_SHA", "not-a-valid-sha")
+    # Should fall back to git or None
+    fallback_sha = _detect_app_commit_sha()
+    assert fallback_sha is None or re.fullmatch(r"[0-9a-f]{40}", fallback_sha)
+
+    # 3. Completely outside git and no env var
+    monkeypatch.delenv("SELFFORGE_APP_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("SELFFORGE_COMMIT_SHA", raising=False)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError("no git")))
+    assert _detect_app_commit_sha() is None
+
+
+def test_detect_docker_version_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    from selfforge_agent.runtime.benchmark import _detect_docker_version
+
+    class DummyCompleted:
+        def __init__(self, stdout: str, returncode: int = 0) -> None:
+            self.stdout = stdout
+            self.returncode = returncode
+
+    # Server version success
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: DummyCompleted("29.8.0\n"))
+    assert _detect_docker_version() == "29.8.0"
+
+    # Fallback to --version regex parsing
+    def mock_run(cmd, **kw):
+        if cmd[1] == "version":
+            return DummyCompleted("", returncode=1)
+        return DummyCompleted("Docker version 28.0.1, build 068a01e\n", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    assert _detect_docker_version() == "28.0.1"
+
+    # Daemon unavailable / command error
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError("no docker")))
+    assert _detect_docker_version() is None
+
+
+def test_cli_eval_suite_outputs_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from selfforge_agent.cli import main
+
+    manifest, _ = _manifest(tmp_path)
+    output_file = tmp_path / "report.json"
+    captured_kwargs = {}
+
+    def mock_evaluate_suite(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return {
+            "version": 1,
+            "cases": 1,
+            "runs": 1,
+            "successes": 1,
+            "provenance": {
+                "commit_sha": "a" * 40,
+                "app_commit_sha": "a" * 40,
+                "python_version": "3.12.0",
+                "platform": "Linux",
+                "docker_version": "29.8.0",
+                "budgets": {"max_steps": 12, "time_budget": 300, "test_timeout": 60, "repeats": 1},
+                "providers": [{"name": "custom", "model": "test-model", "base_url": "http://test"}],
+                "started_at": "2026-11-05T00:00:00+00:00",
+                "completed_at": "2026-11-05T00:01:00+00:00",
+            },
+        }
+
+    monkeypatch.setattr("selfforge_agent.cli.evaluate_suite", mock_evaluate_suite)
+    monkeypatch.setenv("SELFFORGE_API_KEY", "dummy")
+
+    code = main([
+        "eval-suite",
+        "--manifest", str(manifest),
+        "--model", "test-model",
+        "--base-url", "http://test",
+        "--sandbox", "host",
+        "--trust-local",
+        "--output", str(output_file),
+    ])
+    assert code == 0
+    assert "providers" in captured_kwargs
+    assert captured_kwargs["providers"][0].name == "custom"
+    assert captured_kwargs["providers"][0].model == "test-model"
+    assert output_file.is_file()
+    payload = json.loads(output_file.read_text(encoding="utf-8"))
+    assert "provenance" in payload
+    assert payload["provenance"]["commit_sha"] == "a" * 40
+    assert payload["provenance"]["budgets"]["max_steps"] == 12
+
+
+def test_provenance_strips_url_credentials_and_records_start_identity(tmp_path, monkeypatch):
+    manifest, _ = _manifest(tmp_path)
+    monkeypatch.setenv("SELFFORGE_APP_COMMIT_SHA", "a" * 40)
+    def once(case, repeat, _factory, **_kwargs):
+        monkeypatch.setenv("SELFFORGE_APP_COMMIT_SHA", "b" * 40)
+        return BenchmarkOutcome(case.spec.id, repeat, True, "passed", "completed", ["app.py"],
+                                "passed", 1, 0, 0, 0, 0.1, "fixture", "scripted", 0, 0, 0)
+    monkeypatch.setattr(benchmark, "_run_once", once)
+    report = evaluate_suite(manifest, ScriptedModel, sandbox="host", trusted_host=True,
+        providers=[{"name": "custom", "model": "fixture", "base_url": "https://user:secret@api.example/v1?token=hidden#private"}])
+    assert report["provenance"]["app_commit_sha"] == "a" * 40
+    assert report["provenance"]["providers"][0]["base_url"] == "https://api.example/v1"
+    assert all(s not in json.dumps(report) for s in ("secret", "hidden", "private"))
+
+
+def test_installed_application_does_not_claim_working_directory_commit(tmp_path, monkeypatch):
+    monkeypatch.delenv("SELFFORGE_APP_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("SELFFORGE_COMMIT_SHA", raising=False)
+    monkeypatch.setattr(benchmark, "__file__", str(tmp_path / "site-packages/selfforge_agent/runtime/benchmark.py"))
+    assert benchmark._detect_app_commit_sha() is None

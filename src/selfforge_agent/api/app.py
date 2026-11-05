@@ -4,7 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 from threading import Event
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -51,6 +51,7 @@ from selfforge_agent.providers import (
 )
 from selfforge_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
 from selfforge_agent.runtime.agent import CodingAgent
+from selfforge_agent.runtime.benchmark_diff import diff_eval_reports, format_eval_diff
 from selfforge_agent.runtime.delivery import (
     CommitResult,
     DeliveryError,
@@ -61,6 +62,7 @@ from selfforge_agent.runtime.delivery import (
     revert_workspace,
 )
 from selfforge_agent.runtime.environment import (
+    audit_wheelhouse,
     detect_repository_environment,
     plan_environment_preparation,
 )
@@ -243,6 +245,18 @@ class EnvironmentPlanRequest(BaseModel):
     requirements_file: str | None = None
 
 
+class BenchmarkDiffRequest(BaseModel):
+    before_report: dict[str, Any]
+    after_report: dict[str, Any]
+    format: Literal["json", "markdown", "text"] = "json"
+class WheelhouseAuditRequest(BaseModel):
+    wheelhouse: str
+    repository: str | None = None
+    lock_file: str | None = None
+    requirements_file: str | None = None
+    timeout: float = 10.0
+
+
 class CodingWorkspaceRequest(BaseModel):
     repository: str = Field(min_length=1)
 
@@ -350,6 +364,35 @@ def sandbox_plan(request: EnvironmentPlanRequest, client: Request) -> dict:
             tag=request.tag,
             lock_file=Path(request.lock_file).expanduser().absolute() if request.lock_file else None,
             requirements_file=Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None,
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/benchmark/diff")
+def benchmark_diff(request: BenchmarkDiffRequest, client: Request) -> dict:
+    _require_local(client)
+    try:
+        diff = diff_eval_reports(request.before_report, request.after_report)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request.format != "json":
+        return {"diff": diff, "rendered": format_eval_diff(diff, format=request.format)}
+    return diff
+@app.post("/api/sandbox/audit")
+def sandbox_audit(request: WheelhouseAuditRequest, client: Request) -> dict:
+    _require_local(client)
+    repo = Path(request.repository).expanduser().absolute() if request.repository else None
+    wheelhouse = Path(request.wheelhouse).expanduser().absolute()
+    lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
+    requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
+    try:
+        return audit_wheelhouse(
+            repo,
+            wheelhouse=wheelhouse,
+            lock_file=lock_file,
+            requirements_file=requirements_file,
+            timeout=request.timeout,
         )
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

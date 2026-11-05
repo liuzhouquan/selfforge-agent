@@ -15,6 +15,11 @@ from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
+from selfforge_agent.runtime.benchmark_diff import (
+    diff_eval_reports,
+    format_eval_diff,
+    read_eval_report,
+)
 from selfforge_agent.runtime.delivery import (
     DeliveryError,
     commit_workspace,
@@ -22,6 +27,7 @@ from selfforge_agent.runtime.delivery import (
     revert_workspace,
 )
 from selfforge_agent.runtime.environment import (
+    audit_wheelhouse,
     detect_repository_environment,
     export_hash_locked_requirements,
     plan_environment_preparation,
@@ -135,9 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
     sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
-    sandbox.add_argument("action", choices=["build", "detect", "export-lock", "plan"])
+    sandbox.add_argument("action", choices=["audit", "build", "detect", "export-lock", "plan"])
     sandbox.add_argument("--repo", type=Path, default=Path.cwd())
-    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock, poetry.lock, or Pipfile.lock file for export-lock action")
+    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock, poetry.lock, Pipfile.lock, or requirements.lock file for export-lock action")
     sandbox.add_argument("--requirements", type=Path)
     sandbox.add_argument("--wheelhouse", type=Path)
     sandbox.add_argument("--tag")
@@ -217,6 +223,12 @@ def main(argv: list[str] | None = None) -> int:
     validation.add_argument("--image", default="selfforge-agent-sandbox:latest")
     validation.add_argument("--test-timeout", type=float, default=60)
     validation.add_argument("--output", type=Path)
+    eval_diff = subcommands.add_parser("eval-diff", help="Compare two benchmark evaluation reports and report regressions")
+    eval_diff.add_argument("before", type=Path, help="Path to baseline evaluation summary JSON")
+    eval_diff.add_argument("after", type=Path, help="Path to comparison evaluation summary JSON")
+    eval_diff.add_argument("--format", choices=["json", "markdown", "text"], default="markdown", help="Output format")
+    eval_diff.add_argument("--output", type=Path, help="Write diff report to file")
+    eval_diff.add_argument("--fail-on-regression", action="store_true", help="Exit code 1 if any case regressed or success rate dropped")
     review = subcommands.add_parser("review", help="Review a local Git comparison")
     review.add_argument("--repo", type=Path, required=True)
     review.add_argument("--base", required=True)
@@ -266,6 +278,26 @@ def main(argv: list[str] | None = None) -> int:
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
     args = parser.parse_args(argv)
     if args.command == "sandbox":
+        if args.action == "audit":
+            if not args.wheelhouse:
+                parser.error("sandbox audit requires --wheelhouse")
+            try:
+                report = audit_wheelhouse(
+                    args.repo,
+                    wheelhouse=args.wheelhouse,
+                    lock_file=args.lock,
+                    requirements_file=args.requirements,
+                    timeout=args.timeout,
+                )
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+            if args.output:
+                args.output.write_text(rendered, encoding="utf-8")
+                print(f"Wheelhouse audit report written to {args.output}")
+            else:
+                print(rendered, end="")
+            return 0 if report["ready"] else 1
         if args.action == "detect":
             try:
                 env = detect_repository_environment(args.repo)
@@ -335,6 +367,33 @@ def main(argv: list[str] | None = None) -> int:
         if args.output:
             args.output.write_text(rendered, encoding="utf-8")
         print(rendered, end="")
+        return 0
+    if args.command == "eval-diff":
+        if args.output and any(args.output.resolve() == p.resolve() or (args.output.exists() and p.exists() and args.output.samefile(p)) for p in (args.before, args.after)):
+            parser.error("Diff output must not overwrite an input report")
+        if not args.before.is_file():
+            parser.error(f"Baseline report file does not exist: {args.before}")
+        if not args.after.is_file():
+            parser.error(f"Comparison report file does not exist: {args.after}")
+        try:
+            before_data = read_eval_report(args.before)
+            after_data = read_eval_report(args.after)
+            diff = diff_eval_reports(before_data, after_data)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        if args.format == "json":
+            rendered = json.dumps(diff, ensure_ascii=False, indent=2) + "\n"
+        else:
+            rendered = format_eval_diff(diff, format=args.format)
+        if args.output:
+            args.output.write_text(rendered, encoding="utf-8")
+        else:
+            print(rendered, end="")
+        if args.fail_on_regression:
+            if not diff["comparable"]:
+                return 2
+            has_regressed = len(diff.get("regressed", [])) > 0 or diff["summary"]["success_rate"]["delta"] < 0
+            return 1 if has_regressed else 0
         return 0
     if args.command == "code":
         return _run_code(args, parser)
@@ -510,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
                 repeats=args.repeats, sandbox=args.sandbox, trusted_host=args.trust_local,
                 image=args.image, max_steps=args.max_steps, time_budget=args.time_budget,
                 test_timeout=args.test_timeout, failure_artifacts=args.failure_artifacts,
+                providers=providers,
             )
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
