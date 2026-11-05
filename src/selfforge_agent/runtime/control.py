@@ -1,8 +1,89 @@
-"""Transient budget feedback for the shared Coding loop."""
+"""Transient budget feedback and tool loop detection for the shared Coding loop."""
+
+import json
+from typing import Any
+
+READ_ONLY_TOOLS = frozenset({"read_file", "search_code"})
+WRITE_TOOLS = frozenset({"edit_file", "bash"})
 
 
-def budget_notice(*, step: int, max_steps: int, remaining_seconds: float,
-                  tests_passed: bool) -> dict:
+def _canonical_args(args: Any) -> tuple[str, dict[str, Any]]:
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+            if isinstance(parsed, dict):
+                return json.dumps(parsed, sort_keys=True), parsed
+        except (ValueError, TypeError):
+            pass
+        return args, {}
+    if isinstance(args, dict):
+        return json.dumps(args, sort_keys=True), args
+    return str(args), {}
+
+
+def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str, Any] | None:
+    """Detect repeated identical read-only tool calls in conversation history.
+
+    Scans the conversation history in chronological order. Whenever a write tool
+    (e.g. edit_file or bash) is called, read-only tracking resets.
+    If the most recent assistant tool call repeats an identical read-only invocation
+    (same tool name and canonical arguments) at least `min_repeats` times in the
+    current unedited phase, returns a dictionary describing the loop.
+    """
+    if not messages:
+        return None
+
+    counts: dict[tuple[str, str], int] = {}
+    last_assistant_calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    for msg in messages:
+        role = msg.get("role")
+        if role != "assistant":
+            continue
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            continue
+
+        turn_calls: list[tuple[str, str, dict[str, Any]]] = []
+        for call in calls:
+            fn = call.get("function") or {}
+            name = fn.get("name", "")
+            raw_args = fn.get("arguments", {})
+            canon_str, parsed_dict = _canonical_args(raw_args)
+
+            if name in WRITE_TOOLS:
+                counts.clear()
+            elif name in READ_ONLY_TOOLS:
+                key = (name, canon_str)
+                counts[key] = counts.get(key, 0) + 1
+                turn_calls.append((name, canon_str, parsed_dict))
+
+        if turn_calls:
+            last_assistant_calls = turn_calls
+
+    if not last_assistant_calls:
+        return None
+
+    for name, canon_str, parsed_dict in last_assistant_calls:
+        count = counts.get((name, canon_str), 0)
+        if count >= min_repeats:
+            return {
+                "tool": name,
+                "count": count,
+                "arguments": parsed_dict,
+            }
+
+    return None
+
+
+def budget_notice(
+    *,
+    step: int,
+    max_steps: int,
+    remaining_seconds: float,
+    tests_passed: bool,
+    tool_loop: dict | None = None,
+) -> dict:
     """Describe actual runtime state, without adding turns or granting evidence."""
     remaining_turns = max_steps - step + 1
     content = (
@@ -13,6 +94,14 @@ def budget_notice(*, step: int, max_steps: int, remaining_seconds: float,
         + ("passed." if tests_passed else "missing.")
         + " A successful bash command is not run_tests verification.\n"
     )
+    if tool_loop:
+        tool_name = tool_loop.get("tool", "read-only")
+        count = tool_loop.get("count", 2)
+        content += (
+            f"Repeated read-only tool call detected: you have called '{tool_name}' "
+            f"with identical arguments {count} times without intervening edits. "
+            "Avoid duplicate lookups and proceed with required edits (edit_file) or verification (run_tests).\n"
+        )
     if remaining_turns == 1:
         if tests_passed:
             content += (
