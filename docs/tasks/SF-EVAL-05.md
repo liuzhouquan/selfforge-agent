@@ -1,11 +1,11 @@
 # SF-EVAL-05：多轮评测报告回归对比分析与差异报告
 
-- 状态：In Progress
+- 状态：In Review
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/evaluation-report-diff`
 - 依赖：无（基于已合并的 PR #41 / main）
-- PR：待创建
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/46
 
 ## 目标与范围
 
