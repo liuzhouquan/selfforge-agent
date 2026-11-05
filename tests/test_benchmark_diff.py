@@ -8,7 +8,7 @@ from selfforge_agent.runtime.benchmark_diff import diff_eval_reports, format_eva
 
 def _make_report(
     *,
-    manifest_sha: str = "3b4aa3fa",
+    manifest_sha: str = "a" * 64,
     cases: int = 2,
     repeats: int = 2,
     by_case: dict[str, dict] | None = None,
@@ -21,14 +21,14 @@ def _make_report(
             "case1": {"successes": 2, "runs": 2},
             "case2": {"successes": 1, "runs": 2},
         }
-    if failure_reasons is None:
-        failure_reasons = {"agent_max_steps": 1}
     if tokens is None:
         tokens = {"prompt": 1000, "completion": 200, "total": 1200}
 
     runs = sum(c["runs"] for c in by_case.values())
     successes = sum(c["successes"] for c in by_case.values())
     rate = successes / runs if runs else 0.0
+    if failure_reasons is None:
+        failure_reasons = {"agent_max_steps": runs-successes} if runs > successes else {}
 
     return {
         "version": 1,
@@ -96,11 +96,11 @@ def test_diff_eval_reports_regressed() -> None:
 
 def test_diff_eval_reports_manifest_mismatch_and_case_diffs() -> None:
     rep_a = _make_report(
-        manifest_sha="sha_a",
+        manifest_sha="a" * 64,
         by_case={"case1": {"successes": 1, "runs": 1}, "case_old": {"successes": 1, "runs": 1}},
     )
     rep_b = _make_report(
-        manifest_sha="sha_b",
+        manifest_sha="b" * 64,
         by_case={"case1": {"successes": 1, "runs": 1}, "case_new": {"successes": 1, "runs": 1}},
     )
 
@@ -112,9 +112,11 @@ def test_diff_eval_reports_manifest_mismatch_and_case_diffs() -> None:
 
 def test_diff_eval_reports_failure_reasons_matrix() -> None:
     rep_a = _make_report(
+        by_case={"case1": {"successes": 0, "runs": 5}},
         failure_reasons={"agent_max_steps": 3, "agent_timed_out": 2},
     )
     rep_b = _make_report(
+        by_case={"case1": {"successes": 0, "runs": 2}},
         failure_reasons={"agent_max_steps": 1, "holdout_assertion_failed": 1},
     )
 
@@ -194,3 +196,44 @@ def test_api_benchmark_diff_endpoint() -> None:
     assert "summary" in data
     assert data["manifest_mismatch"] is False
 
+
+
+def test_real_schema_metrics_and_small_regression():
+    before = _make_report(by_case={"x": {"runs": 100000, "successes": 1}})
+    after = _make_report(by_case={"x": {"runs": 100000, "successes": 0}})
+    for report, duration, tokens in [(before, 12, 10), (after, 15, 20)]:
+        report.pop("duration_seconds"); report.pop("tokens")
+        report.update(total_duration_seconds=duration, prompt_tokens=tokens, completion_tokens=2, total_tokens=tokens+2)
+    diff = diff_eval_reports(before, after)
+    assert diff["summary"]["duration_seconds"]["delta"] == 3
+    assert diff["summary"]["tokens"]["total"]["delta"] == 10
+    assert diff["regressed"][0]["case"] == "x"
+    assert diff["summary"]["success_rate"]["delta"] < 0
+
+
+def test_invalid_reports_are_client_errors():
+    from fastapi.testclient import TestClient
+
+    from selfforge_agent.api.app import app
+    for bad in [{}, {**_make_report(), "by_case": []}, {**_make_report(), "successes": 99},
+                {**_make_report(), "success_rate": float("inf")}]:
+        # inf is tested at the pure boundary; JSON itself disallows it.
+        if bad.get("success_rate") == float("inf"):
+            import pytest
+            with pytest.raises(ValueError): diff_eval_reports(bad, _make_report())
+            continue
+        response = TestClient(app, raise_server_exceptions=False).post("/api/benchmark/diff", json={"before_report":bad,"after_report":_make_report()})
+        assert response.status_code == 400
+
+
+def test_tiny_regression_fails_cli_without_mutating_inputs(tmp_path):
+    from selfforge_agent.cli import main
+    before = _make_report(by_case={"x": {"runs": 100000, "successes": 1}})
+    after = _make_report(by_case={"x": {"runs": 100000, "successes": 0}})
+    left, right = tmp_path / "before.json", tmp_path / "after.json"
+    left.write_text(json.dumps(before)); right.write_text(json.dumps(after))
+    original = left.read_bytes()
+    assert main(["eval-diff", str(left), str(right), "--fail-on-regression"]) == 1
+    import pytest
+    with pytest.raises(SystemExit): main(["eval-diff", str(left), str(right), "--output", str(left)])
+    assert left.read_bytes() == original

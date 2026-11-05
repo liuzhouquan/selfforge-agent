@@ -15,7 +15,11 @@ from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
-from selfforge_agent.runtime.benchmark_diff import diff_eval_reports, format_eval_diff
+from selfforge_agent.runtime.benchmark_diff import (
+    diff_eval_reports,
+    format_eval_diff,
+    read_eval_report,
+)
 from selfforge_agent.runtime.delivery import (
     DeliveryError,
     commit_workspace,
@@ -362,13 +366,15 @@ def main(argv: list[str] | None = None) -> int:
         print(rendered, end="")
         return 0
     if args.command == "eval-diff":
+        if args.output and any(args.output.resolve() == p.resolve() or (args.output.exists() and p.exists() and args.output.samefile(p)) for p in (args.before, args.after)):
+            parser.error("Diff output must not overwrite an input report")
         if not args.before.is_file():
             parser.error(f"Baseline report file does not exist: {args.before}")
         if not args.after.is_file():
             parser.error(f"Comparison report file does not exist: {args.after}")
         try:
-            before_data = json.loads(args.before.read_text(encoding="utf-8"))
-            after_data = json.loads(args.after.read_text(encoding="utf-8"))
+            before_data = read_eval_report(args.before)
+            after_data = read_eval_report(args.after)
             diff = diff_eval_reports(before_data, after_data)
         except (ValueError, OSError) as exc:
             parser.error(str(exc))
@@ -381,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(rendered, end="")
         if args.fail_on_regression:
+            if not diff["comparable"]:
+                return 2
             has_regressed = len(diff.get("regressed", [])) > 0 or diff["summary"]["success_rate"]["delta"] < 0
             return 1 if has_regressed else 0
         return 0

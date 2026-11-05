@@ -91,3 +91,5 @@
 ## Handoff
 
 - 交付状态：本地实现与全量测试完成，准备提交并创建 PR。
+
+Review: comparisons read real total_duration_seconds/top-level token metrics and retain legacy aliases. Counts and identities are validated; rates use exact count fractions before formatting. Missing SHA/empty/inconsistent reports are errors; incompatible manifests cannot pass --fail-on-regression. Output cannot overwrite either input. Comparisons are descriptive differences, not statistical or causal improvement proof, and include provenance mismatch information. Synthetic fixtures now use valid full hashes and reconciled counts; original assertions remain.
