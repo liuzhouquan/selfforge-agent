@@ -1,11 +1,11 @@
 # SF-WS-02：工作区孤立 Worktree 状态审计与安全批量清理
 
-- 状态：In Progress
+- 状态：In Review
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/workspace-prune-stale`
 - 依赖：无（基于已合并的 PR #41 / main）
-- PR：待创建
+- PR：[#47](https://github.com/liuzhouquan/selfforge-agent/pull/47)
 
 ## 目标与范围
 
@@ -86,5 +86,6 @@
 
 ## Handoff
 
-- 交付状态：实施与验证完成，准备提交并推送 PR。
+- 交付状态：实施与全量验证已完成，PR [#47](https://github.com/liuzhouquan/selfforge-agent/pull/47) 已创建等待审查合并。
+- 当前分支：`feat/workspace-prune-stale`。主分支 `main` 保持纯净。
 
