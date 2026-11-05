@@ -17,6 +17,7 @@
 | SF-RUN-03 | Complete | 中断、超时与异常下保留已完成模型轮次数 | PR #39；当前模型调用未返回不计入，工具阶段异常保留当前轮 |
 | SF-ENV-02 | Complete | 有限 Poetry/uv 锁文件哈希识别与离线导出 | PR #40；条件标记和版本分叉拒绝，VCS/本地源排除范围见依赖文档 |
 | SF-ENV-03 | Complete | 有限 Pipfile.lock 哈希识别与离线导出 | PR #41；default/develop 严格校验，条件标记拒绝，不替代 Pipenv 解析器 |
+| SF-ENV-05 | In Progress | 离线依赖 Wheelhouse 完整性审计与就绪度诊断 | 详见 [SF-ENV-05](./tasks/SF-ENV-05.md)；只读预检、缺失与未知哈希分类诊断、CLI/API 端点 |
 | SF-EVAL-04 | Ready | 在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置 | 单独补来源元数据与相关回归；不重跑或改写旧 53/60 结果 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务

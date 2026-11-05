@@ -6,6 +6,7 @@ import shlex
 import time
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -16,8 +17,11 @@ from selfforge_agent.runtime.execution import (
     resolve_docker_image,
 )
 from selfforge_agent.runtime.images import (
+    MAX_CONTEXT_BYTES,
     MAX_LOCK_BYTES,
+    MAX_WHEEL_BYTES,
     _read,
+    _remaining,
     parse_locked_requirements,
     read_locked_wheels,
     validate_image_tag,
@@ -303,4 +307,171 @@ def plan_environment_preparation(
             "Hash-locked wheels required (--require-hashes)",
             "No arbitrary repository build scripts or hooks executed",
         ],
+    }
+
+
+def audit_wheelhouse(
+    repo: Path | None = None,
+    *,
+    wheelhouse: Path,
+    lock_file: Path | None = None,
+    requirements_file: Path | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Audit a wheelhouse against locked requirements and report readiness and discrepancies."""
+    wheelhouse = wheelhouse.expanduser().absolute()
+    if not wheelhouse.exists():
+        raise ValueError(f"Wheelhouse directory does not exist: {wheelhouse}")
+    if wheelhouse.is_symlink() or not wheelhouse.is_dir():
+        raise ValueError("Wheelhouse must be a directory, not a symlink")
+
+    req_text = ""
+    req_source_path: Path | None = None
+    if requirements_file is not None:
+        p = requirements_file.expanduser().absolute()
+        if not p.is_file():
+            raise ValueError(f"Requirements file does not exist: {requirements_file}")
+        req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
+        req_source_path = p
+    elif lock_file is not None:
+        p = lock_file.expanduser().absolute()
+        if not p.is_file():
+            raise ValueError(f"Lock file does not exist: {lock_file}")
+        contents = _read(p, 5 * 1024 * 1024)
+        is_toml_or_json = (
+            p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
+            or p.suffix in {".toml", ".json"}
+            or b"[[package]]" in contents
+            or contents.lstrip().startswith(b"{")
+        )
+        if is_toml_or_json:
+            req_text = export_hash_locked_requirements(p)
+        else:
+            req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
+        req_source_path = p
+    elif repo is not None:
+        repo = repo.expanduser().absolute()
+        if not repo.is_dir():
+            raise ValueError(f"Repository directory does not exist: {repo}")
+        uv_lock = repo / "uv.lock"
+        poetry_lock = repo / "poetry.lock"
+        pipfile_lock = repo / "Pipfile.lock"
+        req_lock = repo / "requirements.lock"
+        if uv_lock.is_file():
+            req_text = export_hash_locked_requirements(uv_lock)
+            req_source_path = uv_lock
+        elif poetry_lock.is_file():
+            req_text = export_hash_locked_requirements(poetry_lock)
+            req_source_path = poetry_lock
+        elif pipfile_lock.is_file():
+            req_text = export_hash_locked_requirements(pipfile_lock)
+            req_source_path = pipfile_lock
+        elif req_lock.is_file():
+            req_text = _read(req_lock, MAX_LOCK_BYTES).decode("utf-8")
+            req_source_path = req_lock
+        else:
+            raise ValueError(
+                "No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository"
+            )
+    else:
+        raise ValueError("Either repo, lock_file, or requirements_file must be specified")
+
+    lock_bytes = req_text.encode("utf-8")
+    packages = parse_locked_requirements(lock_bytes)
+
+    deadline = time.monotonic() + timeout
+    allowed_hashes: dict[str, str] = {}
+    for pkg in packages:
+        for h in pkg["hashes"]:
+            allowed_hashes[h.lower()] = pkg["name"]
+
+    matched_wheels: list[dict[str, Any]] = []
+    mismatched_wheels: list[dict[str, Any]] = []
+    unsupported_wheels: list[dict[str, Any]] = []
+
+    total_bytes = 0
+    wheel_paths = sorted(wheelhouse.glob("*.whl"))
+    if len(wheel_paths) > 200:
+        raise ValueError("Wheelhouse file count limit exceeded")
+
+    for path in wheel_paths:
+        _remaining(deadline)
+        if path.is_symlink():
+            unsupported_wheels.append({"filename": path.name, "reason": "symlink"})
+            continue
+        if not path.is_file():
+            unsupported_wheels.append({"filename": path.name, "reason": "not a regular file"})
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.+!-]+\.whl", path.name):
+            unsupported_wheels.append({"filename": path.name, "reason": "unsupported wheel filename"})
+            continue
+
+        try:
+            data = _read(path, min(MAX_WHEEL_BYTES, MAX_CONTEXT_BYTES - total_bytes))
+        except ValueError as exc:
+            unsupported_wheels.append({"filename": path.name, "reason": str(exc)})
+            continue
+
+        total_bytes += len(data)
+        digest = hashlib.sha256(data).hexdigest()
+        digest_key = "sha256:" + digest
+
+        if digest_key in allowed_hashes:
+            matched_wheels.append({
+                "filename": path.name,
+                "package": allowed_hashes[digest_key],
+                "hash": digest_key,
+                "size": len(data),
+            })
+        else:
+            mismatched_wheels.append({
+                "filename": path.name,
+                "hash": digest_key,
+                "size": len(data),
+            })
+
+    matched_by_pkg: dict[str, list[dict[str, Any]]] = {}
+    for m in matched_wheels:
+        matched_by_pkg.setdefault(m["package"].lower(), []).append(m)
+
+    matched_packages: list[dict[str, Any]] = []
+    missing_packages: list[dict[str, Any]] = []
+    for pkg in packages:
+        canonical = pkg["name"].lower()
+        if canonical in matched_by_pkg:
+            matched_packages.append({
+                "name": pkg["name"],
+                "version": pkg["version"],
+                "matched_wheels": [m["filename"] for m in matched_by_pkg[canonical]],
+                "matched_hashes": [m["hash"] for m in matched_by_pkg[canonical]],
+            })
+        else:
+            missing_packages.append({
+                "name": pkg["name"],
+                "version": pkg["version"],
+                "hashes": pkg["hashes"],
+            })
+
+    ready = (
+        len(missing_packages) == 0
+        and len(mismatched_wheels) == 0
+        and len(unsupported_wheels) == 0
+        and len(packages) > 0
+    )
+
+    return {
+        "version": 1,
+        "wheelhouse": str(wheelhouse),
+        "lock_source": str(req_source_path),
+        "ready": ready,
+        "package_count": len(packages),
+        "matched_count": len(matched_packages),
+        "missing_count": len(missing_packages),
+        "mismatched_count": len(mismatched_wheels),
+        "unsupported_count": len(unsupported_wheels),
+        "matched_packages": matched_packages,
+        "missing_packages": missing_packages,
+        "mismatched_wheels": mismatched_wheels,
+        "unsupported_wheels": unsupported_wheels,
+        "total_wheel_bytes": total_bytes,
     }
