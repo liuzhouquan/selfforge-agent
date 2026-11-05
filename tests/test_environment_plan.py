@@ -381,3 +381,41 @@ def test_plan_environment_with_explicit_pipfile_lock(tmp_path: Path) -> None:
     assert plan["version"] == 1
     assert plan["package_count"] == 1
     assert "custom_pipfile.lock" in plan["export_command"]
+
+
+def test_plan_environment_with_requirements_lock(tmp_path: Path) -> None:
+    sample_req_lock = (
+        "# pip-compile generated\n"
+        "click==8.1.7 \\\n"
+        "    --hash=sha256:2222222222222222222222222222222222222222222222222222222222222222\n"
+        "six==1.16.0 \\\n"
+        "    --hash=sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2\n"
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    lock = repo / "requirements.lock"
+    lock.write_text(sample_req_lock, encoding="utf-8")
+
+    plan = plan_environment_preparation(repo)
+    assert plan["version"] == 1
+    assert plan["package_count"] == 2
+    assert plan["export_command"] is None
+    assert "-r" in plan["download_command"]
+    assert str(lock) in plan["download_command"]
+
+
+def test_plan_environment_with_explicit_requirements_lock(tmp_path: Path) -> None:
+    sample_req_lock = (
+        "six==1.16.0 --hash=sha256:8abb2f1d86890a2dfb98308812e19c507c8d3302cc51453344d3d4173ad61dd2\n"
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    lock = repo / "pinned_dependencies.txt"
+    lock.write_text(sample_req_lock, encoding="utf-8")
+
+    plan = plan_environment_preparation(repo, lock_file=lock)
+    assert plan["version"] == 1
+    assert plan["package_count"] == 1
+    assert plan["export_command"] is None
+    assert "-r" in plan["download_command"]
+    assert str(lock) in plan["download_command"]

@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     sandbox = subcommands.add_parser("sandbox", help="Prepare an offline dependency image or detect environment")
     sandbox.add_argument("action", choices=["audit", "build", "detect", "export-lock", "plan"])
     sandbox.add_argument("--repo", type=Path, default=Path.cwd())
-    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock, poetry.lock, or Pipfile.lock file for export-lock action")
+    sandbox.add_argument("--lock", type=Path, help="Path to uv.lock, poetry.lock, Pipfile.lock, or requirements.lock file for export-lock action")
     sandbox.add_argument("--requirements", type=Path)
     sandbox.add_argument("--wheelhouse", type=Path)
     sandbox.add_argument("--tag")
@@ -487,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
                 repeats=args.repeats, sandbox=args.sandbox, trusted_host=args.trust_local,
                 image=args.image, max_steps=args.max_steps, time_budget=args.time_budget,
                 test_timeout=args.test_timeout, failure_artifacts=args.failure_artifacts,
+                providers=providers,
             )
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
