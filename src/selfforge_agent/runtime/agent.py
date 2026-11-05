@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from selfforge_agent.runtime.context import ContextManager
-from selfforge_agent.runtime.control import budget_notice
+from selfforge_agent.runtime.control import budget_notice, detect_tool_loop
 from selfforge_agent.runtime.environment import bind_environment
 from selfforge_agent.runtime.fingerprint import WorkspaceSnapshotError, workspace_fingerprint
 from selfforge_agent.runtime.model import (
@@ -158,8 +158,10 @@ class CodingAgent:
                 if remaining <= 0:
                     return self._finish("timed_out", "", completed_steps, tools_used)
                 final_only = step == self.max_steps and tests_passed
+                loop_info = None if final_only else detect_tool_loop(messages)
                 notice = budget_notice(step=step, max_steps=self.max_steps,
-                                       remaining_seconds=remaining, tests_passed=tests_passed)
+                                       remaining_seconds=remaining, tests_passed=tests_passed,
+                                       tool_loop=loop_info)
                 messages, compacted = self.context.compact(
                     messages, reserve_tokens=self.context.estimate([notice]), preserve_recent_turns=2)
                 if compacted:
@@ -178,7 +180,8 @@ class CodingAgent:
                 self.session.trace("turn_budget", step=step, max_steps=self.max_steps,
                                    remaining_turns=self.max_steps - step + 1,
                                    remaining_seconds=round(remaining, 3),
-                                   verification_passed=tests_passed, final_only=final_only)
+                                   verification_passed=tests_passed, final_only=final_only,
+                                   tool_loop=loop_info["tool"] if loop_info else None)
                 started = time.monotonic()
                 turn = self.model.complete(request_messages,
                                            [] if final_only else self.tools.schemas(),

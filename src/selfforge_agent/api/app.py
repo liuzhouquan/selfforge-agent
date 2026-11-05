@@ -62,6 +62,7 @@ from selfforge_agent.runtime.delivery import (
     revert_workspace,
 )
 from selfforge_agent.runtime.environment import (
+    audit_wheelhouse,
     detect_repository_environment,
     plan_environment_preparation,
 )
@@ -248,6 +249,12 @@ class BenchmarkDiffRequest(BaseModel):
     before_report: dict[str, Any]
     after_report: dict[str, Any]
     format: Literal["json", "markdown", "text"] = "json"
+class WheelhouseAuditRequest(BaseModel):
+    wheelhouse: str
+    repository: str | None = None
+    lock_file: str | None = None
+    requirements_file: str | None = None
+    timeout: float = 10.0
 
 
 class CodingWorkspaceRequest(BaseModel):
@@ -347,6 +354,23 @@ def benchmark_diff(request: BenchmarkDiffRequest, client: Request) -> dict:
     if request.format != "json":
         return {"diff": diff, "rendered": format_eval_diff(diff, format=request.format)}
     return diff
+@app.post("/api/sandbox/audit")
+def sandbox_audit(request: WheelhouseAuditRequest, client: Request) -> dict:
+    _require_local(client)
+    repo = Path(request.repository).expanduser().absolute() if request.repository else None
+    wheelhouse = Path(request.wheelhouse).expanduser().absolute()
+    lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
+    requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
+    try:
+        return audit_wheelhouse(
+            repo,
+            wheelhouse=wheelhouse,
+            lock_file=lock_file,
+            requirements_file=requirements_file,
+            timeout=request.timeout,
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/config", response_model=AppConfig)

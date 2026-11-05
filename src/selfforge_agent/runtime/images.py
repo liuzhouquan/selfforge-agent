@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import os
 import re
 import subprocess
 import tarfile
@@ -62,30 +63,59 @@ def parse_locked_requirements(lock: bytes) -> list[dict]:
     return packages
 
 
-def read_locked_wheels(lock: bytes, packages: list[dict], wheelhouse: Path | None,
-                       deadline: float) -> dict[str, bytes]:
-    """Read bounded, hash-allowed inputs; missing wheels are reported by the caller."""
-    if wheelhouse is None:
-        return {}
+def scan_wheelhouse(lock: bytes, packages: list[dict], wheelhouse: Path,
+                    deadline: float, *, diagnose: bool = False) -> tuple[dict, list, list]:
+    """Share byte/count/deadline limits between builder, plan and diagnostics."""
     if wheelhouse.is_symlink() or not wheelhouse.is_dir():
         raise ValueError("Wheelhouse must be a directory, not a symlink")
-    allowed = {h.removeprefix("sha256:") for pkg in packages for h in pkg["hashes"]}
-    wheels = {}
+    paths = []
+    with os.scandir(wheelhouse) as entries:
+        for count, entry in enumerate(entries, 1):
+            _remaining(deadline)
+            if count > 1000:
+                raise ValueError("Wheelhouse directory entry limit exceeded")
+            if entry.name.endswith(".whl"):
+                paths.append(wheelhouse / entry.name)
+                if len(paths) > 200:
+                    raise ValueError("Wheelhouse file count limit exceeded")
+    allowed = {h for pkg in packages for h in pkg["hashes"]}
+    wheels, unsupported, mismatched = {}, [], []
     total = len(lock)
-    for path in wheelhouse.glob("*.whl"):
+    for path in sorted(paths):
         _remaining(deadline)
-        if len(wheels) >= 200:
-            raise ValueError("Wheelhouse file count limit exceeded")
-        if not re.fullmatch(r"[A-Za-z0-9_.+!-]+\.whl", path.name):
-            raise ValueError("Unsupported wheel filename")
+        reason = None
+        if path.is_symlink() or not path.is_file():
+            reason = "Dependency inputs must be regular files, not symlinks"
+        elif not re.fullmatch(r"[A-Za-z0-9_.+!-]+\.whl", path.name):
+            reason = "Unsupported wheel filename"
+        elif path.stat().st_size > min(MAX_WHEEL_BYTES, MAX_CONTEXT_BYTES - total):
+            reason = "Dependency input size limit exceeded"
+        if reason:
+            if not diagnose:
+                raise ValueError(reason)
+            unsupported.append({"filename": path.name, "reason": reason})
+            continue
+        # A race/read error aborts the scan; it cannot consume bytes and then
+        # silently reset the allowance for another file.
         data = _read(path, min(MAX_WHEEL_BYTES, MAX_CONTEXT_BYTES - total))
-        digest = hashlib.sha256(data).hexdigest()
-        if digest not in allowed:
-            raise ValueError(f"Wheel hash is absent from lock: {path.name}")
-        wheels[path.name] = data
         total += len(data)
+        _remaining(deadline)
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        _remaining(deadline)
+        if digest not in allowed:
+            if not diagnose:
+                raise ValueError(f"Wheel hash is absent from lock: {path.name}")
+            mismatched.append({"filename": path.name, "hash": digest, "size": len(data)})
+        wheels[path.name] = data
     _remaining(deadline)
-    return wheels
+    return wheels, unsupported, mismatched
+
+
+def read_locked_wheels(lock: bytes, packages: list[dict], wheelhouse: Path | None,
+                       deadline: float) -> dict[str, bytes]:
+    if wheelhouse is None:
+        return {}
+    return scan_wheelhouse(lock, packages, wheelhouse, deadline)[0]
 
 
 def _inputs(requirements: Path, wheelhouse: Path, deadline: float) -> tuple[bytes, dict[str, bytes]]:

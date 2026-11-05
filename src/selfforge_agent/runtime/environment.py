@@ -1,11 +1,13 @@
 """Bind Coding sessions to one execution mode and immutable Docker image, and detect repository environment."""
 
 import hashlib
+import math
 import re
 import shlex
 import time
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,11 +20,17 @@ from selfforge_agent.runtime.execution import (
 from selfforge_agent.runtime.images import (
     MAX_LOCK_BYTES,
     _read,
+    _remaining,
     parse_locked_requirements,
     read_locked_wheels,
+    scan_wheelhouse,
     validate_image_tag,
 )
-from selfforge_agent.runtime.lockfiles import export_pipfile_requirements, export_toml_requirements
+from selfforge_agent.runtime.lockfiles import (
+    export_pipfile_requirements,
+    export_requirements_txt,
+    export_toml_requirements,
+)
 from selfforge_agent.runtime.session import SessionStore
 
 
@@ -152,7 +160,7 @@ def bind_environment(executor: Executor | None, session: SessionStore, *,
 
 
 def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = None) -> str:
-    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from a uv.lock, poetry.lock or Pipfile.lock file."""
+    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from uv.lock, poetry.lock, Pipfile.lock, or requirements.lock."""
     if not lock_path.is_file():
         raise ValueError(f"Lock file does not exist: {lock_path}")
     if lock_path.stat().st_size > 5 * 1024 * 1024:
@@ -161,10 +169,47 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     content = _read(lock_path, 5 * 1024 * 1024)
     is_json = (lock_path.name == "Pipfile.lock" or lock_path.suffix == ".json"
                or content.lstrip().startswith(b"{"))
-    result = export_pipfile_requirements(content) if is_json else export_toml_requirements(content)
+    is_req = (lock_path.name in ("requirements.lock", "requirements.txt")
+              or lock_path.suffix == ".txt"
+              or ("--hash=" in content.decode("utf-8", errors="ignore") and b"[[package]]" not in content))
+    if content.lstrip().startswith(b"{") or (is_json and not is_req):
+        result = export_pipfile_requirements(content)
+    elif is_req:
+        result = export_requirements_txt(content)
+    else:
+        result = export_toml_requirements(content)
     if output_path is not None:
         output_path.write_text(result, encoding="utf-8")
     return result
+
+
+def load_requirement_profile(repository: Path | None = None, *, lock_file: Path | None = None,
+                             requirements_file: Path | None = None) -> tuple[str, Path, bool]:
+    """Use one bounded profile loader for planning, auditing and explicit exports."""
+    forced_flat = requirements_file is not None
+    path = requirements_file or lock_file
+    if path is None:
+        if repository is None:
+            raise ValueError("Either repo, lock_file, or requirements_file must be specified")
+        path = next((repository / n for n in ("uv.lock", "poetry.lock", "Pipfile.lock", "requirements.lock")
+                     if (repository / n).is_file()), None)
+        if path is None:
+            raise ValueError("No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository")
+    path = path.expanduser().absolute()
+    contents = _read(path, MAX_LOCK_BYTES if forced_flat else 5 * 1024 * 1024)
+    structured = not forced_flat and (path.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
+                  or path.suffix in {".toml", ".json"} or b"[[package]]" in contents
+                  or contents.lstrip().startswith(b"{"))
+    if structured:
+        return export_hash_locked_requirements(path), path, True
+    # An already buildable file can be used directly. Other supported flat files
+    # need explicit normalization before pip/build consumes their source path.
+    contents = _read(path, MAX_LOCK_BYTES)
+    try:
+        parse_locked_requirements(contents)
+        return contents.decode("utf-8"), path, False
+    except ValueError:
+        return export_requirements_txt(contents), path, True
 
 
 def plan_environment_preparation(
@@ -183,53 +228,8 @@ def plan_environment_preparation(
     detected = detect_repository_environment(repo)
     layout = detected["layout"]
 
-    req_text = ""
-    req_source_path: Path | None = None
-    export_needed = False
-
-    if requirements_file is not None:
-        p = requirements_file.expanduser().absolute()
-        if not p.is_file():
-            raise ValueError(f"Requirements file does not exist: {requirements_file}")
-        req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
-        req_source_path = p
-    elif lock_file is not None:
-        p = lock_file.expanduser().absolute()
-        if not p.is_file():
-            raise ValueError(f"Lock file does not exist: {lock_file}")
-        contents = _read(p, 5 * 1024 * 1024)
-        is_toml_lock = (p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
-                        or p.suffix in {".toml", ".json"}
-                        or b"[[package]]" in contents or contents.lstrip().startswith(b"{"))
-        if is_toml_lock:
-            req_text = export_hash_locked_requirements(p)
-            export_needed = True
-        else:
-            req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
-        req_source_path = p
-    else:
-        # Check standard locations in repo
-        uv_lock = repo / "uv.lock"
-        poetry_lock = repo / "poetry.lock"
-        pipfile_lock = repo / "Pipfile.lock"
-        req_lock = repo / "requirements.lock"
-        if uv_lock.is_file():
-            req_text = export_hash_locked_requirements(uv_lock)
-            export_needed = True
-            req_source_path = uv_lock
-        elif poetry_lock.is_file():
-            req_text = export_hash_locked_requirements(poetry_lock)
-            export_needed = True
-            req_source_path = poetry_lock
-        elif pipfile_lock.is_file():
-            req_text = export_hash_locked_requirements(pipfile_lock)
-            export_needed = True
-            req_source_path = pipfile_lock
-        elif req_lock.is_file():
-            req_text = _read(req_lock, MAX_LOCK_BYTES).decode("utf-8")
-            req_source_path = req_lock
-        else:
-            raise ValueError("No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository")
+    req_text, req_source_path, export_needed = load_requirement_profile(
+        repo, lock_file=lock_file, requirements_file=requirements_file)
 
     lock_bytes = req_text.encode("utf-8")
     packages = parse_locked_requirements(lock_bytes)
@@ -303,4 +303,66 @@ def plan_environment_preparation(
             "Hash-locked wheels required (--require-hashes)",
             "No arbitrary repository build scripts or hooks executed",
         ],
+    }
+
+
+def audit_wheelhouse(
+    repo: Path | None = None,
+    *,
+    wheelhouse: Path,
+    lock_file: Path | None = None,
+    requirements_file: Path | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Audit a wheelhouse against locked requirements and report readiness and discrepancies."""
+    if not math.isfinite(timeout) or not 0 < timeout <= 300:
+        raise ValueError("Audit timeout must be finite and in (0, 300]")
+    deadline = time.monotonic() + timeout
+    wheelhouse = wheelhouse.expanduser().absolute()
+    if not wheelhouse.exists():
+        raise ValueError(f"Wheelhouse directory does not exist: {wheelhouse}")
+    req_text, req_source_path, _ = load_requirement_profile(
+        repo.expanduser().absolute() if repo is not None else None,
+        lock_file=lock_file, requirements_file=requirements_file)
+    lock_bytes = req_text.encode("utf-8")
+    packages = parse_locked_requirements(lock_bytes)
+    _remaining(deadline)
+    wheels, unsupported_wheels, mismatched_wheels = scan_wheelhouse(
+        lock_bytes, packages, wheelhouse, deadline, diagnose=True)
+    records = [{"filename": name, "hash": "sha256:" + hashlib.sha256(data).hexdigest()}
+               for name, data in wheels.items()]
+    matched_packages, missing_packages = [], []
+    for pkg in packages:
+        matches = [r for r in records if r["hash"] in pkg["hashes"]]
+        if matches:
+            matched_packages.append({"name": pkg["name"], "version": pkg["version"],
+                                     "matched_wheels": [m["filename"] for m in matches],
+                                     "matched_hashes": [m["hash"] for m in matches]})
+        else:
+            missing_packages.append({"name": pkg["name"], "version": pkg["version"], "hashes": pkg["hashes"]})
+    total_bytes = sum(len(data) for data in wheels.values())
+    _remaining(deadline)
+
+    ready = (
+        len(missing_packages) == 0
+        and len(mismatched_wheels) == 0
+        and len(unsupported_wheels) == 0
+        and len(packages) > 0
+    )
+
+    return {
+        "version": 1,
+        "wheelhouse": str(wheelhouse),
+        "lock_source": str(req_source_path),
+        "ready": ready,
+        "package_count": len(packages),
+        "matched_count": len(matched_packages),
+        "missing_count": len(missing_packages),
+        "mismatched_count": len(mismatched_wheels),
+        "unsupported_count": len(unsupported_wheels),
+        "matched_packages": matched_packages,
+        "missing_packages": missing_packages,
+        "mismatched_wheels": mismatched_wheels,
+        "unsupported_wheels": unsupported_wheels,
+        "total_wheel_bytes": total_bytes,
     }
