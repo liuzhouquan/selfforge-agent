@@ -1,11 +1,13 @@
 """Bind Coding sessions to one execution mode and immutable Docker image, and detect repository environment."""
 
 import hashlib
+import math
 import re
 import shlex
 import time
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,8 +20,10 @@ from selfforge_agent.runtime.execution import (
 from selfforge_agent.runtime.images import (
     MAX_LOCK_BYTES,
     _read,
+    _remaining,
     parse_locked_requirements,
     read_locked_wheels,
+    scan_wheelhouse,
     validate_image_tag,
 )
 from selfforge_agent.runtime.lockfiles import (
@@ -299,4 +303,66 @@ def plan_environment_preparation(
             "Hash-locked wheels required (--require-hashes)",
             "No arbitrary repository build scripts or hooks executed",
         ],
+    }
+
+
+def audit_wheelhouse(
+    repo: Path | None = None,
+    *,
+    wheelhouse: Path,
+    lock_file: Path | None = None,
+    requirements_file: Path | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Audit a wheelhouse against locked requirements and report readiness and discrepancies."""
+    if not math.isfinite(timeout) or not 0 < timeout <= 300:
+        raise ValueError("Audit timeout must be finite and in (0, 300]")
+    deadline = time.monotonic() + timeout
+    wheelhouse = wheelhouse.expanduser().absolute()
+    if not wheelhouse.exists():
+        raise ValueError(f"Wheelhouse directory does not exist: {wheelhouse}")
+    req_text, req_source_path, _ = load_requirement_profile(
+        repo.expanduser().absolute() if repo is not None else None,
+        lock_file=lock_file, requirements_file=requirements_file)
+    lock_bytes = req_text.encode("utf-8")
+    packages = parse_locked_requirements(lock_bytes)
+    _remaining(deadline)
+    wheels, unsupported_wheels, mismatched_wheels = scan_wheelhouse(
+        lock_bytes, packages, wheelhouse, deadline, diagnose=True)
+    records = [{"filename": name, "hash": "sha256:" + hashlib.sha256(data).hexdigest()}
+               for name, data in wheels.items()]
+    matched_packages, missing_packages = [], []
+    for pkg in packages:
+        matches = [r for r in records if r["hash"] in pkg["hashes"]]
+        if matches:
+            matched_packages.append({"name": pkg["name"], "version": pkg["version"],
+                                     "matched_wheels": [m["filename"] for m in matches],
+                                     "matched_hashes": [m["hash"] for m in matches]})
+        else:
+            missing_packages.append({"name": pkg["name"], "version": pkg["version"], "hashes": pkg["hashes"]})
+    total_bytes = sum(len(data) for data in wheels.values())
+    _remaining(deadline)
+
+    ready = (
+        len(missing_packages) == 0
+        and len(mismatched_wheels) == 0
+        and len(unsupported_wheels) == 0
+        and len(packages) > 0
+    )
+
+    return {
+        "version": 1,
+        "wheelhouse": str(wheelhouse),
+        "lock_source": str(req_source_path),
+        "ready": ready,
+        "package_count": len(packages),
+        "matched_count": len(matched_packages),
+        "missing_count": len(missing_packages),
+        "mismatched_count": len(mismatched_wheels),
+        "unsupported_count": len(unsupported_wheels),
+        "matched_packages": matched_packages,
+        "missing_packages": missing_packages,
+        "mismatched_wheels": mismatched_wheels,
+        "unsupported_wheels": unsupported_wheels,
+        "total_wheel_bytes": total_bytes,
     }
