@@ -1,16 +1,19 @@
 """Repeatable Coding Agent evaluation against pinned local Git repositories."""
 
 import hashlib
+import os
+import platform
 import re
 import shutil
 import subprocess
 import tempfile
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -249,6 +252,59 @@ def _image_id(image: str) -> str:
     return resolve_docker_image(image)
 
 
+def _detect_app_commit_sha() -> str | None:
+    """Detect the commit SHA of the running selfforge-agent application."""
+    env_sha = os.environ.get("SELFFORGE_APP_COMMIT_SHA") or os.environ.get("SELFFORGE_COMMIT_SHA")
+    if env_sha:
+        clean = env_sha.strip().lower()
+        if re.fullmatch(r"[0-9a-f]{40}", clean):
+            return clean
+
+    candidates = [Path(__file__).resolve().parents[3], Path.cwd()]
+    for repo_dir in candidates:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                sha = result.stdout.strip().lower()
+                if re.fullmatch(r"[0-9a-f]{40}", sha):
+                    return sha
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
+def _detect_docker_version(timeout: float = 5.0) -> str | None:
+    """Detect the Docker engine or client version string if available."""
+    for cmd in (
+        ["docker", "version", "--format", "{{.Server.Version}}"],
+        ["docker", "--version"],
+    ):
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+            if result.returncode == 0:
+                raw = result.stdout.strip()
+                if raw:
+                    match = re.search(r"version\s+([0-9a-zA-Z.-]+)", raw, re.IGNORECASE)
+                    if match:
+                        return match.group(1).rstrip(",")
+                    return raw
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
 def _verification_copy(workspace: Path, destination: Path) -> None:
     shutil.copytree(workspace, destination, symlinks=True,
                     ignore=shutil.ignore_patterns(
@@ -478,10 +534,12 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
                    repeats: int = 1, sandbox: Literal["docker", "host"] = "docker",
                    trusted_host: bool = False, image: str = "selfforge-agent-sandbox:latest",
                    max_steps: int = 12, time_budget: float = 300,
-                   test_timeout: float = 60, failure_artifacts: Path | None = None) -> dict:
+                   test_timeout: float = 60, failure_artifacts: Path | None = None,
+                   providers: Sequence[Any] | None = None) -> dict:
     """Run each pinned case from scratch; verify with an unseen external pytest file."""
     if not 1 <= repeats <= 20 or not 1 <= max_steps <= 100 or time_budget <= 0 or test_timeout <= 0:
         raise ValueError("Invalid benchmark repeat, step, or time limit")
+    started_at = datetime.now(UTC).isoformat()
     manifest_bytes, suite, cases, images, baselines = _preflight(
         manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
         test_timeout=test_timeout)
@@ -494,6 +552,7 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
                           time_budget=time_budget, test_timeout=test_timeout,
                           failure_artifacts=artifact_root)
                 for case in cases for repeat in range(1, repeats + 1)]
+    completed_at = datetime.now(UTC).isoformat()
     successes = sum(item.success for item in outcomes)
     counts = Counter(item.reason for item in outcomes if not item.success)
     agent_errors = Counter(item.agent_error_code for item in outcomes if item.agent_error_code)
@@ -502,6 +561,49 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
         "successes": sum(item.success for item in outcomes if item.case == case.spec.id),
         "runs": repeats,
     } for case in cases}
+    sanitized_providers: list[dict[str, str]] = []
+    if providers is not None:
+        for p in providers:
+            if isinstance(p, dict):
+                sanitized_providers.append({
+                    "name": str(p.get("name", "")),
+                    "model": str(p.get("model", "")),
+                    "base_url": str(p.get("base_url", "")),
+                })
+            else:
+                sanitized_providers.append({
+                    "name": str(getattr(p, "name", "")),
+                    "model": str(getattr(p, "model", "")),
+                    "base_url": str(getattr(p, "base_url", "")),
+                })
+    else:
+        seen = set()
+        for item in outcomes:
+            key = (item.provider, item.model)
+            if key not in seen and (item.provider or item.model):
+                seen.add(key)
+                sanitized_providers.append({
+                    "name": item.provider,
+                    "model": item.model,
+                    "base_url": "",
+                })
+    commit_sha = _detect_app_commit_sha()
+    provenance = {
+        "commit_sha": commit_sha,
+        "app_commit_sha": commit_sha,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "docker_version": _detect_docker_version() if sandbox == "docker" else None,
+        "budgets": {
+            "max_steps": max_steps,
+            "time_budget": time_budget,
+            "test_timeout": test_timeout,
+            "repeats": repeats,
+        },
+        "providers": sanitized_providers,
+        "started_at": started_at,
+        "completed_at": completed_at,
+    }
     return {
         "version": 1,
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
@@ -524,4 +626,5 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
             else None
         ),
         "results": [asdict(item) for item in outcomes],
+        "provenance": provenance,
     }
