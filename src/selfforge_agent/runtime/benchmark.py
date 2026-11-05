@@ -271,9 +271,8 @@ def _safe_provider_url(value: object) -> str:
 
 def _detect_app_commit_sha() -> str | None:
     """Detect the commit SHA of the running selfforge-agent application."""
-    env_sha = os.environ.get("SELFFORGE_APP_COMMIT_SHA") or os.environ.get("SELFFORGE_COMMIT_SHA")
-    if env_sha:
-        clean = env_sha.strip().lower()
+    for variable in ("SELFFORGE_APP_COMMIT_SHA", "SELFFORGE_COMMIT_SHA"):
+        clean = os.environ.get(variable, "").strip().lower()
         if re.fullmatch(r"[0-9a-f]{40}", clean):
             return clean
 

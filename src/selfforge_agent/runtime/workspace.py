@@ -1,5 +1,7 @@
 """Persistent, reviewable Git worktrees for general Coding sessions."""
 
+from __future__ import annotations
+
 import fcntl
 import hashlib
 import json
@@ -9,8 +11,9 @@ import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from selfforge_agent.coding.worktree import WorktreeError, git
+from selfforge_agent.coding.worktree import WorktreeError, git, git_bounded
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
@@ -20,10 +23,16 @@ class WorkspaceError(ValueError):
     """A Coding worktree cannot be created, resumed, or removed safely."""
 
 
-def workspace_lock_path(workspace: Path, root: Path | None = None) -> Path:
-    """Return the filesystem lock file path for a workspace directory."""
+def workspace_locks_root() -> Path:
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    locks_dir = (root or data_home / "selfforge-agent" / "locks").expanduser().resolve()
+    path = Path(os.environ.get("SELFFORGE_LOCKS_ROOT") or data_home / "selfforge-agent" / "locks")
+    path = path.expanduser().resolve()
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return path
+
+
+def workspace_lock_path(workspace: Path, root: Path | None = None) -> Path:
+    locks_dir = root.expanduser().resolve() if root is not None else workspace_locks_root()
     locks_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     digest = hashlib.sha256(str(workspace.resolve()).encode("utf-8")).hexdigest()
     return locks_dir / digest
@@ -75,10 +84,17 @@ class CodingWorkspace:
 
 
 class CodingWorkspaceManager:
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, locks_root: Path | None = None) -> None:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-        self.root = (root or data_home / "selfforge-agent" / "worktrees").expanduser().resolve()
-        self.locks_root = None
+        env_root = os.environ.get("SELFFORGE_WORKSPACES_ROOT")
+        self.root = (
+            root
+            or (Path(env_root) if env_root else data_home / "selfforge-agent" / "worktrees")
+        ).expanduser().resolve()
+        shared_locks = workspace_locks_root()
+        if locks_root is not None and locks_root.expanduser().resolve() != shared_locks:
+            raise WorkspaceError("Configure shared SELFFORGE_LOCKS_ROOT for both CLI and Web")
+        self.locks_root = shared_locks
 
     def guard(self, workspace: Path | CodingWorkspace,
               message: str = "Workspace is locked by another task or process"):
@@ -190,7 +206,81 @@ class CodingWorkspaceManager:
     def remove(self, repository: Path, session_id: str) -> CodingWorkspace:
         workspace = self.get(repository, session_id)
         _, metadata, _ = self._paths(workspace.repository, session_id)
+        if self._dirty(workspace):
+            raise WorktreeError("Coding workspace has modified, untracked or ignored inputs; preserve them before removal")
         # Keep Git's dirty-worktree guard for persistent user workspaces.
         git(workspace.repository, "worktree", "remove", str(workspace.path))
         metadata.unlink()
         return workspace
+
+    @staticmethod
+    def _dirty(workspace: CodingWorkspace) -> bool:
+        try:
+            output, truncated = git_bounded(workspace.path, "status", "--porcelain", "-z", "--untracked-files=all",
+                                            "--ignored=matching", max_bytes=256 * 1024)
+            if truncated:
+                return True
+            for record in output.split("\0"):
+                if not record:
+                    continue
+                if not record.startswith("!! "):
+                    return True
+                parts = Path(record[3:].rstrip("/")).parts
+                cache = next((workspace.path.joinpath(*parts[:i+1]) for i, part in enumerate(parts)
+                              if part in {"__pycache__", ".pytest_cache", ".ruff_cache"}), None)
+                if cache is None or cache.is_symlink() or not cache.is_dir():
+                    return True
+            return False
+        except WorktreeError:
+            return True
+
+    @staticmethod
+    def _merged(workspace: CodingWorkspace, head_ref: str) -> bool:
+        # Resolve options/ambiguous refs into full commit IDs before ancestry checks.
+        target = git(workspace.repository, "rev-parse", "--verify", "--end-of-options", head_ref + "^{commit}").strip()
+        source = git(workspace.path, "rev-parse", "--verify", "HEAD^{commit}").strip()
+        try:
+            git(workspace.repository, "merge-base", "--is-ancestor", source, target)
+            return True
+        except WorktreeError:
+            return False
+
+    def audit(self, repository: Path, *, head_ref: str = "HEAD") -> list[dict[str, Any]]:
+        repo = self.validate_repository(repository)
+        results = []
+        for ws in self.list(repo):
+            fd = try_workspace_lock(ws.path, root=self.locks_root)
+            is_locked = fd is None
+            if fd is not None:
+                unlock_workspace(fd)
+            is_dirty = self._dirty(ws)
+            is_merged = self._merged(ws, head_ref)
+            results.append({"session_id": ws.session_id, "path": str(ws.path), "branch": ws.branch,
+                            "base_sha": ws.base_sha, "is_locked": is_locked, "is_dirty": is_dirty,
+                            "is_merged": is_merged, "prunable": not is_locked and not is_dirty and is_merged})
+        return results
+
+    def prune(self, repository: Path, *, dry_run: bool = False, merged_only: bool = True,
+              head_ref: str = "HEAD") -> dict[str, Any]:
+        repo = self.validate_repository(repository)
+        candidates = self.audit(repo, head_ref=head_ref)
+        result = {"pruned": [], "skipped_locked": [], "skipped_dirty": [], "skipped_unmerged": []}
+        for item in candidates:
+            session_id = item["session_id"]
+            fd = try_workspace_lock(Path(item["path"]), root=self.locks_root)
+            if fd is None:
+                result["skipped_locked"].append(session_id)
+                continue
+            try:
+                workspace = self.get(repo, session_id)
+                if self._dirty(workspace):
+                    result["skipped_dirty"].append(session_id)
+                elif merged_only and not self._merged(workspace, head_ref):
+                    result["skipped_unmerged"].append(session_id)
+                else:
+                    if not dry_run:
+                        self.remove(repo, session_id)
+                    result["pruned"].append(session_id)
+            finally:
+                unlock_workspace(fd)
+        return result

@@ -675,3 +675,10 @@ def test_installed_application_does_not_claim_working_directory_commit(tmp_path,
     monkeypatch.delenv("SELFFORGE_COMMIT_SHA", raising=False)
     monkeypatch.setattr(benchmark, "__file__", str(tmp_path / "site-packages/selfforge_agent/runtime/benchmark.py"))
     assert benchmark._detect_app_commit_sha() is None
+
+
+
+def test_valid_secondary_application_build_stamp_is_used(monkeypatch):
+    monkeypatch.setenv("SELFFORGE_APP_COMMIT_SHA", "invalid")
+    monkeypatch.setenv("SELFFORGE_COMMIT_SHA", "a" * 40)
+    assert benchmark._detect_app_commit_sha() == "a" * 40

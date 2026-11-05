@@ -18,6 +18,7 @@ from selfforge_agent.runtime.workspace import (
     try_workspace_lock,
     unlock_workspace,
     workspace_lock_path,
+    workspace_locks_root,
 )
 
 _JOB_ID = re.compile(r"[0-9a-f]{12}\Z")
@@ -65,7 +66,7 @@ class CodingJobManager:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         self.root = (root or data_home / "selfforge-agent" / "jobs").expanduser().resolve()
         self.records = self.root / "records"
-        self.locks = (data_home / "selfforge-agent" / "locks").expanduser().resolve()
+        self.locks = workspace_locks_root()
         self.cancellations = self.root / "cancel"
         for directory in (self.records, self.locks, self.cancellations):
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)

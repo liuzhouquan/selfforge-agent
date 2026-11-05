@@ -292,6 +292,31 @@ class CodingDiffResponse(BaseModel):
     omitted_files: int
 
 
+class WorkspaceAuditItem(BaseModel):
+    session_id: str
+    path: str
+    branch: str
+    base_sha: str
+    is_locked: bool
+    is_dirty: bool
+    is_merged: bool
+    prunable: bool
+
+
+class WorkspacePruneRequest(BaseModel):
+    repository: str
+    dry_run: bool = False
+    merged_only: bool = True
+    head_ref: str = "HEAD"
+
+
+class WorkspacePruneResponse(BaseModel):
+    pruned: list[str] = Field(default_factory=list)
+    skipped_locked: list[str] = Field(default_factory=list)
+    skipped_dirty: list[str] = Field(default_factory=list)
+    skipped_unmerged: list[str] = Field(default_factory=list)
+
+
 class ProviderCheckRequest(BaseModel):
     provider: Literal["all", "deepseek", "openrouter"] = "all"
 
@@ -455,6 +480,33 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"removed": str(workspace.path), "branch": workspace.branch}
+
+
+@app.get("/api/workspaces/audit", response_model=list[WorkspaceAuditItem])
+@app.get("/api/code/workspaces/audit", response_model=list[WorkspaceAuditItem])
+def audit_workspaces(repository: str, client: Request, head_ref: str = "HEAD") -> list[dict]:
+    _require_local(client)
+    repo = Path(repository).expanduser().resolve()
+    try:
+        return _CODING_WORKSPACES.audit(repo, head_ref=head_ref)
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/workspaces/prune", response_model=WorkspacePruneResponse)
+@app.post("/api/code/workspaces/prune", response_model=WorkspacePruneResponse)
+def prune_workspaces(request: WorkspacePruneRequest, client: Request) -> dict:
+    _require_local(client)
+    repo = Path(request.repository).expanduser().resolve()
+    try:
+        return _CODING_WORKSPACES.prune(
+            repo,
+            dry_run=request.dry_run,
+            merged_only=request.merged_only,
+            head_ref=request.head_ref,
+        )
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/code/workspaces/{session_id}/revert", response_model=RevertResult)
