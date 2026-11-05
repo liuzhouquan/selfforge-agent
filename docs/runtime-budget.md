@@ -15,6 +15,11 @@ verification state. It distinguishes critical turn boundaries:
 - **Near-budget exhaustion** (`remaining_turns <= 3 or remaining_seconds <= 45`):
   prompts the model to avoid optional exploration, prioritize required edits and
   `run_tests`, and warns that `bash` commands do not establish test verification.
+- **Read-only tool loop guidance**:
+  tracks repeated identical invocations of read-only tools (`read_file`, `search_code`)
+  within the current unedited phase. When a duplicate invocation is detected without
+  intervening edits, the notice explicitly cautions the model to avoid redundant lookups
+  and proceed to required edits (`edit_file`) or verification (`run_tests`).
 
 This is model guidance, not an automatic completion rule. The existing cap still
 counts **every** model call. The Runtime does not add an extra summary turn, run
@@ -33,9 +38,10 @@ appended to session conversation history or repeated summaries. On resume, the
 Runtime derives it from the new invocation's budget and persisted verification.
 
 Each attempted model call has a metadata-only `turn_budget` trace event: turn,
-cap, turns/time left, verification flag, and final-only flag. Trace events carry
-no task, source code, tool output, or model reasoning. Cancellation and the task
-deadline are checked again after compaction and before calling the model.
+cap, turns/time left, verification flag, final-only flag, and optional `tool_loop`
+indicator. Trace events carry no task, source code, tool output, or model reasoning.
+Cancellation and the task deadline are checked again after compaction and before
+calling the model.
 
 The context budget remains an approximate message-size estimate; it is not
 tokenizer-exact and does not include function-schema token overhead.
