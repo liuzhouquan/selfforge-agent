@@ -67,6 +67,7 @@ function refreshCodingAvailability() {
   $("coding-host-trust").hidden = !host;
   $("coding-image-label").hidden = host;
   $("coding-direct-trust").hidden = !direct;
+  $("coding-dirty-trust").hidden = !direct;
   $("coding-start").disabled = codingJobRunning || !configuredProviders.length ||
     (host && (!hostTestsEnabled || !$("coding-trust").checked)) ||
     (direct && !$("coding-confirm-direct").checked);
@@ -222,6 +223,7 @@ $("coding-form").addEventListener("submit", async (event) => {
       repository: $("coding-repo").value.trim(), task, resume_session: resume || null,
       workspace: $("coding-workspace").value,
       confirm_direct: $("coding-workspace").value === "direct" && $("coding-confirm-direct").checked,
+      allow_dirty: $("coding-workspace").value === "direct" && $("coding-allow-dirty").checked,
       sandbox: $("coding-sandbox").value, trust_local: host && $("coding-trust").checked,
       image: host ? null : $("coding-image").value.trim() || null,
       provider: $("coding-provider").value, fallback: $("coding-fallback").checked,
@@ -229,6 +231,7 @@ $("coding-form").addEventListener("submit", async (event) => {
     });
     renderCodingJob(job);
     $("coding-confirm-direct").checked = false;
+    $("coding-allow-dirty").checked = false;
     $("coding-trust").checked = false;
     refreshCodingAvailability();
     if (codingJobRunning) codingPollTimer = setTimeout(() => pollCodingJob(job.job_id), 500);

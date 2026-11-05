@@ -207,6 +207,7 @@ class CodingTaskRequest(BaseModel):
     resume_session: str | None = None
     workspace: Literal["worktree", "direct"] = "worktree"
     confirm_direct: bool = False
+    allow_dirty: bool = False
     sandbox: Literal["docker", "host"] = "docker"
     image: str | None = Field(default=None, min_length=1, max_length=256,
                        pattern=r"^[^\s-][^\s]*$")
@@ -421,8 +422,17 @@ def start_coding_job(request: CodingTaskRequest, client: Request) -> dict:
         os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local
     ):
         raise HTTPException(status_code=403, detail="Enable host tests and explicitly trust this repository")
-    if request.workspace == "direct" and not request.confirm_direct:
-        raise HTTPException(status_code=403, detail="Explicitly confirm direct edits to this repository")
+    if request.workspace == "direct":
+        if not request.confirm_direct:
+            raise HTTPException(status_code=403, detail="Explicitly confirm direct edits to this repository")
+        if not request.resume_session and not request.allow_dirty and _CODING_WORKSPACES.is_dirty(repository):
+            dirty_sample = _CODING_WORKSPACES.dirty_files(repository, limit=5)
+            sample_str = f" ({', '.join(dirty_sample)})" if dirty_sample else ""
+            raise HTTPException(
+                status_code=409,
+                detail=f"Direct workspace has uncommitted changes or untracked files{sample_str}; "
+                       "commit or stash them before running in direct mode, or confirm allow_dirty",
+            )
     if not request.task.strip() and not request.resume_session:
         raise HTTPException(status_code=400, detail="A task or session ID is required")
     candidates = route_providers(request.provider, request.fallback)
