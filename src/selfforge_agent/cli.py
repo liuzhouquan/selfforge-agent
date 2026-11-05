@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     trace.add_argument("--summary", action="store_true",
                        help="Print aggregate token usage and estimated cost")
     workspaces = subcommands.add_parser("workspaces", help="Inspect, commit, revert, or create PRs from Coding worktrees")
-    workspaces.add_argument("action", choices=["list", "remove", "diff", "commit", "pr", "revert"])
+    workspaces.add_argument("action", choices=["list", "remove", "diff", "commit", "pr", "revert", "audit", "prune"])
     workspaces.add_argument("session_id", nargs="?")
     workspaces.add_argument("--repo", type=Path, default=Path.cwd())
     workspaces.add_argument("--message", "-m", help="Commit message for 'commit' action")
@@ -186,6 +186,9 @@ def main(argv: list[str] | None = None) -> int:
     workspaces.add_argument("--base", help="Target base branch for 'pr' action")
     workspaces.add_argument("--remote", default="origin", help="Git remote for 'pr' action")
     workspaces.add_argument("--draft", action="store_true", help="Create draft PR")
+    workspaces.add_argument("--dry-run", action="store_true", help="Preview worktrees to prune without removing")
+    workspaces.add_argument("--include-unmerged", action="store_true", help="Include unmerged clean worktrees when pruning")
+    workspaces.add_argument("--json", action="store_true", help="Format output as JSON")
     evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
     evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
     evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
@@ -433,6 +436,47 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  - {f}")
                 else:
                     print(f"Workspace {workspace.path} is clean; nothing to revert.")
+            elif args.action == "audit":
+                if args.session_id:
+                    parser.error("workspaces audit does not take a session ID")
+                items = manager.audit(args.repo)
+                if getattr(args, "json", False):
+                    print(json.dumps(items, indent=2))
+                else:
+                    if not items:
+                        print("No worktrees found.")
+                    else:
+                        for it in items:
+                            status_flags = []
+                            if it["is_locked"]:
+                                status_flags.append("locked")
+                            if it["is_dirty"]:
+                                status_flags.append("dirty")
+                            if it["is_merged"]:
+                                status_flags.append("merged")
+                            flag_str = f" [{', '.join(status_flags)}]" if status_flags else ""
+                            prune_str = " (prunable)" if it["prunable"] else ""
+                            print(f"{it['session_id']}  {it['branch']}  {it['path']}{flag_str}{prune_str}")
+            elif args.action == "prune":
+                if args.session_id:
+                    parser.error("workspaces prune does not take a session ID")
+                dry_run = getattr(args, "dry_run", False)
+                merged_only = not getattr(args, "include_unmerged", False)
+                result = manager.prune(args.repo, dry_run=dry_run, merged_only=merged_only)
+                if getattr(args, "json", False):
+                    print(json.dumps(result, indent=2))
+                else:
+                    prefix = "[dry-run] " if dry_run else ""
+                    if result["pruned"]:
+                        print(f"{prefix}Pruned {len(result['pruned'])} workspace(s): {', '.join(result['pruned'])}")
+                    else:
+                        print(f"{prefix}No workspaces pruned.")
+                    if result["skipped_locked"]:
+                        print(f"Skipped {len(result['skipped_locked'])} locked workspace(s): {', '.join(result['skipped_locked'])}")
+                    if result["skipped_dirty"]:
+                        print(f"Skipped {len(result['skipped_dirty'])} dirty workspace(s): {', '.join(result['skipped_dirty'])}")
+                    if result["skipped_unmerged"]:
+                        print(f"Skipped {len(result['skipped_unmerged'])} unmerged workspace(s): {', '.join(result['skipped_unmerged'])}")
         except (ValueError, RuntimeError, OSError, DeliveryError) as exc:
             parser.error(str(exc))
         return 0
