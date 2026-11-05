@@ -81,3 +81,5 @@
 ## Handoff
 
 - 交付状态：开始实施 TDD 测试与核心逻辑。
+
+Review: stale loop diagnostics are cleared by a non-read-only latest assistant turn or a new user task. Final-answer-only turns omit loop advice. Guidance is advisory and metadata-only; no model-success improvement is claimed without a separately recorded run.

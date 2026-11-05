@@ -38,10 +38,14 @@ def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str,
 
     for msg in messages:
         role = msg.get("role")
+        if role == "user":
+            counts.clear()
+            last_assistant_calls = []
         if role != "assistant":
             continue
         calls = msg.get("tool_calls") or []
         if not calls:
+            last_assistant_calls = []
             continue
 
         turn_calls: list[tuple[str, str, dict[str, Any]]] = []
@@ -58,8 +62,7 @@ def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str,
                 counts[key] = counts.get(key, 0) + 1
                 turn_calls.append((name, canon_str, parsed_dict))
 
-        if turn_calls:
-            last_assistant_calls = turn_calls
+        last_assistant_calls = turn_calls
 
     if not last_assistant_calls:
         return None

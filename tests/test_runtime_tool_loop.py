@@ -182,3 +182,11 @@ def test_coding_agent_warns_on_repeated_tool_loop_and_traces(tmp_path: Path) -> 
     assert turn_budgets[1]["tool_loop"] is None
     assert turn_budgets[2]["tool_loop"] == "read_file"
     assert turn_budgets[3]["tool_loop"] is None
+
+
+def test_old_loop_is_not_reported_after_verification_or_new_task():
+    repeated = [_tool_turn("read_file", {"path": "a.py"}, "a"), _tool_resp("a"),
+                _tool_turn("read_file", {"path": "a.py"}, "b"), _tool_resp("b")]
+    assert detect_tool_loop(repeated)
+    assert detect_tool_loop(repeated + [_tool_turn("run_tests", {"path": "tests"}, "c"), _tool_resp("c")]) is None
+    assert detect_tool_loop(repeated + [{"role": "user", "content": "New task"}]) is None

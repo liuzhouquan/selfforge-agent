@@ -158,7 +158,7 @@ class CodingAgent:
                 if remaining <= 0:
                     return self._finish("timed_out", "", completed_steps, tools_used)
                 final_only = step == self.max_steps and tests_passed
-                loop_info = detect_tool_loop(messages)
+                loop_info = None if final_only else detect_tool_loop(messages)
                 notice = budget_notice(step=step, max_steps=self.max_steps,
                                        remaining_seconds=remaining, tests_passed=tests_passed,
                                        tool_loop=loop_info)
