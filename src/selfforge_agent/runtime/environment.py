@@ -1,6 +1,7 @@
 """Bind Coding sessions to one execution mode and immutable Docker image, and detect repository environment."""
 
 import hashlib
+import math
 import re
 import shlex
 import time
@@ -17,13 +18,12 @@ from selfforge_agent.runtime.execution import (
     resolve_docker_image,
 )
 from selfforge_agent.runtime.images import (
-    MAX_CONTEXT_BYTES,
     MAX_LOCK_BYTES,
-    MAX_WHEEL_BYTES,
     _read,
     _remaining,
     parse_locked_requirements,
     read_locked_wheels,
+    scan_wheelhouse,
     validate_image_tag,
 )
 from selfforge_agent.runtime.lockfiles import (
@@ -315,138 +315,33 @@ def audit_wheelhouse(
     timeout: float = 10.0,
 ) -> dict[str, Any]:
     """Audit a wheelhouse against locked requirements and report readiness and discrepancies."""
+    if not math.isfinite(timeout) or not 0 < timeout <= 300:
+        raise ValueError("Audit timeout must be finite and in (0, 300]")
+    deadline = time.monotonic() + timeout
     wheelhouse = wheelhouse.expanduser().absolute()
     if not wheelhouse.exists():
         raise ValueError(f"Wheelhouse directory does not exist: {wheelhouse}")
-    if wheelhouse.is_symlink() or not wheelhouse.is_dir():
-        raise ValueError("Wheelhouse must be a directory, not a symlink")
-
-    req_text = ""
-    req_source_path: Path | None = None
-    if requirements_file is not None:
-        p = requirements_file.expanduser().absolute()
-        if not p.is_file():
-            raise ValueError(f"Requirements file does not exist: {requirements_file}")
-        req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
-        req_source_path = p
-    elif lock_file is not None:
-        p = lock_file.expanduser().absolute()
-        if not p.is_file():
-            raise ValueError(f"Lock file does not exist: {lock_file}")
-        contents = _read(p, 5 * 1024 * 1024)
-        is_toml_or_json = (
-            p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
-            or p.suffix in {".toml", ".json"}
-            or b"[[package]]" in contents
-            or contents.lstrip().startswith(b"{")
-        )
-        if is_toml_or_json:
-            req_text = export_hash_locked_requirements(p)
-        else:
-            req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
-        req_source_path = p
-    elif repo is not None:
-        repo = repo.expanduser().absolute()
-        if not repo.is_dir():
-            raise ValueError(f"Repository directory does not exist: {repo}")
-        uv_lock = repo / "uv.lock"
-        poetry_lock = repo / "poetry.lock"
-        pipfile_lock = repo / "Pipfile.lock"
-        req_lock = repo / "requirements.lock"
-        if uv_lock.is_file():
-            req_text = export_hash_locked_requirements(uv_lock)
-            req_source_path = uv_lock
-        elif poetry_lock.is_file():
-            req_text = export_hash_locked_requirements(poetry_lock)
-            req_source_path = poetry_lock
-        elif pipfile_lock.is_file():
-            req_text = export_hash_locked_requirements(pipfile_lock)
-            req_source_path = pipfile_lock
-        elif req_lock.is_file():
-            req_text = _read(req_lock, MAX_LOCK_BYTES).decode("utf-8")
-            req_source_path = req_lock
-        else:
-            raise ValueError(
-                "No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository"
-            )
-    else:
-        raise ValueError("Either repo, lock_file, or requirements_file must be specified")
-
+    req_text, req_source_path, _ = load_requirement_profile(
+        repo.expanduser().absolute() if repo is not None else None,
+        lock_file=lock_file, requirements_file=requirements_file)
     lock_bytes = req_text.encode("utf-8")
     packages = parse_locked_requirements(lock_bytes)
-
-    deadline = time.monotonic() + timeout
-    allowed_hashes: dict[str, str] = {}
+    _remaining(deadline)
+    wheels, unsupported_wheels, mismatched_wheels = scan_wheelhouse(
+        lock_bytes, packages, wheelhouse, deadline, diagnose=True)
+    records = [{"filename": name, "hash": "sha256:" + hashlib.sha256(data).hexdigest()}
+               for name, data in wheels.items()]
+    matched_packages, missing_packages = [], []
     for pkg in packages:
-        for h in pkg["hashes"]:
-            allowed_hashes[h.lower()] = pkg["name"]
-
-    matched_wheels: list[dict[str, Any]] = []
-    mismatched_wheels: list[dict[str, Any]] = []
-    unsupported_wheels: list[dict[str, Any]] = []
-
-    total_bytes = 0
-    wheel_paths = sorted(wheelhouse.glob("*.whl"))
-    if len(wheel_paths) > 200:
-        raise ValueError("Wheelhouse file count limit exceeded")
-
-    for path in wheel_paths:
-        _remaining(deadline)
-        if path.is_symlink():
-            unsupported_wheels.append({"filename": path.name, "reason": "symlink"})
-            continue
-        if not path.is_file():
-            unsupported_wheels.append({"filename": path.name, "reason": "not a regular file"})
-            continue
-        if not re.fullmatch(r"[A-Za-z0-9_.+!-]+\.whl", path.name):
-            unsupported_wheels.append({"filename": path.name, "reason": "unsupported wheel filename"})
-            continue
-
-        try:
-            data = _read(path, min(MAX_WHEEL_BYTES, MAX_CONTEXT_BYTES - total_bytes))
-        except ValueError as exc:
-            unsupported_wheels.append({"filename": path.name, "reason": str(exc)})
-            continue
-
-        total_bytes += len(data)
-        digest = hashlib.sha256(data).hexdigest()
-        digest_key = "sha256:" + digest
-
-        if digest_key in allowed_hashes:
-            matched_wheels.append({
-                "filename": path.name,
-                "package": allowed_hashes[digest_key],
-                "hash": digest_key,
-                "size": len(data),
-            })
+        matches = [r for r in records if r["hash"] in pkg["hashes"]]
+        if matches:
+            matched_packages.append({"name": pkg["name"], "version": pkg["version"],
+                                     "matched_wheels": [m["filename"] for m in matches],
+                                     "matched_hashes": [m["hash"] for m in matches]})
         else:
-            mismatched_wheels.append({
-                "filename": path.name,
-                "hash": digest_key,
-                "size": len(data),
-            })
-
-    matched_by_pkg: dict[str, list[dict[str, Any]]] = {}
-    for m in matched_wheels:
-        matched_by_pkg.setdefault(m["package"].lower(), []).append(m)
-
-    matched_packages: list[dict[str, Any]] = []
-    missing_packages: list[dict[str, Any]] = []
-    for pkg in packages:
-        canonical = pkg["name"].lower()
-        if canonical in matched_by_pkg:
-            matched_packages.append({
-                "name": pkg["name"],
-                "version": pkg["version"],
-                "matched_wheels": [m["filename"] for m in matched_by_pkg[canonical]],
-                "matched_hashes": [m["hash"] for m in matched_by_pkg[canonical]],
-            })
-        else:
-            missing_packages.append({
-                "name": pkg["name"],
-                "version": pkg["version"],
-                "hashes": pkg["hashes"],
-            })
+            missing_packages.append({"name": pkg["name"], "version": pkg["version"], "hashes": pkg["hashes"]})
+    total_bytes = sum(len(data) for data in wheels.values())
+    _remaining(deadline)
 
     ready = (
         len(missing_packages) == 0

@@ -84,3 +84,5 @@
 ## Handoff
 
 - 交付状态：本地实现与全量测试完成，准备提交并创建 PR。
+
+Review: audit, builder and plan now share one bounded wheel scanner. Enumeration stops at 200 wheels / 1000 directory entries before sorting; lock bytes count toward128MiB. Oversized inputs are rejected before reads; raced/read errors abort instead of resetting a failed-read allowance. Finite (0,300] timeouts are checked after reads/hashing and before returning. Diagnostics indicate hash availability, not archive/platform/installability proof.
