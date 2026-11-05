@@ -23,7 +23,7 @@
 | SF-ENV-04 | Complete | 有界 pip-compile / flat 锁导出和规范化计划 | PR #43；仅规范化后才能构建的输入会返回显式 export_command |
 | SF-ENV-05 | Complete | 共享有界 wheelhouse 审计与哈希就绪诊断 | PR #44；失败/超时不报告 ready，不证明可安装性 |
 | SF-EVAL-05 | Complete | 实际报告schema比较和回归门禁 | PR #46；计数精确比较，缺失/无效输入不能通过门禁 |
-| SF-EVAL-06 | Ready | 增加1道真实仓库多文件修改任务的参考正负控 | 独立新manifest；记录契约与许可证，不改历史成绩；先完成无模型资格验证 |
+| SF-EVAL-06 | In Progress | 增加1道真实仓库多文件修改任务的参考正负控 | 详见 [SF-EVAL-06](./tasks/SF-EVAL-06.md)；独立新manifest，跨3个源码文件协同修改，不改历史成绩；先完成无模型资格验证 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 

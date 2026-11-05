@@ -1,0 +1,129 @@
+diff --git a/jmespath/exceptions.py b/jmespath/exceptions.py
+index 0156015..34e47ce 100644
+--- a/jmespath/exceptions.py
++++ b/jmespath/exceptions.py
+@@ -119,4 +119,15 @@ class EmptyExpressionError(JMESPathError):
+ 
+ 
+ class UnknownFunctionError(JMESPathError):
+-    pass
++    def __init__(self, function_name, similar=None):
++        if function_name.startswith("Unknown function: ") and function_name.endswith("()"):
++            self.function_name = function_name[len("Unknown function: "):-2]
++        else:
++            self.function_name = function_name
++        self.similar = similar
++        if similar:
++            msg = ("Unknown function: %s(), did you mean: %s()?"
++                   % (self.function_name, similar))
++        else:
++            msg = "Unknown function: %s()" % self.function_name
++        super(UnknownFunctionError, self).__init__(msg)
+diff --git a/jmespath/functions.py b/jmespath/functions.py
+index 627b569..18db55b 100644
+--- a/jmespath/functions.py
++++ b/jmespath/functions.py
+@@ -1,3 +1,4 @@
++import difflib
+ import math
+ import json
+ 
+@@ -69,12 +70,17 @@ class Functions(metaclass=FunctionRegistry):
+     FUNCTION_TABLE = {
+     }
+ 
+-    def call_function(self, function_name, resolved_args):
++    def call_function(self, function_name, resolved_args, suggest=True):
+         try:
+             spec = self.FUNCTION_TABLE[function_name]
+         except KeyError:
+-            raise exceptions.UnknownFunctionError(
+-                "Unknown function: %s()" % function_name)
++            similar = None
++            if suggest:
++                matches = difflib.get_close_matches(
++                    function_name, list(self.FUNCTION_TABLE.keys()), n=1, cutoff=0.6)
++                if matches:
++                    similar = matches[0]
++            raise exceptions.UnknownFunctionError(function_name, similar=similar)
+         function = spec['function']
+         signature = spec['signature']
+         self._validate_arguments(resolved_args, signature, function_name)
+diff --git a/jmespath/visitor.py b/jmespath/visitor.py
+index 15fb177..d18241a 100644
+--- a/jmespath/visitor.py
++++ b/jmespath/visitor.py
+@@ -58,7 +58,8 @@ def _is_actual_number(x):
+ 
+ class Options(object):
+     """Options to control how a JMESPath function is evaluated."""
+-    def __init__(self, dict_cls=None, custom_functions=None):
++    def __init__(self, dict_cls=None, custom_functions=None,
++                 suggest_functions=True):
+         #: The class to use when creating a dict.  The interpreter
+         #  may create dictionaries during the evaluation of a JMESPath
+         #  expression.  For example, a multi-select hash will
+@@ -69,6 +70,7 @@ class Options(object):
+         #  have predictable key ordering.
+         self.dict_cls = dict_cls
+         self.custom_functions = custom_functions
++        self.suggest_functions = suggest_functions
+ 
+ 
+ class _Expression(object):
+@@ -168,7 +170,12 @@ class TreeInterpreter(Visitor):
+         for child in node['children']:
+             current = self.visit(child, value)
+             resolved_args.append(current)
+-        return self._functions.call_function(node['value'], resolved_args)
++        suggest = getattr(self._options, 'suggest_functions', True)
++        try:
++            return self._functions.call_function(
++                node['value'], resolved_args, suggest=suggest)
++        except TypeError:
++            return self._functions.call_function(node['value'], resolved_args)
+ 
+     def visit_filter_projection(self, node, value):
+         base = self.visit(node['children'][0], value)
+diff --git a/tests/test_functions.py b/tests/test_functions.py
+index a352d69..93fb846 100644
+--- a/tests/test_functions.py
++++ b/tests/test_functions.py
+@@ -5,6 +5,7 @@ import json
+ 
+ import jmespath
+ from jmespath import exceptions
++from jmespath import functions
+ 
+ 
+ class TestFunctions(unittest.TestCase):
+@@ -55,3 +56,29 @@ class TestFunctions(unittest.TestCase):
+         self.assertEqual(
+             str(exception),
+             'Expected at least 1 argument for function not_null(), received 0')
++
++    def test_unknown_function_suggestion(self):
++        fn = functions.Functions()
++        with self.assertRaises(exceptions.UnknownFunctionError) as cm:
++            fn.call_function('starts_wit', [])
++        err = cm.exception
++        self.assertEqual(err.function_name, 'starts_wit')
++        self.assertEqual(err.similar, 'starts_with')
++        self.assertIn("Unknown function: starts_wit(), did you mean: starts_with()?", str(err))
++
++    def test_unknown_function_without_suggestion(self):
++        fn = functions.Functions()
++        with self.assertRaises(exceptions.UnknownFunctionError) as cm:
++            fn.call_function('completely_nonexistent_xyz', [])
++        err = cm.exception
++        self.assertEqual(err.function_name, 'completely_nonexistent_xyz')
++        self.assertIsNone(err.similar)
++        self.assertEqual(str(err), "Unknown function: completely_nonexistent_xyz()")
++
++    def test_unknown_function_suggest_disabled(self):
++        fn = functions.Functions()
++        with self.assertRaises(exceptions.UnknownFunctionError) as cm:
++            fn.call_function('starts_wit', [], suggest=False)
++        err = cm.exception
++        self.assertIsNone(err.similar)
++        self.assertEqual(str(err), "Unknown function: starts_wit()")
