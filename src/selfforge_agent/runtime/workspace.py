@@ -214,25 +214,46 @@ class CodingWorkspaceManager:
         return workspace
 
     @staticmethod
-    def _dirty(workspace: CodingWorkspace) -> bool:
+    def check_dirty(path: Path, limit: int = 10) -> tuple[bool, list[str]]:
+        """Inspect workspace cleanliness, ignoring safe derived cache directories.
+
+        Returns (is_dirty, sample_dirty_paths).
+        """
+        target = path.expanduser().resolve()
         try:
-            output, truncated = git_bounded(workspace.path, "status", "--porcelain", "-z", "--untracked-files=all",
-                                            "--ignored=matching", max_bytes=256 * 1024)
+            output, truncated = git_bounded(
+                target, "status", "--porcelain", "-z", "--untracked-files=all",
+                "--ignored=matching", max_bytes=256 * 1024,
+            )
             if truncated:
-                return True
+                return True, ["(status output truncated: too many modified/untracked files)"]
+            dirty_paths: list[str] = []
             for record in output.split("\0"):
                 if not record:
                     continue
-                if not record.startswith("!! "):
-                    return True
-                parts = Path(record[3:].rstrip("/")).parts
-                cache = next((workspace.path.joinpath(*parts[:i+1]) for i, part in enumerate(parts)
-                              if part in {"__pycache__", ".pytest_cache", ".ruff_cache"}), None)
-                if cache is None or cache.is_symlink() or not cache.is_dir():
-                    return True
-            return False
+                if record.startswith("!! "):
+                    parts = Path(record[3:].rstrip("/")).parts
+                    cache = next((target.joinpath(*parts[:i+1]) for i, part in enumerate(parts)
+                                  if part in {"__pycache__", ".pytest_cache", ".ruff_cache"}), None)
+                    if cache is None or cache.is_symlink() or not cache.is_dir():
+                        dirty_paths.append(record[3:].strip())
+                else:
+                    dirty_paths.append(record[3:].strip())
+            return len(dirty_paths) > 0, dirty_paths[:limit]
         except WorktreeError:
-            return True
+            return True, ["(git status failed)"]
+
+    @classmethod
+    def is_dirty(cls, path: Path) -> bool:
+        return cls.check_dirty(path)[0]
+
+    @classmethod
+    def dirty_files(cls, path: Path, limit: int = 10) -> list[str]:
+        return cls.check_dirty(path, limit=limit)[1]
+
+    @classmethod
+    def _dirty(cls, workspace: CodingWorkspace) -> bool:
+        return cls.is_dirty(workspace.path)
 
     @staticmethod
     def _merged(workspace: CodingWorkspace, head_ref: str) -> bool:
