@@ -466,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
                 repeats=args.repeats, sandbox=args.sandbox, trusted_host=args.trust_local,
                 image=args.image, max_steps=args.max_steps, time_budget=args.time_budget,
                 test_timeout=args.test_timeout, failure_artifacts=args.failure_artifacts,
+                providers=providers,
             )
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
