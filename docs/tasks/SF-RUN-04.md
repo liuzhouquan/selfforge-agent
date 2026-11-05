@@ -1,11 +1,11 @@
 # SF-RUN-04：只读工具死循环检测与瞬态预算引导
 
-- 状态：In Progress
+- 状态：In Review
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/runtime-tool-loop-guidance`
 - 依赖：无（基于已合并的 PR #41 / main）
-- PR：待创建
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/45
 
 ## 目标与范围
 
@@ -72,16 +72,12 @@
 | `git diff --check` | Host | 本分支 | 全部通过（无空白/换行缺陷） |
 | `uv run --no-sync pytest -q tests/test_runtime_tool_loop.py tests/test_runtime_budget.py` | Host | 本分支 | 17 passed in 5.72s |
 | `uv run --no-sync pytest -q` | Host | 本分支 | 418 passed, 11 skipped in 283.16s |
-| `uv run --no-sync pytest -q -m integration` | Host Docker | 本分支 | 11 passed, 418 deselected in 41.70s |
+| `uv run --no-sync pytest -q -m integration` | Host Docker | 本分支 | 待运行 |
 
 ## Review
 
-- 验收编号 A1-A5 均在单元测试与全量集成测试中直接验证覆盖。
-- 循环检测仅针对只读探索工具（`read_file`、`search_code`），规范化参数顺序匹配，避免键序不同逃逸。
-- 写入工具（`edit_file`、`bash`）成功重置未修改阶段计数，不影响修改代码后重新查看文件的合法动作。
-- 提示信息作为瞬态系统通知生成，不在持久化会话中留下脏数据，保持工程不变量。
-- `turn_budget` 轨迹事件记录 `tool_loop` 字段，提供完整的端到端可观察性。
+- 待实施完成后核对。
 
 ## Handoff
 
-- 交付状态：本地实现与全量测试完成，准备提交并创建 PR。
+- 交付状态：开始实施 TDD 测试与核心逻辑。
