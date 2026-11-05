@@ -23,8 +23,8 @@ def _add(requirements: dict, name: object, version: object, hashes: set[str]) ->
 def _hash(value: object) -> set[str]:
     if not isinstance(value, str):
         return set()
-    value = value.removeprefix("sha256:").lower()
-    return {"sha256:" + value} if re.fullmatch(r"[0-9a-f]{64}", value) else set()
+    cleaned = value.strip().lower().removeprefix("sha256:")
+    return {"sha256:" + cleaned} if re.fullmatch(r"[0-9a-f]{64}", cleaned) else set()
 
 
 def _file_hashes(entries: object, label: str) -> set[str]:
@@ -137,4 +137,45 @@ def export_pipfile_requirements(content: bytes) -> str:
                 raise ValueError("Invalid hash list in lock file")
             hashes = set().union(*(_hash(h) for h in raw_hashes)) if raw_hashes else set()
             _add(requirements, name, version[2:], hashes)
+    return _render(requirements)
+
+
+def export_requirements_txt(content: bytes) -> str:
+    """Export hash-locked requirements from pip-compile or flat requirements.txt format."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Failed to parse lock file as text") from exc
+
+    joined = text.replace("\r\n", "\n").replace("\\\n", " ")
+    requirements: dict = {}
+
+    for raw_line in joined.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("-") and not line.startswith("--hash"):
+            raise ValueError("URLs, markers, extras and pip directives are unsupported")
+        if ";" in line:
+            raise ValueError("Conditional markers require a target-aware export; cannot flatten this lock")
+        if "[" in line or "]" in line:
+            raise ValueError("Extras require a target-aware export; cannot flatten this lock")
+        parts = line.split()
+        pkg_spec = parts[0]
+        if "==" not in pkg_spec:
+            raise ValueError("Lock requires exact name==version pins with SHA-256 hashes")
+        name, version = pkg_spec.split("==", 1)
+        if not name or not version or any(op in version for op in ("<", ">", "~", "=", "!")):
+            raise ValueError("Invalid exact package version in lock file")
+
+        hashes: set[str] = set()
+        for token in parts[1:]:
+            if token.startswith("--hash="):
+                h_val = token.split("=", 1)[1]
+                hashes.update(_hash(h_val))
+            else:
+                raise ValueError("URLs, markers, extras and pip directives are unsupported")
+
+        _add(requirements, name, version, hashes)
+
     return _render(requirements)

@@ -22,7 +22,11 @@ from selfforge_agent.runtime.images import (
     read_locked_wheels,
     validate_image_tag,
 )
-from selfforge_agent.runtime.lockfiles import export_pipfile_requirements, export_toml_requirements
+from selfforge_agent.runtime.lockfiles import (
+    export_pipfile_requirements,
+    export_requirements_txt,
+    export_toml_requirements,
+)
 from selfforge_agent.runtime.session import SessionStore
 
 
@@ -152,7 +156,7 @@ def bind_environment(executor: Executor | None, session: SessionStore, *,
 
 
 def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = None) -> str:
-    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from a uv.lock, poetry.lock or Pipfile.lock file."""
+    """Extract hash-locked requirement lines (name==version --hash=sha256:...) from uv.lock, poetry.lock, Pipfile.lock, or requirements.lock."""
     if not lock_path.is_file():
         raise ValueError(f"Lock file does not exist: {lock_path}")
     if lock_path.stat().st_size > 5 * 1024 * 1024:
@@ -161,7 +165,15 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     content = _read(lock_path, 5 * 1024 * 1024)
     is_json = (lock_path.name == "Pipfile.lock" or lock_path.suffix == ".json"
                or content.lstrip().startswith(b"{"))
-    result = export_pipfile_requirements(content) if is_json else export_toml_requirements(content)
+    is_req = (lock_path.name in ("requirements.lock", "requirements.txt")
+              or lock_path.suffix == ".txt"
+              or ("--hash=" in content.decode("utf-8", errors="ignore") and b"[[package]]" not in content))
+    if is_json:
+        result = export_pipfile_requirements(content)
+    elif is_req:
+        result = export_requirements_txt(content)
+    else:
+        result = export_toml_requirements(content)
     if output_path is not None:
         output_path.write_text(result, encoding="utf-8")
     return result
@@ -198,10 +210,10 @@ def plan_environment_preparation(
         if not p.is_file():
             raise ValueError(f"Lock file does not exist: {lock_file}")
         contents = _read(p, 5 * 1024 * 1024)
-        is_toml_lock = (p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
-                        or p.suffix in {".toml", ".json"}
-                        or b"[[package]]" in contents or contents.lstrip().startswith(b"{"))
-        if is_toml_lock:
+        is_structured_lock = (p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
+                              or p.suffix in {".toml", ".json"}
+                              or b"[[package]]" in contents or contents.lstrip().startswith(b"{"))
+        if is_structured_lock:
             req_text = export_hash_locked_requirements(p)
             export_needed = True
         else:
