@@ -168,7 +168,7 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     is_req = (lock_path.name in ("requirements.lock", "requirements.txt")
               or lock_path.suffix == ".txt"
               or ("--hash=" in content.decode("utf-8", errors="ignore") and b"[[package]]" not in content))
-    if is_json:
+    if content.lstrip().startswith(b"{") or (is_json and not is_req):
         result = export_pipfile_requirements(content)
     elif is_req:
         result = export_requirements_txt(content)
@@ -177,6 +177,35 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     if output_path is not None:
         output_path.write_text(result, encoding="utf-8")
     return result
+
+
+def load_requirement_profile(repository: Path | None = None, *, lock_file: Path | None = None,
+                             requirements_file: Path | None = None) -> tuple[str, Path, bool]:
+    """Use one bounded profile loader for planning, auditing and explicit exports."""
+    forced_flat = requirements_file is not None
+    path = requirements_file or lock_file
+    if path is None:
+        if repository is None:
+            raise ValueError("Either repo, lock_file, or requirements_file must be specified")
+        path = next((repository / n for n in ("uv.lock", "poetry.lock", "Pipfile.lock", "requirements.lock")
+                     if (repository / n).is_file()), None)
+        if path is None:
+            raise ValueError("No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository")
+    path = path.expanduser().absolute()
+    contents = _read(path, MAX_LOCK_BYTES if forced_flat else 5 * 1024 * 1024)
+    structured = not forced_flat and (path.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
+                  or path.suffix in {".toml", ".json"} or b"[[package]]" in contents
+                  or contents.lstrip().startswith(b"{"))
+    if structured:
+        return export_hash_locked_requirements(path), path, True
+    # An already buildable file can be used directly. Other supported flat files
+    # need explicit normalization before pip/build consumes their source path.
+    contents = _read(path, MAX_LOCK_BYTES)
+    try:
+        parse_locked_requirements(contents)
+        return contents.decode("utf-8"), path, False
+    except ValueError:
+        return export_requirements_txt(contents), path, True
 
 
 def plan_environment_preparation(
@@ -195,53 +224,8 @@ def plan_environment_preparation(
     detected = detect_repository_environment(repo)
     layout = detected["layout"]
 
-    req_text = ""
-    req_source_path: Path | None = None
-    export_needed = False
-
-    if requirements_file is not None:
-        p = requirements_file.expanduser().absolute()
-        if not p.is_file():
-            raise ValueError(f"Requirements file does not exist: {requirements_file}")
-        req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
-        req_source_path = p
-    elif lock_file is not None:
-        p = lock_file.expanduser().absolute()
-        if not p.is_file():
-            raise ValueError(f"Lock file does not exist: {lock_file}")
-        contents = _read(p, 5 * 1024 * 1024)
-        is_structured_lock = (p.name in {"uv.lock", "poetry.lock", "Pipfile.lock"}
-                              or p.suffix in {".toml", ".json"}
-                              or b"[[package]]" in contents or contents.lstrip().startswith(b"{"))
-        if is_structured_lock:
-            req_text = export_hash_locked_requirements(p)
-            export_needed = True
-        else:
-            req_text = _read(p, MAX_LOCK_BYTES).decode("utf-8")
-        req_source_path = p
-    else:
-        # Check standard locations in repo
-        uv_lock = repo / "uv.lock"
-        poetry_lock = repo / "poetry.lock"
-        pipfile_lock = repo / "Pipfile.lock"
-        req_lock = repo / "requirements.lock"
-        if uv_lock.is_file():
-            req_text = export_hash_locked_requirements(uv_lock)
-            export_needed = True
-            req_source_path = uv_lock
-        elif poetry_lock.is_file():
-            req_text = export_hash_locked_requirements(poetry_lock)
-            export_needed = True
-            req_source_path = poetry_lock
-        elif pipfile_lock.is_file():
-            req_text = export_hash_locked_requirements(pipfile_lock)
-            export_needed = True
-            req_source_path = pipfile_lock
-        elif req_lock.is_file():
-            req_text = _read(req_lock, MAX_LOCK_BYTES).decode("utf-8")
-            req_source_path = req_lock
-        else:
-            raise ValueError("No supported lockfile (uv.lock, poetry.lock, Pipfile.lock, requirements.lock) found in repository")
+    req_text, req_source_path, export_needed = load_requirement_profile(
+        repo, lock_file=lock_file, requirements_file=requirements_file)
 
     lock_bytes = req_text.encode("utf-8")
     packages = parse_locked_requirements(lock_bytes)

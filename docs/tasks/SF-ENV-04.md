@@ -74,3 +74,5 @@
 - 完整闭环支持现存主流 Python 包管理器与锁定工具（uv.lock / poetry.lock / Pipfile.lock / requirements.lock 及 pip-compile）。
 - 保持向后兼容：仓库原有的 `requirements.lock` 依然直接由 `pip download -r requirements.lock` 使用，无额外导出步骤；显式 `--lock` 时执行统一清洗归一化导出。
 
+
+Review: five regressions failed before correction (three uppercase plan entry points, valid epoch versions, and mixed invalid hash tokens). Planning/audit share bounded profile loading. Already buildable flat files keep export_command=None; inputs needing normalization return an explicit canonical export step instead of giving pip the unnormalized source. Invalid hash tokens cannot be silently erased.

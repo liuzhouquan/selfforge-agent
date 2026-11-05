@@ -165,14 +165,17 @@ def export_requirements_txt(content: bytes) -> str:
         if "==" not in pkg_spec:
             raise ValueError("Lock requires exact name==version pins with SHA-256 hashes")
         name, version = pkg_spec.split("==", 1)
-        if not name or not version or any(op in version for op in ("<", ">", "~", "=", "!")):
+        if not name or not version or any(op in version for op in ("<", ">", "~", "=")):
             raise ValueError("Invalid exact package version in lock file")
 
         hashes: set[str] = set()
         for token in parts[1:]:
             if token.startswith("--hash="):
                 h_val = token.split("=", 1)[1]
-                hashes.update(_hash(h_val))
+                parsed_hash = _hash(h_val)
+                if not parsed_hash:
+                    raise ValueError("Invalid SHA-256 hash in requirements lock")
+                hashes.update(parsed_hash)
             else:
                 raise ValueError("URLs, markers, extras and pip directives are unsupported")
 
