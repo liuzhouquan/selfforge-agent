@@ -99,3 +99,9 @@ Requirements must satisfy the same bounded strict format as build, including con
 Explicit local/editable/VCS source entries are excluded by the existing export contract. Their code/dependencies are not installed or verified by this profile; operators needing them must prepare an explicit supported wheel profile. An available-hash plan is not proof that the entire original project's environment is reproduced. The plan/builder still reject unsupported requirements syntax and audit all wheel bytes with fixed resource limits. Unknown lock filenames use bounded content detection, and discovery reads at most 5 MiB per file.
 
 Pipfile JSON validates both present sections and rejects duplicate keys and non-exact version syntax. Unresolved package markers are rejected, SHA-256 hex is normalized, and deeply malformed JSON/TOML returns a client error. This is a finite union of locked default/develop entries; Pipenv categories, extras/target selection, private index discovery and VCS/file installation are not implemented.
+
+## Audit and normalized flat profiles
+
+`sandbox audit` and local `POST /api/sandbox/audit` report hash readiness and discrepancies using the same bounded scanner as planning/building. The directory limit is1000 entries and200 wheels;128MiB includes lock bytes. Oversized files are rejected before reads, read/race errors abort, and finite audit timeouts are checked after I/O. A report is not an installability certificate.
+
+Pip-compile/flat locks can be normalized through `sandbox export-lock`. Planning returns an explicit export step when the source cannot be consumed directly by strict pip/build inputs (e.g. uppercase hash syntax); supported already-buildable files are used directly. Invalid hash tokens are rejected, and valid epoch versions are retained.

@@ -208,3 +208,5 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 新贡献者或 coding agent 从 [AGENTS.md](./AGENTS.md) 和[开发指南](./docs/development.md)开始，再按[协作流程](./docs/agent-workflow.md)领取一个任务。[任务卡模板](./docs/task-template.md)统一范围、验收和交接；[工程约束](./docs/engineering-invariants.md)按模块查阅。Roadmap 是方向，历史审计是指定版本的证据，都不能直接当成本轮整份任务单。贡献入口见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 CLI/Web 现使用统一协同工作区锁，CLI/API 可生成只读离线依赖准备计划与有界 wheelhouse 审计；升级与能力边界见[整合审查](./docs/incoming-branches-review.md)。
+
+新增工具：`sandbox audit` 检查离线 wheelhouse；`eval-diff` 比较评测报告并支持回归门禁；`workspaces audit` / `workspaces prune --dry-run` 审计和预览清理。来源元数据、权限与支持边界见[本轮审查](./docs/review-pr42-47.md)。旧53/60结果不代表新Runtime表现。
