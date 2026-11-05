@@ -1,11 +1,11 @@
 # SF-RUN-05：代码修改目标定位失败与连续重试回退指导
 
-- 状态：In Progress
+- 状态：In Review
 - Owner：Antigravity Agent
 - 基线：`4ecd6a5b6727fb2e2938cf15c929a7001ae4f849`（`origin/main`）
 - 分支 / 所属 worktree：`feat/runtime-edit-failure-guidance`
 - 依赖：无（基于已合并的 PR #47 / main）
-- PR：待创建
+- PR：[#49](https://github.com/liuzhouquan/selfforge-agent/pull/49)
 
 ## 目标与范围
 
@@ -78,5 +78,6 @@
 
 ## Handoff
 
-- 交付状态：实施与全量验证已完成，准备提交并推送 PR。
+- 交付状态：实施与全量验证已完成，PR [#49](https://github.com/liuzhouquan/selfforge-agent/pull/49) 已创建等待审查合并。
+- 当前分支：`feat/runtime-edit-failure-guidance`。主分支 `main` 保持纯净。
 
