@@ -89,3 +89,5 @@
 - 交付状态：实施与全量验证已完成，PR [#47](https://github.com/liuzhouquan/selfforge-agent/pull/47) 已创建等待审查合并。
 - 当前分支：`feat/workspace-prune-stale`。主分支 `main` 保持纯净。
 
+
+Review: all CLI/Web job managers share SELFFORGE_LOCKS_ROOT, including batch pruning. Actual removal and dry-run recheck current metadata, dirty/ignored inputs and ancestry while holding the lock. Ignored user data is protected; only real __pycache__, .pytest_cache and .ruff_cache directories are exempt as derived caches. Git's non-force dirty guard and branches are retained. Audit is a point-in-time diagnostic, not deletion authorization. External Git/editors remain outside advisory locking; batches are not filesystem transactions.

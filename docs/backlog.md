@@ -10,20 +10,20 @@
 | --- | --- | --- | --- |
 | SF-EVAL-01 | Complete | 15 个单题分支与原有 5 题形成 20 题 / 5 仓库池 | 审查修订 v2 通过真实 Docker 参考正负控；不是模型成绩 |
 | SF-RUN-01 | Complete | CLI Coding/交付/删除与 Web 任务统一排他锁 | 同一用户/XDG；自定义存储目录共享锁；升级先停止旧 worker |
-| SF-WS-02 | In Progress | 工作区孤立 Worktree 状态审计与安全批量清理 | 详见 [SF-WS-02](./tasks/SF-WS-02.md)；审计锁/修改/合并状态，保护 dirty/locked 数据，CLI 与 API |
+| SF-WS-02 | Complete | 工作区孤立 Worktree 状态审计与安全批量清理 | PR #47；Web/CLI共享锁，持锁重查dirty/ignored/merged；保留分支和用户输入 |
 | SF-EVAL-02 | Complete | 冻结 v2 清单、参考/holdout 哈希及模型/预算/失败策略 | [v2 策略](../benchmark/validated-candidates/twenty-tasks-v2.md)；旧 v1 保留历史 |
 | SF-EVAL-03 | Complete | 按 v2 策略完成每题 3 次真实模型运行并报告 | 20 题 × 3 次 = 60 次已完成，53/60（88.33%）；环境来源记录有限，见 [评测记录](./evaluation.md) |
 | SF-ENV-01 | Complete | 只读离线准备计划及有界哈希 wheelhouse 审计 | CLI/API；不自动下载、不保证安装成功；见[审查记录](./incoming-branches-review.md) |
 | SF-RUN-02 | Complete | 倒数第二轮与末轮预算提示纠正 | PR #38；仅改进提示并保留既有执行保护，未验证模型成功率提升 |
 | SF-RUN-03 | Complete | 中断、超时与异常下保留已完成模型轮次数 | PR #39；当前模型调用未返回不计入，工具阶段异常保留当前轮 |
-| SF-RUN-04 | In Progress | 只读工具死循环检测与瞬态预算引导 | 详见 [SF-RUN-04](./tasks/SF-RUN-04.md)；检测未修改阶段只读重复调用，在瞬态 budget_notice 中引导 |
+| SF-RUN-04 | Complete | 只读工具死循环检测与瞬态预算引导 | PR #45；只读循环仅建议，清除旧任务/旧轮诊断，不宣称成功率提升 |
 | SF-ENV-02 | Complete | 有限 Poetry/uv 锁文件哈希识别与离线导出 | PR #40；条件标记和版本分叉拒绝，VCS/本地源排除范围见依赖文档 |
 | SF-ENV-03 | Complete | 有限 Pipfile.lock 哈希识别与离线导出 | PR #41；default/develop 严格校验，条件标记拒绝，不替代 Pipenv 解析器 |
-| SF-EVAL-04 | Complete | 在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置 | PR 待审；单独补来源元数据与相关回归；不重跑或改写旧 53/60 结果 |
+| SF-EVAL-04 | Complete | 在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置 | PR #42；开始时记录来源并脱敏；旧53/60历史报告不补写 |
 | SF-ENV-04 | Complete | 有界 pip-compile / flat 锁导出和规范化计划 | PR #43；仅规范化后才能构建的输入会返回显式 export_command |
 | SF-ENV-05 | Complete | 共享有界 wheelhouse 审计与哈希就绪诊断 | PR #44；失败/超时不报告 ready，不证明可安装性 |
-| SF-RUN-04 | Complete | 当前任务/最新轮次只读循环提示 | PR #45；仅建议，final-only 不注入循环建议 |
 | SF-EVAL-05 | Complete | 实际报告schema比较和回归门禁 | PR #46；计数精确比较，缺失/无效输入不能通过门禁 |
+| SF-EVAL-06 | Ready | 增加1道真实仓库多文件修改任务的参考正负控 | 独立新manifest；记录契约与许可证，不改历史成绩；先完成无模型资格验证 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
