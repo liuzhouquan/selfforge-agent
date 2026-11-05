@@ -5,7 +5,7 @@
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`
 - 分支 / 所属 worktree：`feat/eval-automatic-run-provenance`
 - 依赖：PR #37, PR #38, PR #39, PR #40, PR #41 已合并入 main
-- PR：尚未创建
+- PR：https://github.com/liuzhouquan/selfforge-agent/pull/42
 
 ## 目标与范围
 
@@ -90,10 +90,10 @@
 
 ## Handoff
 
-- 交付状态：本地实现完成，已通过全量回归与集成测试，准备提交 PR
-- 当前 HEAD：`602df51ccaf7e81a9eb97651a23c891516e73afc`（main 基线）
+- 交付状态：PR 已创建（#42），CI 与评审就绪
+- 当前 HEAD：`9a9fecd`（分支提交），基于 main 基线 `602df51ccaf7e81a9eb97651a23c891516e73afc`
 - 已完成：A1, A2, A3, A4, A5, A6
 - 未完成/环境限制：无
 - 最近验证：`uv run --no-sync pytest -q`（416 passed）与 `uv run --no-sync pytest -q -m integration`（11 passed）
 - 仍在运行：无
-- 下一步：创建 Pull Request 并推送到远端仓库
+- 下一步：等待 PR #42 审查合并；合并后推进下一个 Ready 工作单元
