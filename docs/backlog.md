@@ -21,6 +21,8 @@
 | SF-EVAL-04 | Complete | 在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置 | PR 待审；单独补来源元数据与相关回归；不重跑或改写旧 53/60 结果 |
 | SF-ENV-04 | Complete | 有界 pip-compile / flat 锁导出和规范化计划 | PR #43；仅规范化后才能构建的输入会返回显式 export_command |
 | SF-ENV-05 | Complete | 共享有界 wheelhouse 审计与哈希就绪诊断 | PR #44；失败/超时不报告 ready，不证明可安装性 |
+| SF-RUN-04 | Complete | 当前任务/最新轮次只读循环提示 | PR #45；仅建议，final-only 不注入循环建议 |
+| SF-EVAL-05 | Complete | 实际报告schema比较和回归门禁 | PR #46；计数精确比较，缺失/无效输入不能通过门禁 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 

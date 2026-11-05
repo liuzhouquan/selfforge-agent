@@ -4,7 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 from threading import Event
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -51,6 +51,7 @@ from selfforge_agent.providers import (
 )
 from selfforge_agent.review.deepseek import DeepSeekReviewError, ProviderReviewer
 from selfforge_agent.runtime.agent import CodingAgent
+from selfforge_agent.runtime.benchmark_diff import diff_eval_reports, format_eval_diff
 from selfforge_agent.runtime.delivery import (
     CommitResult,
     DeliveryError,
@@ -244,6 +245,10 @@ class EnvironmentPlanRequest(BaseModel):
     requirements_file: str | None = None
 
 
+class BenchmarkDiffRequest(BaseModel):
+    before_report: dict[str, Any]
+    after_report: dict[str, Any]
+    format: Literal["json", "markdown", "text"] = "json"
 class WheelhouseAuditRequest(BaseModel):
     wheelhouse: str
     repository: str | None = None
@@ -339,6 +344,16 @@ def sandbox_plan(request: EnvironmentPlanRequest, client: Request) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/benchmark/diff")
+def benchmark_diff(request: BenchmarkDiffRequest, client: Request) -> dict:
+    _require_local(client)
+    try:
+        diff = diff_eval_reports(request.before_report, request.after_report)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request.format != "json":
+        return {"diff": diff, "rendered": format_eval_diff(diff, format=request.format)}
+    return diff
 @app.post("/api/sandbox/audit")
 def sandbox_audit(request: WheelhouseAuditRequest, client: Request) -> dict:
     _require_local(client)

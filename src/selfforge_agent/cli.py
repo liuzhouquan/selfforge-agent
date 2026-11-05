@@ -15,6 +15,11 @@ from selfforge_agent.core.git_context import GitContextError, build_context
 from selfforge_agent.providers import ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
+from selfforge_agent.runtime.benchmark_diff import (
+    diff_eval_reports,
+    format_eval_diff,
+    read_eval_report,
+)
 from selfforge_agent.runtime.delivery import (
     DeliveryError,
     commit_workspace,
@@ -215,6 +220,12 @@ def main(argv: list[str] | None = None) -> int:
     validation.add_argument("--image", default="selfforge-agent-sandbox:latest")
     validation.add_argument("--test-timeout", type=float, default=60)
     validation.add_argument("--output", type=Path)
+    eval_diff = subcommands.add_parser("eval-diff", help="Compare two benchmark evaluation reports and report regressions")
+    eval_diff.add_argument("before", type=Path, help="Path to baseline evaluation summary JSON")
+    eval_diff.add_argument("after", type=Path, help="Path to comparison evaluation summary JSON")
+    eval_diff.add_argument("--format", choices=["json", "markdown", "text"], default="markdown", help="Output format")
+    eval_diff.add_argument("--output", type=Path, help="Write diff report to file")
+    eval_diff.add_argument("--fail-on-regression", action="store_true", help="Exit code 1 if any case regressed or success rate dropped")
     review = subcommands.add_parser("review", help="Review a local Git comparison")
     review.add_argument("--repo", type=Path, required=True)
     review.add_argument("--base", required=True)
@@ -353,6 +364,33 @@ def main(argv: list[str] | None = None) -> int:
         if args.output:
             args.output.write_text(rendered, encoding="utf-8")
         print(rendered, end="")
+        return 0
+    if args.command == "eval-diff":
+        if args.output and any(args.output.resolve() == p.resolve() or (args.output.exists() and p.exists() and args.output.samefile(p)) for p in (args.before, args.after)):
+            parser.error("Diff output must not overwrite an input report")
+        if not args.before.is_file():
+            parser.error(f"Baseline report file does not exist: {args.before}")
+        if not args.after.is_file():
+            parser.error(f"Comparison report file does not exist: {args.after}")
+        try:
+            before_data = read_eval_report(args.before)
+            after_data = read_eval_report(args.after)
+            diff = diff_eval_reports(before_data, after_data)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        if args.format == "json":
+            rendered = json.dumps(diff, ensure_ascii=False, indent=2) + "\n"
+        else:
+            rendered = format_eval_diff(diff, format=args.format)
+        if args.output:
+            args.output.write_text(rendered, encoding="utf-8")
+        else:
+            print(rendered, end="")
+        if args.fail_on_regression:
+            if not diff["comparable"]:
+                return 2
+            has_regressed = len(diff.get("regressed", [])) > 0 or diff["summary"]["success_rate"]["delta"] < 0
+            return 1 if has_regressed else 0
         return 0
     if args.command == "code":
         return _run_code(args, parser)
