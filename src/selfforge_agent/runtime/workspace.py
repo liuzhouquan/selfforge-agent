@@ -19,6 +19,59 @@ _SESSION_ID = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 
 
+CACHE_DIR_NAMES = frozenset({
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".tox",
+    ".nox",
+    "build",
+    "dist",
+    ".eggs",
+})
+
+
+def measure_directory(
+    path: Path,
+    *,
+    max_files: int = 50_000,
+    cache_dir_names: frozenset[str] = CACHE_DIR_NAMES,
+) -> tuple[int, int, int]:
+    """Measure (total_bytes, cache_bytes, file_count) of directory safely without following symlinks."""
+    total_bytes = 0
+    cache_bytes = 0
+    file_count = 0
+
+    if not path.is_dir() or path.is_symlink():
+        return 0, 0, 0
+
+    for root, dirs, files in os.walk(path, followlinks=False):
+        try:
+            rel_parts = Path(root).relative_to(path).parts
+        except ValueError:
+            continue
+        is_cache_dir = any(part in cache_dir_names for part in rel_parts)
+
+        for filename in files:
+            file_count += 1
+            if file_count > max_files:
+                break
+            filepath = os.path.join(root, filename)
+            try:
+                stat = os.lstat(filepath)
+                size = stat.st_size
+                total_bytes += size
+                if is_cache_dir:
+                    cache_bytes += size
+            except (OSError, ValueError):
+                continue
+        if file_count > max_files:
+            break
+
+    return total_bytes, cache_bytes, file_count
+
+
 class WorkspaceError(ValueError):
     """A Coding worktree cannot be created, resumed, or removed safely."""
 
@@ -284,3 +337,94 @@ class CodingWorkspaceManager:
             finally:
                 unlock_workspace(fd)
         return result
+
+    def audit_storage(
+        self,
+        repository: Path,
+        *,
+        quota_bytes: int | None = None,
+        head_ref: str = "HEAD",
+        max_files_per_worktree: int = 50_000,
+    ) -> dict[str, Any]:
+        repo = self.validate_repository(repository)
+        workspaces_data = []
+        total_repo_bytes = 0
+        total_repo_cache_bytes = 0
+        total_reclaimable_bytes = 0
+        prunable_count = 0
+        locked_count = 0
+        dirty_count = 0
+
+        for ws in self.list(repo):
+            fd = try_workspace_lock(ws.path, root=self.locks_root)
+            is_locked = fd is None
+            if fd is not None:
+                unlock_workspace(fd)
+            if is_locked:
+                locked_count += 1
+
+            is_dirty = self._dirty(ws)
+            if is_dirty:
+                dirty_count += 1
+
+            is_merged = self._merged(ws, head_ref)
+            prunable = not is_locked and not is_dirty and is_merged
+            if prunable:
+                prunable_count += 1
+
+            total_b, cache_b, f_count = measure_directory(
+                ws.path, max_files=max_files_per_worktree
+            )
+            reclaimable_b = total_b if prunable else cache_b
+
+            total_repo_bytes += total_b
+            total_repo_cache_bytes += cache_b
+            total_reclaimable_bytes += reclaimable_b
+
+            workspaces_data.append({
+                "session_id": ws.session_id,
+                "path": str(ws.path),
+                "branch": ws.branch,
+                "base_sha": ws.base_sha,
+                "total_bytes": total_b,
+                "cache_bytes": cache_b,
+                "file_count": f_count,
+                "is_locked": is_locked,
+                "is_dirty": is_dirty,
+                "is_merged": is_merged,
+                "prunable": prunable,
+                "reclaimable_bytes": reclaimable_b,
+            })
+
+        quota_exceeded = (total_repo_bytes > quota_bytes) if quota_bytes is not None else False
+        recommendations = []
+        if quota_exceeded and quota_bytes is not None:
+            over_bytes = total_repo_bytes - quota_bytes
+            recommendations.append(
+                f"Workspaces total size ({total_repo_bytes} bytes) exceeds quota "
+                f"({quota_bytes} bytes) by {over_bytes} bytes."
+            )
+        if prunable_count > 0:
+            recommendations.append(
+                f"{prunable_count} prunable workspace(s) can be safely pruned to reclaim storage."
+            )
+        if total_repo_cache_bytes > 0:
+            recommendations.append(
+                f"{total_repo_cache_bytes} bytes of ephemeral caches (__pycache__, .pytest_cache) detected across worktrees."
+            )
+        if locked_count > 0:
+            recommendations.append(
+                f"{locked_count} workspace(s) are currently locked by active processes."
+            )
+
+        return {
+            "repository": str(repo),
+            "workspace_count": len(workspaces_data),
+            "total_bytes": total_repo_bytes,
+            "total_cache_bytes": total_repo_cache_bytes,
+            "reclaimable_bytes": total_reclaimable_bytes,
+            "quota_bytes": quota_bytes,
+            "quota_exceeded": quota_exceeded,
+            "recommendations": recommendations,
+            "workspaces": workspaces_data,
+        }

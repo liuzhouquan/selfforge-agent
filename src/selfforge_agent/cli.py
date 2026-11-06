@@ -181,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     trace.add_argument("--summary", action="store_true",
                        help="Print aggregate token usage and estimated cost")
     workspaces = subcommands.add_parser("workspaces", help="Inspect, commit, revert, or create PRs from Coding worktrees")
-    workspaces.add_argument("action", choices=["list", "remove", "diff", "commit", "pr", "revert", "audit", "prune"])
+    workspaces.add_argument("action", choices=["audit", "commit", "diff", "list", "pr", "prune", "remove", "revert", "storage"])
     workspaces.add_argument("session_id", nargs="?")
     workspaces.add_argument("--repo", type=Path, default=Path.cwd())
     workspaces.add_argument("--message", "-m", help="Commit message for 'commit' action")
@@ -194,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
     workspaces.add_argument("--draft", action="store_true", help="Create draft PR")
     workspaces.add_argument("--dry-run", action="store_true", help="Preview worktrees to prune without removing")
     workspaces.add_argument("--include-unmerged", action="store_true", help="Include unmerged clean worktrees when pruning")
+    workspaces.add_argument("--quota-bytes", type=int, help="Optional byte quota threshold for workspace storage audit")
+    workspaces.add_argument("--output", type=Path, help="Optional path to write JSON storage report")
     workspaces.add_argument("--json", action="store_true", help="Format output as JSON")
     evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
     evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
@@ -536,6 +538,46 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"Skipped {len(result['skipped_dirty'])} dirty workspace(s): {', '.join(result['skipped_dirty'])}")
                     if result["skipped_unmerged"]:
                         print(f"Skipped {len(result['skipped_unmerged'])} unmerged workspace(s): {', '.join(result['skipped_unmerged'])}")
+            elif args.action == "storage":
+                if args.session_id:
+                    parser.error("workspaces storage does not take a session ID")
+                report = manager.audit_storage(args.repo, quota_bytes=args.quota_bytes)
+                if getattr(args, "json", False) or getattr(args, "output", None):
+                    rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+                    if args.output:
+                        args.output.write_text(rendered, encoding="utf-8")
+                        print(f"Workspace storage audit report written to {args.output}")
+                    else:
+                        print(rendered, end="")
+                else:
+                    print(f"Workspace Storage Audit ({report['repository']}):")
+                    print(f"  Active Workspaces: {report['workspace_count']}")
+                    print(f"  Total Space: {report['total_bytes']:,} bytes (Caches: {report['total_cache_bytes']:,} bytes)")
+                    print(f"  Reclaimable Storage: {report['reclaimable_bytes']:,} bytes")
+                    if report["quota_bytes"] is not None:
+                        status_str = "EXCEEDED" if report["quota_exceeded"] else "OK"
+                        print(f"  Quota: {report['quota_bytes']:,} bytes [{status_str}]")
+                    if report["recommendations"]:
+                        print("  Recommendations:")
+                        for rec in report["recommendations"]:
+                            print(f"    - {rec}")
+                    if report["workspaces"]:
+                        print("\nWorkspaces:")
+                        for ws in report["workspaces"]:
+                            flags = []
+                            if ws["is_locked"]:
+                                flags.append("locked")
+                            if ws["is_dirty"]:
+                                flags.append("dirty")
+                            if ws["is_merged"]:
+                                flags.append("merged")
+                            if ws["prunable"]:
+                                flags.append("prunable")
+                            flag_desc = f" [{', '.join(flags)}]" if flags else ""
+                            print(f"  {ws['session_id']} ({ws['branch']}){flag_desc}:")
+                            print(f"    Path: {ws['path']}")
+                            print(f"    Size: {ws['total_bytes']:,} bytes ({ws['file_count']} files) | Caches: {ws['cache_bytes']:,} bytes")
+                return 1 if report["quota_exceeded"] else 0
         except (ValueError, RuntimeError, OSError, DeliveryError) as exc:
             parser.error(str(exc))
         return 0
