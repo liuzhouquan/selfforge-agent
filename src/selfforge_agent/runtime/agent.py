@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from selfforge_agent.runtime.context import ContextManager
-from selfforge_agent.runtime.control import budget_notice, detect_tool_loop
+from selfforge_agent.runtime.control import (
+    budget_notice,
+    detect_tool_loop,
+    evaluate_context_pressure,
+)
 from selfforge_agent.runtime.environment import bind_environment
 from selfforge_agent.runtime.fingerprint import WorkspaceSnapshotError, workspace_fingerprint
 from selfforge_agent.runtime.model import (
@@ -149,6 +153,7 @@ class CodingAgent:
             bind_environment(self.tools.executor, self.session,
                              timeout=min(10, deadline - time.monotonic()), resume=resume)
             tests_passed = tests_passed and self.session.verification_passed()
+            was_compacted = False
             for step in range(1, self.max_steps + 1):
                 if self.cancel.is_set():
                     return self._finish("cancelled", "", completed_steps, tools_used)
@@ -159,12 +164,24 @@ class CodingAgent:
                     return self._finish("timed_out", "", completed_steps, tools_used)
                 final_only = step == self.max_steps and tests_passed
                 loop_info = None if final_only else detect_tool_loop(messages)
+                estimated_tokens = self.context.estimate(messages)
+                has_summary = any(
+                    m.get("role") == "system"
+                    and str(m.get("content", "")).startswith("Earlier steps (compressed;")
+                    for m in messages
+                )
+                context_info = None if final_only else evaluate_context_pressure(
+                    estimated_tokens,
+                    self.context.token_budget,
+                    was_compacted=(was_compacted or has_summary),
+                )
                 notice = budget_notice(step=step, max_steps=self.max_steps,
                                        remaining_seconds=remaining, tests_passed=tests_passed,
-                                       tool_loop=loop_info)
+                                       tool_loop=loop_info, context_info=context_info)
                 messages, compacted = self.context.compact(
                     messages, reserve_tokens=self.context.estimate([notice]), preserve_recent_turns=2)
                 if compacted:
+                    was_compacted = True
                     self.session.record_compaction(messages)
                 # Keep generated controls outside durable conversation history:
                 # resumed runs receive fresh budgets, and compaction cannot retain
@@ -181,7 +198,10 @@ class CodingAgent:
                                    remaining_turns=self.max_steps - step + 1,
                                    remaining_seconds=round(remaining, 3),
                                    verification_passed=tests_passed, final_only=final_only,
-                                   tool_loop=loop_info["tool"] if loop_info else None)
+                                   tool_loop=loop_info["tool"] if loop_info else None,
+                                   context_tokens=estimated_tokens,
+                                   context_budget=self.context.token_budget,
+                                   context_compacted=was_compacted or compacted)
                 started = time.monotonic()
                 turn = self.model.complete(request_messages,
                                            [] if final_only else self.tools.schemas(),
