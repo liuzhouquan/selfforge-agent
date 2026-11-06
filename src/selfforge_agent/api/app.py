@@ -63,6 +63,7 @@ from selfforge_agent.runtime.delivery import (
 )
 from selfforge_agent.runtime.environment import (
     audit_wheelhouse,
+    check_dependency_freshness,
     detect_repository_environment,
     plan_environment_preparation,
 )
@@ -257,6 +258,12 @@ class WheelhouseAuditRequest(BaseModel):
     timeout: float = 10.0
 
 
+class DependencyFreshnessRequest(BaseModel):
+    repository: str
+    lock_file: str | None = None
+    requirements_file: str | None = None
+
+
 class CodingWorkspaceRequest(BaseModel):
     repository: str = Field(min_length=1)
 
@@ -393,6 +400,22 @@ def sandbox_audit(request: WheelhouseAuditRequest, client: Request) -> dict:
             lock_file=lock_file,
             requirements_file=requirements_file,
             timeout=request.timeout,
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/sandbox/freshness")
+def sandbox_freshness(request: DependencyFreshnessRequest, client: Request) -> dict:
+    _require_local(client)
+    repo = Path(request.repository).expanduser().absolute()
+    lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
+    requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
+    try:
+        return check_dependency_freshness(
+            repo,
+            lock_file=lock_file,
+            requirements_file=requirements_file,
         )
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
