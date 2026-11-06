@@ -24,7 +24,7 @@
 | SF-ENV-05 | Complete | 共享有界 wheelhouse 审计与哈希就绪诊断 | PR #44；失败/超时不报告 ready，不证明可安装性 |
 | SF-EVAL-05 | Complete | 实际报告schema比较和回归门禁 | PR #46；计数精确比较，缺失/无效输入不能通过门禁 |
 | SF-EVAL-06 | Ready | 增加1道真实仓库多文件修改任务的参考正负控 | 独立新manifest；记录契约与许可证，不改历史成绩；先完成无模型资格验证 |
-| SF-ENV-06 | In Progress | 依赖声明与锁文件一致性新鲜度校验与 Dry-run 诊断 | 详见 [SF-ENV-06](./tasks/SF-ENV-06.md)；静态解析声明与锁定覆盖校验，脱节诊断 |
+| SF-ENV-06 | In Review | 依赖声明与锁文件一致性新鲜度校验与 Dry-run 诊断 | PR #51；详见 [SF-ENV-06](./tasks/SF-ENV-06.md)；静态解析声明与锁定覆盖校验，脱节诊断 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
