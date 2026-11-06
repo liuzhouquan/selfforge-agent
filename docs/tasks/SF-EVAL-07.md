@@ -5,7 +5,7 @@
 - 基线：`4ecd6a5b6727fb2e2938cf15c929a7001ae4f849`（`origin/main`）
 - 分支 / 所属 worktree：`feat/eval-boltons-multi-file-task`
 - 依赖：无（基于已合并的 PR #47 / main）
-- PR：待创建
+- PR：[#52](https://github.com/liuzhouquan/selfforge-agent/pull/52)
 
 ## 目标与范围
 
