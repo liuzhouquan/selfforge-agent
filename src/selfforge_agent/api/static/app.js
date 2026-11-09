@@ -14,7 +14,18 @@ let codingPollTimer = null;
 let codingDiffJobId = null;
 
 function providerLabel(name) {
-  return name === "deepseek" ? "DeepSeek" : name === "openrouter" ? "OpenRouter" : name;
+  const labels = {
+    deepseek: "DeepSeek",
+    openrouter: "OpenRouter",
+    opencode: "OpenCode",
+    chatgpt: "ChatGPT (OpenAI)",
+    claude: "Claude (Anthropic)",
+    gemini: "Gemini (Google)",
+    grok: "Grok (xAI)",
+    kimi: "Kimi (Moonshot)",
+    glm: "GLM (智谱AI)",
+  };
+  return labels[name] || name;
 }
 
 function providerStatusLabel(status) {
@@ -757,13 +768,18 @@ function applyConfig(config) {
   configuredProviders = config.providers.filter((item) => item.configured);
   $("model-state").textContent = configuredProviders.length ? `已配置：${configuredProviders.map((item) => `${item.label} (${item.model})`).join("、")}` : "未检测到模型密钥，规则审查可用";
   for (const item of config.providers) {
-    $(`${item.name}-url`).value = item.base_url;
-    $(`${item.name}-model`).value = item.model;
-    $(`${item.name}-key-state`).textContent = item.configured ? `已连接 · ${item.key_source === "local" ? "本地密钥" : "环境变量"}` : "未连接";
+    const urlInput = $(`${item.name}-url`);
+    const modelInput = $(`${item.name}-model`);
+    const keyState = $(`${item.name}-key-state`);
+    if (urlInput) urlInput.value = item.base_url;
+    if (modelInput) modelInput.value = item.model;
+    if (keyState) {
+      keyState.textContent = item.configured ? `已连接 · ${item.key_source === "local" ? "本地密钥" : "环境变量"}` : "未连接";
+    }
   }
   for (const select of [$("review-provider"), $("repair-provider"), $("coding-provider"), $("testgen-provider")]) {
     for (const option of select.options) {
-      if (["deepseek", "openrouter"].includes(option.value)) option.disabled = !configuredProviders.some((item) => item.name === option.value);
+      if (!["auto", "rules"].includes(option.value)) option.disabled = !configuredProviders.some((item) => item.name === option.value);
     }
   }
   hostTestsEnabled = config.host_tests_enabled;

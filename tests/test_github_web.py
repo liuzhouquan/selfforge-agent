@@ -311,11 +311,15 @@ def test_provider_status_check_does_not_expose_keys(monkeypatch: pytest.MonkeyPa
     client = TestClient(app)
     config = client.get("/api/config")
     assert config.status_code == 200
-    assert [item["configured"] for item in config.json()["providers"]] == [True, True]
+    configured_map = {item["name"]: item["configured"] for item in config.json()["providers"]}
+    assert configured_map["deepseek"] is True
+    assert configured_map["openrouter"] is True
     assert "test-key" not in config.text
     statuses = client.post("/api/providers/check", json={"provider": "all"})
     assert statuses.status_code == 200
-    assert [item["status"] for item in statuses.json()] == ["ready", "ready"]
-    assert statuses.json()[0]["balance"] == "5.00 USD"
-    assert statuses.json()[1]["balance"] == "$2.5000 remaining"
+    status_map = {item["name"]: item for item in statuses.json()}
+    assert status_map["deepseek"]["status"] == "ready"
+    assert status_map["openrouter"]["status"] == "ready"
+    assert status_map["deepseek"]["balance"] == "5.00 USD"
+    assert status_map["openrouter"]["balance"] == "$2.5000 remaining"
     assert "test-key" not in statuses.text
