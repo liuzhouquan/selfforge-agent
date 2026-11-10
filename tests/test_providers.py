@@ -53,7 +53,7 @@ def test_provider_check_classifies_invalid_key_and_empty_balance(
         providers, "request_json", lambda *_args, **_kwargs: {"data": [{"id": "gpt-4o"}]}
     )
     assert providers.check_provider(chatgpt).status == "ready"
-    assert providers.check_provider(chatgpt).balance == "API Key 有效"
+    assert providers.check_provider(chatgpt).balance == "模型列表可访问；推理权限与额度尚未验证"
 
 
 def test_settings_save_and_discover_models_without_exposing_key(

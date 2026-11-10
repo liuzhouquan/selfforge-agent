@@ -53,11 +53,11 @@ class AvailableModel(BaseModel):
 _DEFAULTS: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
     "deepseek": ("DeepSeek", "https://api.deepseek.com", "deepseek-flash", ("DEEPSEEK_API_KEY",)),
     "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-4.1-mini", ("OPENROUTER_API_KEY",)),
-    "opencode": ("OpenCode", "https://opencode.ai/zen/v1", "claude-3-5-sonnet", ("OPENCODE_API_KEY",)),
+    "opencode": ("OpenCode", "https://opencode.ai/inference/openai/v1", "glm-5.3", ("OPENCODE_API_KEY",)),
     "chatgpt": ("ChatGPT (OpenAI)", "https://api.openai.com/v1", "gpt-4o-mini", ("OPENAI_API_KEY", "CHATGPT_API_KEY")),
-    "claude": ("Claude (Anthropic)", "https://api.anthropic.com/v1", "claude-3-5-sonnet-20241022", ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY")),
-    "gemini": ("Gemini (Google)", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-1.5-flash", ("GEMINI_API_KEY",)),
-    "grok": ("Grok (xAI)", "https://api.x.ai/v1", "grok-beta", ("XAI_API_KEY", "GROK_API_KEY")),
+    "claude": ("Claude (Anthropic)", "https://api.anthropic.com/v1", "claude-sonnet-4-6", ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY")),
+    "gemini": ("Gemini (Google)", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-flash-latest", ("GEMINI_API_KEY",)),
+    "grok": ("Grok (xAI)", "https://api.x.ai/v1", "grok-4.3", ("XAI_API_KEY", "GROK_API_KEY")),
     "kimi": ("Kimi (Moonshot)", "https://api.moonshot.cn/v1", "moonshot-v1-8k", ("MOONSHOT_API_KEY", "KIMI_API_KEY")),
     "glm": ("GLM (智谱AI)", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash", ("ZHIPUAI_API_KEY", "GLM_API_KEY")),
 }
@@ -185,6 +185,19 @@ def token_usage_from_response(response: dict[str, object]) -> TokenUsage | None:
     )
 
 
+def json_object_options(base_url: str) -> dict[str, object]:
+    """Anthropic compatibility rejects json_object; consumers still validate output locally."""
+    if urlsplit(base_url).hostname == "api.anthropic.com":
+        return {}
+    return {"response_format": {"type": "json_object"}}
+
+
+def model_list_url(name: str, base_url: str) -> str:
+    if name == "opencode" and base_url == _DEFAULTS["opencode"][1]:
+        return "https://opencode.ai/inference/v1/models"
+    return base_url + "/models"
+
+
 def configured_providers() -> list[ProviderConfig]:
     settings = _settings()
     result = []
@@ -199,7 +212,7 @@ def configured_providers() -> list[ProviderConfig]:
         elif name == "openrouter":
             status_url = base_url + "/key"
         else:
-            status_url = base_url + "/models"
+            status_url = model_list_url(name, base_url)
         result.append(ProviderConfig(name=name, label=label, key=key, model=model,
                                      base_url=base_url, status_url=status_url))
     return result
@@ -219,7 +232,7 @@ def provider_info() -> list[ProviderInfo]:
 def list_models(item: ProviderConfig) -> list[AvailableModel]:
     if not item.key:
         raise ValueError("Configure an API key before syncing models")
-    response = request_json(item.base_url + "/models", item.key, timeout=15,
+    response = request_json(model_list_url(item.name, item.base_url), item.key, timeout=15,
                             max_bytes=8_000_000)
     data = response.get("data")
     if not isinstance(data, list):
@@ -291,4 +304,10 @@ def check_provider(item: ProviderConfig) -> ProviderStatus:
             balance=f"${remaining:.4f} remaining" if remaining is not None else "No key credit cap",
             usage=f"${used:.4f} used" if isinstance(used, (int, float)) else None,
         )
-    return ProviderStatus(name=item.name, status="ready", balance="API Key 有效")
+    models = response.get("data")
+    if ("error" in response or not isinstance(models, list) or not models
+            or any(not isinstance(model, dict) or not isinstance(model.get("id"), str)
+                   or not model["id"].strip() for model in models)):
+        return ProviderStatus(name=item.name, status="unavailable", error="Invalid models response")
+    return ProviderStatus(name=item.name, status="ready",
+                          balance="模型列表可访问；推理权限与额度尚未验证")

@@ -2,7 +2,7 @@
 
 - 状态：In Review
 - Owner：Antigravity Agent
-- 基线：`4ecd6a5b6727fb2e2938cf15c929a7001ae4f849`（`origin/main`）
+- 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/expand-provider-presets`
 - 依赖：无（基于已合并的 PR #47 / main）
 - PR：[#55](https://github.com/liuzhouquan/selfforge-agent/pull/55)
@@ -18,16 +18,16 @@
 
 本次完成后应观察到：
 1. `src/selfforge_agent/providers.py` 扩充预设至 9 家常见供应商：
-   - `opencode`：OpenCode Zen（`https://opencode.ai/zen/v1`，默认 `claude-3-5-sonnet`，环境变量 `OPENCODE_API_KEY`）
+   - `opencode`：OpenCode Zen（`https://opencode.ai/inference/openai/v1`，默认 `glm-5.3`，环境变量 `OPENCODE_API_KEY`）
    - `chatgpt`：ChatGPT (OpenAI)（`https://api.openai.com/v1`，默认 `gpt-4o-mini`，环境变量 `OPENAI_API_KEY` / `CHATGPT_API_KEY`）
-   - `claude`：Claude (Anthropic)（`https://api.anthropic.com/v1`，默认 `claude-3-5-sonnet-20241022`，环境变量 `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`）
-   - `gemini`：Gemini (Google)（`https://generativelanguage.googleapis.com/v1beta/openai`，默认 `gemini-1.5-flash`，环境变量 `GEMINI_API_KEY`）
-   - `grok`：Grok (xAI)（`https://api.x.ai/v1`，默认 `grok-beta`，环境变量 `XAI_API_KEY` / `GROK_API_KEY`）
+   - `claude`：Claude (Anthropic)（`https://api.anthropic.com/v1`，默认 `claude-sonnet-4-6`，环境变量 `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY`）
+   - `gemini`：Gemini (Google)（`https://generativelanguage.googleapis.com/v1beta/openai`，默认 `gemini-flash-latest`，环境变量 `GEMINI_API_KEY`）
+   - `grok`：Grok (xAI)（`https://api.x.ai/v1`，默认 `grok-4.3`，环境变量 `XAI_API_KEY` / `GROK_API_KEY`）
    - `kimi`：Kimi (Moonshot)（`https://api.moonshot.cn/v1`，默认 `moonshot-v1-8k`，环境变量 `MOONSHOT_API_KEY` / `KIMI_API_KEY`）
    - `glm`：GLM (智谱AI)（`https://open.bigmodel.cn/api/paas/v4`，默认 `glm-4-flash`，环境变量 `ZHIPUAI_API_KEY` / `GLM_API_KEY`）
 2. 通用健康检查机制：
    - 对新增的通用 OpenAI 兼容供应商，默认探测 `${base_url}/models`，将响应上限提升至 256KB。
-   - 当返回 HTTP 200 且格式有效时报告 `status="ready"`、`balance="API Key 有效"`，精确区分 `invalid_key`、`insufficient_credits` 与 `unavailable`。
+   - 当返回 HTTP 200 且格式有效时报告 `status="ready"`、`balance="模型列表可访问；推理权限与额度尚未验证"`，精确区分 `invalid_key`、`insufficient_credits` 与 `unavailable`。
 3. 全链路 CLI 与 Web UI 贯通：
    - CLI 子命令（`code`、`eval`、`eval-suite`、`repair`、`generate-test`）统一动态读取 `_DEFAULTS` 选项。
    - Web 页面各任务模块下拉菜单完整接入 9 个供应商选项。
@@ -85,3 +85,14 @@
 
 - 交付状态：开发与本地验证已就绪，准备推送到 GitHub 远端并提交 PR #55。
 - 分支：`feat/expand-provider-presets`
+
+
+## 2026-11-10 审查修复与验收边界
+
+- 健康检查必须返回非空 models 数组且每项含有效 ID；空对象、错误对象、非法或空列表均为 unavailable。`ready` 只表示目录可访问，不证明推理权限、余额或付费调用成功。
+- Anthropic 官方提供 OpenAI 兼容层，Bearer/base URL 本身不是缺陷；它不接受 json_object。原生 Anthropic endpoint 的 Review/Repair 请求省略该选项，继续用本地 Pydantic 校验输出，不接受无效 JSON。
+- OpenCode 预设采用 Chat Completions endpoint；默认模型 glm-5.3，模型目录单独使用 `https://opencode.ai/inference/v1/models`。自定义 Base URL 仍使用自己的 `/models`，不会把其凭证发往默认目录。
+- 更新已退役或陈旧默认值，保留环境/本地手动覆盖；chatgpt 是 OpenAI API 预设，不是网页订阅、OAuth 或 Codex CLI 接入。Claude 的 key 应为有适当 workspace 权限的 API key；本任务未新增 workspace 选择器。
+- 默认值和协议按官方文档核对，未调用任何真实付费模型。API 账户权限、模型访问范围和真实推理必须由用户对应账户验证；模型目录列表不是推理 smoke。
+- 原 PR 的 CI 因 CLI 导入顺序失败；已按 Ruff 修正。审查工作区与主工作区分离，未修改主工作区已有 cli.py/backlog.md 的未提交内容。
+- 详细 Standards/Spec 发现及实际验证见 [供应商审查](../provider-presets-review-2026-11-10.md)。PR 的最新提交 CI 通过后才合并。

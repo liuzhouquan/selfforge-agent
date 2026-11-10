@@ -12,7 +12,7 @@ from selfforge_agent.coding.risk_prioritization import prioritize_risks
 from selfforge_agent.coding.test_generation import DifferentialTestGenerator, RiskTarget
 from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError, build_context
-from selfforge_agent.providers import ProviderConfig, route_providers, _DEFAULTS
+from selfforge_agent.providers import _DEFAULTS, ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
 from selfforge_agent.runtime.benchmark_diff import (

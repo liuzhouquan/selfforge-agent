@@ -11,6 +11,7 @@ from selfforge_agent.providers import (
     ModelAttempt,
     ProviderConfig,
     TokenUsage,
+    json_object_options,
     token_usage_from_response,
 )
 
@@ -58,7 +59,7 @@ class OpenAICompatibleCodingModel:
                 },
                 {"role": "user", "content": observation.model_dump_json()},
             ],
-            "response_format": {"type": "json_object"},
+            **json_object_options(self.url),
         }
         self.last_usage = None
         try:
