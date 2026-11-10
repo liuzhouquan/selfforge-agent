@@ -6,7 +6,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from selfforge_agent.integrations.model_http import ProviderHTTPError, request_json
 from selfforge_agent.models import ChangeKind, Finding, PRContext, VerificationStatus
-from selfforge_agent.providers import ProviderConfig, TokenUsage, token_usage_from_response
+from selfforge_agent.providers import (
+    ProviderConfig,
+    TokenUsage,
+    json_object_options,
+    token_usage_from_response,
+)
 
 
 class DeepSeekReviewError(ValueError):
@@ -72,7 +77,7 @@ class ProviderReviewer:
                 },
                 {"role": "user", "content": user_content},
             ],
-            "response_format": {"type": "json_object"},
+            **json_object_options(self.provider.base_url),
             "max_tokens": 1200,
         }
         usage = None

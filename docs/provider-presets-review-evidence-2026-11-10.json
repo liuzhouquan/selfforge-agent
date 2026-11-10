@@ -1,0 +1,26 @@
+{
+  "base_commit": "3a431ad7e536d1d0dd6fe776b2b9bff937881954",
+  "working_tree_contains_review_fixes": true,
+  "python": "3.12.13",
+  "full_regression": {
+    "label": "providers-full-regression",
+    "elapsed_seconds": 462.292,
+    "exit_code": 0,
+    "timed_out": false
+  },
+  "tests_passed": 491,
+  "tests_skipped": 0,
+  "warnings": 1,
+  "ruff_exit_code": 0,
+  "node_syntax_exit_code": 0,
+  "paid_live_provider_calls": false,
+  "independent_browser_smoke": false,
+  "code_sha256": {
+    "src/selfforge_agent/providers.py": "1cd9cec35387b69e703faa981f90409eec9df8c9bad7ff3d1c6c288b3e1cafb9",
+    "src/selfforge_agent/coding/model_client.py": "5237eb0545a24ebf5af0a5ce5d9f022bdb153e5707aaeb1f10044aecc28f03f4",
+    "src/selfforge_agent/review/deepseek.py": "f5260750d13c987d3c596c6d00277aaa710b9c293e47a851131e918493fcbfd8",
+    "src/selfforge_agent/cli.py": "2234b385b12950ddc0ef1ef77a3a2eb46ebdc4939f987837b2e17730dbcdae6f",
+    "src/selfforge_agent/api/static/index.html": "af7ab30907def5c216fb944866c193bc447e6fc152dc1f566b0e4451b932d7ad",
+    "tests/test_provider_compatibility.py": "e34656e727ae357fd9e807e76ea82d437e7e844862c3d17841a09ad49d378259"
+  }
+}

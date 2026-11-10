@@ -153,7 +153,7 @@ class GitHubRepairRequest(BaseModel):
     image: str | None = Field(default=None, min_length=1, max_length=256,
                               pattern=r"^[^\s-][^\s]*$")
     timeout: float = Field(default=60, gt=0, le=300, allow_inf_nan=False)
-    provider: Literal["auto", "deepseek", "openrouter"] = "auto"
+    provider: ProviderChoice = "auto"
     fallback: bool = True
 
 
@@ -211,7 +211,7 @@ class CodingTaskRequest(BaseModel):
     image: str | None = Field(default=None, min_length=1, max_length=256,
                        pattern=r"^[^\s-][^\s]*$")
     trust_local: bool = False
-    provider: Literal["auto", "deepseek", "openrouter"] = "auto"
+    provider: ProviderChoice = "auto"
     fallback: bool = True
     max_steps: int = Field(default=12, ge=1, le=100)
     time_budget: float = Field(default=300, gt=0, le=1_200)
@@ -318,11 +318,17 @@ class WorkspacePruneResponse(BaseModel):
 
 
 class ProviderCheckRequest(BaseModel):
-    provider: Literal["all", "deepseek", "openrouter"] = "all"
+    provider: Literal[
+        "all", "deepseek", "openrouter", "opencode", "chatgpt", "claude",
+        "gemini", "grok", "kimi", "glm"
+    ] = "all"
 
 
 class ProviderSettingsRequest(BaseModel):
-    provider: Literal["deepseek", "openrouter"]
+    provider: Literal[
+        "deepseek", "openrouter", "opencode", "chatgpt", "claude",
+        "gemini", "grok", "kimi", "glm"
+    ]
     base_url: str
     model: str
     api_key: str | None = None
@@ -636,7 +642,13 @@ def provider_config(request: ProviderSettingsRequest, client: Request) -> Provid
 
 
 @app.get("/api/providers/{provider}/models", response_model=list[AvailableModel])
-def provider_models(provider: Literal["deepseek", "openrouter"], client: Request) -> list[AvailableModel]:
+def provider_models(
+    provider: Literal[
+        "deepseek", "openrouter", "opencode", "chatgpt", "claude",
+        "gemini", "grok", "kimi", "glm"
+    ],
+    client: Request,
+) -> list[AvailableModel]:
     _require_local(client)
     item = next(entry for entry in configured_providers() if entry.name == provider)
     try:

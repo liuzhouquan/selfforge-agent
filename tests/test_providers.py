@@ -29,13 +29,18 @@ def test_provider_check_classifies_invalid_key_and_empty_balance(
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter")
-    deepseek, openrouter = providers.configured_providers()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-chatgpt")
+    all_providers = {item.name: item for item in providers.configured_providers()}
+    deepseek = all_providers["deepseek"]
+    openrouter = all_providers["openrouter"]
+    chatgpt = all_providers["chatgpt"]
 
     def invalid_key(*_args: object, **_kwargs: object) -> dict:
         raise ProviderHTTPError("Provider returned HTTP 401", status_code=401)
 
     monkeypatch.setattr(providers, "request_json", invalid_key)
     assert providers.check_provider(deepseek).status == "invalid_key"
+    assert providers.check_provider(chatgpt).status == "invalid_key"
     monkeypatch.setattr(
         providers, "request_json", lambda *_args, **_kwargs: {"data": {"limit_remaining": 0}}
     )
@@ -44,6 +49,11 @@ def test_provider_check_classifies_invalid_key_and_empty_balance(
         providers, "request_json", lambda *_args, **_kwargs: {"is_available": False}
     )
     assert providers.check_provider(deepseek).status == "insufficient_credits"
+    monkeypatch.setattr(
+        providers, "request_json", lambda *_args, **_kwargs: {"data": [{"id": "gpt-4o"}]}
+    )
+    assert providers.check_provider(chatgpt).status == "ready"
+    assert providers.check_provider(chatgpt).balance == "模型列表可访问；推理权限与额度尚未验证"
 
 
 def test_settings_save_and_discover_models_without_exposing_key(
@@ -56,7 +66,7 @@ def test_settings_save_and_discover_models_without_exposing_key(
     client = TestClient(app)
     before = client.get("/api/config").json()["providers"]
     assert [item["base_url"] for item in before] == [
-        "https://api.deepseek.com", "https://openrouter.ai/api/v1"
+        item[1] for item in providers._DEFAULTS.values()
     ]
     response = client.post("/api/providers/config", json={
         "provider": "deepseek", "api_key": "local-secret", "base_url": "https://api.deepseek.com/",
@@ -169,3 +179,42 @@ def test_buffered_proxy_response_with_closed_socket(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(model_http, "urlopen", lambda *_args, **_kwargs: BufferedResponse())
     assert model_http.request_json("https://example.com/models", "test-key") == {"data": []}
+
+
+def test_extended_providers_routing_and_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    path = tmp_path / "providers.json"
+    monkeypatch.setenv("SELFFORGE_PROVIDER_CONFIG_PATH", str(path))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-claude")
+    monkeypatch.setenv("OPENCODE_API_KEY", "test-opencode")
+    monkeypatch.setenv("ZHIPUAI_API_KEY", "test-glm")
+
+    # Routing with fallback
+    routed = providers.route_providers("claude", True)
+    assert routed[0].name == "claude"
+    names = [p.name for p in routed]
+    assert "opencode" in names and "glm" in names
+
+    # Single provider routing without fallback
+    single = providers.route_providers("opencode", False)
+    assert len(single) == 1
+    assert single[0].name == "opencode"
+
+    client = TestClient(app)
+    # Save config for extended providers
+    for name, base_url, model in [
+        ("opencode", "https://opencode.ai/zen/v1", "claude-3-5-sonnet"),
+        ("glm", "https://open.bigmodel.cn/api/paas/v4", "glm-4-plus"),
+    ]:
+        res = client.post("/api/providers/config", json={
+            "provider": name, "api_key": f"secret-{name}", "base_url": base_url, "model": model,
+        })
+        assert res.status_code == 200
+        assert f"secret-{name}" not in res.text
+
+    monkeypatch.setattr(
+        providers, "request_json",
+        lambda url, key, **kwargs: {"data": [{"id": "model-1", "name": "Model One"}]},
+    )
+    models_res = client.get("/api/providers/opencode/models")
+    assert models_res.status_code == 200
+    assert models_res.json() == [{"id": "model-1", "name": "Model One"}]

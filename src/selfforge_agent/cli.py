@@ -12,7 +12,7 @@ from selfforge_agent.coding.risk_prioritization import prioritize_risks
 from selfforge_agent.coding.test_generation import DifferentialTestGenerator, RiskTarget
 from selfforge_agent.coding.worktree import WorktreeError
 from selfforge_agent.core.git_context import GitContextError, build_context
-from selfforge_agent.providers import ProviderConfig, route_providers
+from selfforge_agent.providers import _DEFAULTS, ProviderConfig, route_providers
 from selfforge_agent.runtime.agent import CodingAgent
 from selfforge_agent.runtime.benchmark import evaluate_suite, validate_suite
 from selfforge_agent.runtime.benchmark_diff import (
@@ -159,7 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     code.add_argument("--sandbox", choices=["docker", "host"], default="docker")
     code.add_argument("--trust-local", action="store_true", help="Required for host execution")
     code.add_argument("--image", help="New Docker image (default sandbox); resume reuses saved ID")
-    code.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    provider_choices = ["auto", *_DEFAULTS]
+    code.add_argument("--provider", choices=provider_choices, default="auto")
     code.add_argument("--no-fallback", action="store_true")
     code.add_argument("--model")
     code.add_argument("--base-url")
@@ -197,13 +198,13 @@ def main(argv: list[str] | None = None) -> int:
     workspaces.add_argument("--json", action="store_true", help="Format output as JSON")
     evaluation = subcommands.add_parser("eval", help="Run objective generated coding fixtures")
     evaluation.add_argument("--offline", action="store_true", help="Exercise the tool protocol without an LLM")
-    evaluation.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    evaluation.add_argument("--provider", choices=provider_choices, default="auto")
     evaluation.add_argument("--max-steps", type=int, default=10)
     evaluation.add_argument("--time-budget", type=float, default=180)
     suite = subcommands.add_parser("eval-suite", help="Repeat pinned Git tasks with unseen tests")
     suite.add_argument("--manifest", type=Path, required=True)
     suite.add_argument("--repeats", type=int, default=1)
-    suite.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    suite.add_argument("--provider", choices=provider_choices, default="auto")
     suite.add_argument("--no-fallback", action="store_true")
     suite.add_argument("--model")
     suite.add_argument("--base-url")
@@ -249,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     repair.add_argument("--test-path", default="tests")
     repair.add_argument("--timeout", type=float, default=60)
     repair.add_argument("--max-attempts", type=int, default=2)
-    repair.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    repair.add_argument("--provider", choices=provider_choices, default="auto")
     repair.add_argument("--no-fallback", action="store_true")
     repair.add_argument("--model", default=os.environ.get("SELFFORGE_MODEL"))
     repair.add_argument("--base-url", default=os.environ.get("SELFFORGE_API_BASE_URL"))
@@ -260,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     generate.add_argument("--base", required=True)
     generate.add_argument("--head", required=True)
     generate.add_argument("--task", required=True)
-    generate.add_argument("--provider", choices=["auto", "deepseek", "openrouter"], default="auto")
+    generate.add_argument("--provider", choices=provider_choices, default="auto")
     generate.add_argument("--no-fallback", action="store_true")
     generate.add_argument("--sandbox", choices=["docker", "host"], default="docker")
     generate.add_argument("--trust-local-tests", action="store_true")
