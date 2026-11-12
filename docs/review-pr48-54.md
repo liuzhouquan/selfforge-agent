@@ -55,8 +55,19 @@ counts are not distinct defect counts.
 
 ## Verification status
 
-Full final regression and exact-head remote CI are recorded in PR delivery
-comments. Local Docker Desktop WSL integration is currently unavailable; no local
-Docker pass is claimed. CI must actually qualify both new candidates and run the
-existing Docker group before merge. Frozen v2 manifests/assets remain unchanged.
-Historical 53/60 predates this Runtime and is not a score for these changes.
+Docker Desktop became available during review (Engine 29.8.0). The final
+combination's Docker integration group passed locally: **13 passed, 555
+deselected**, no skips (53.28 seconds). This includes both candidate baselines
+and independent reference-visible/holdout controls, using the candidate image
+`sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`.
+No image override was used locally. Pinned sources were read from an existing
+external cache via `SELFFORGE_EVAL_SOURCE_ROOT`; the tests made fresh checkouts.
+
+Locked dependency installation, Ruff, frontend `node --check`, and full diff
+whitespace checks passed. The new direct-mode checkbox was syntax checked and
+its API guard tested; no interactive browser smoke is claimed. Full unit
+regression and exact-head remote CI results are recorded in the PR delivery
+comments. CI uses an explicit temporary image override after building its image;
+its qualification is not reported as a historical frozen-image run. Frozen v2
+manifests/assets remain unchanged. Historical 53/60 predates this Runtime and
+is not a score for these changes.
