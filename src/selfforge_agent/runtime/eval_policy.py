@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -205,8 +206,8 @@ class BudgetSpec(BaseModel):
     repeats: int = Field(ge=1, le=20)
     total_planned_runs: int = Field(ge=1)
     max_steps: int = Field(ge=1, le=100)
-    time_budget_seconds: float = Field(gt=0)
-    test_timeout_seconds: float = Field(gt=0)
+    time_budget_seconds: float = Field(gt=0, allow_inf_nan=False)
+    test_timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
     context_budget_tokens: int = Field(ge=1000)
 
 
@@ -278,6 +279,12 @@ class ExecutionStatusSpec(BaseModel):
             raise ValueError(
                 "Executed policy must have completed_runs > 0 and concrete scores"
             )
+        if self.model_benchmark_executed:
+            if self.score_status != "completed" or self.successes > self.completed_runs:
+                raise ValueError("Executed policy has inconsistent status or success count")
+            if not math.isclose(self.success_rate, self.successes / self.completed_runs,
+                                rel_tol=0, abs_tol=1e-12):
+                raise ValueError("Executed policy success_rate differs from observed counts")
         return self
 
 
@@ -323,13 +330,13 @@ def _project_root_for(policy_dir: Path) -> Path:
 
 def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
     """Load and verify a frozen evaluation policy, manifest, assets, and historical hashes."""
-    if policy_path.is_symlink():
-        raise ValueError(f"Refusing symlink policy file: {policy_path}")
+    # Check the spelling supplied by the caller before resolve erases symlink ancestors.
+    policy_bytes = _read_regular_bytes(policy_path)
     resolved_policy = policy_path.resolve()
     policy_dir = resolved_policy.parent
     project_root = _project_root_for(policy_dir)
 
-    raw_policy = _parse_json_bytes(_read_regular_bytes(resolved_policy), label="policy")
+    raw_policy = _parse_json_bytes(policy_bytes, label="policy")
     policy = EvalPolicySpec.model_validate(raw_policy)
 
     manifest_path = _resolve_relative(policy_dir, project_root, policy.manifest)
@@ -431,6 +438,15 @@ def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
                 f"found {image_counts[profile_spec.reference]}"
             )
 
+    for profile_spec in policy.environment.images.values():
+        if (profile_spec.lockfile is None) != (profile_spec.lockfile_sha256 is None):
+            raise ValueError("Image profile lockfile and lockfile_sha256 must be supplied together")
+        if profile_spec.lockfile is not None:
+            lock_path = _resolve_relative(policy_dir, project_root, profile_spec.lockfile)
+            actual_lock_sha = hashlib.sha256(_read_regular_bytes(lock_path)).hexdigest()
+            if actual_lock_sha != profile_spec.lockfile_sha256:
+                raise ValueError(f"Image profile lockfile SHA-256 mismatch for {profile_spec.lockfile}")
+
     for lock_ref in policy.environment.lockfiles.values():
         lock_path = _resolve_relative(policy_dir, project_root, lock_ref.path)
         actual_lock_sha = hashlib.sha256(_read_regular_bytes(lock_path)).hexdigest()
@@ -444,6 +460,8 @@ def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
         raise ValueError("budgets.total_planned_runs must equal len(cases) * repeats")
     if policy.ceilings.max_case_attempts != policy.budgets.total_planned_runs:
         raise ValueError("ceilings.max_case_attempts must equal budgets.total_planned_runs")
+    if policy.execution_status.completed_runs > policy.budgets.total_planned_runs:
+        raise ValueError("Execution completed_runs exceeds planned attempts")
     expected_max_calls = policy.budgets.total_planned_runs * policy.budgets.max_steps
     if policy.ceilings.max_model_calls_upper_bound != expected_max_calls:
         raise ValueError("ceilings.max_model_calls_upper_bound must equal planned_runs * max_steps")

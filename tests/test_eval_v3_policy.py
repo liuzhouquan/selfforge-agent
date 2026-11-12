@@ -538,3 +538,48 @@ def test_v3_suite_docker_reference_validation(tmp_path: Path) -> None:
             indent=2,
         )
     )
+
+
+def test_policy_rejects_symlink_ancestor_before_resolution(tmp_path: Path) -> None:
+    policy, *_ = _create_mini_bundle(tmp_path)
+    alias = tmp_path / 'policy-alias'
+    alias.symlink_to(policy.parent, target_is_directory=True)
+    with pytest.raises(ValueError, match='symlink'):
+        verify_eval_policy_bundle(alias / policy.name)
+
+
+@pytest.mark.parametrize('field', ['time_budget_seconds', 'test_timeout_seconds'])
+def test_policy_rejects_infinite_budgets(tmp_path: Path, field: str) -> None:
+    policy, *_ = _create_mini_bundle(tmp_path)
+    data = json.loads(policy.read_text())
+    data['budgets'][field] = float('inf')
+    policy.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        verify_eval_policy_bundle(policy)
+
+
+def test_policy_checks_image_profile_lockfile_digest(tmp_path: Path) -> None:
+    policy, *_ = _create_mini_bundle(tmp_path)
+    data = json.loads(policy.read_text())
+    profile = data['environment']['images']['default']
+    profile['lockfile'] = 'demo.lock'
+    profile['lockfile_sha256'] = '0' * 64
+    policy.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match='[Ll]ockfile'):
+        verify_eval_policy_bundle(policy)
+
+
+@pytest.mark.parametrize('changes', [
+    {'successes': 4}, {'success_rate': 0.2}, {'score_status': 'pending_live_execution'},
+    {'completed_runs': 4, 'successes': 4, 'success_rate': 1.0},
+])
+def test_policy_rejects_inconsistent_executed_scores(tmp_path: Path, changes: dict) -> None:
+    policy, *_ = _create_mini_bundle(tmp_path)
+    data = json.loads(policy.read_text())
+    data['execution_status'] = {
+        'model_benchmark_executed': True, 'completed_runs': 3,
+        'successes': 3, 'success_rate': 1.0, 'score_status': 'completed', **changes,
+    }
+    policy.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        verify_eval_policy_bundle(policy)
