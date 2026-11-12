@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -151,6 +152,39 @@ def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         parser.error(str(exc))
 
 
+def _validate_cli_output_target(path: Path) -> Path:
+    """Validate that an export path is not a symlink, non-regular file, or missing parent."""
+    target = path.expanduser()
+    if target.is_symlink():
+        raise ValueError(f"Refusing to write to symlink output path: {path}")
+    parent = target.parent
+    if not parent.is_dir():
+        raise ValueError(f"Output parent directory does not exist: {parent}")
+    if os.path.lexists(target):
+        info = os.lstat(target)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"Output path is not a regular file: {path}")
+    return target
+
+
+def _write_cli_output(path: Path, content: str) -> None:
+    """Write CLI export content safely without following symlinks or special files."""
+    target = _validate_cli_output_target(path)
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(target, flags, 0o644)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"Output path is not a regular file: {path}")
+        os.ftruncate(fd, 0)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(content)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="selfforge-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -197,6 +231,10 @@ def main(argv: list[str] | None = None) -> int:
     trace.add_argument("session_id")
     trace.add_argument("--summary", action="store_true",
                        help="Print aggregate token usage and estimated cost")
+    trace.add_argument("--json", action="store_true",
+                       help="Format trace or summary output as JSON")
+    trace.add_argument("--output", type=Path,
+                       help="Optional path to write trace or summary output")
     workspaces = subcommands.add_parser("workspaces", help="Inspect, commit, revert, or create PRs from Coding worktrees")
     workspaces.add_argument("action", choices=["audit", "commit", "diff", "list", "pr", "prune", "remove", "revert", "storage"])
     workspaces.add_argument("session_id", nargs="?")
@@ -308,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_REGRESSION_TIMEOUT,
         help="Total validation timeout budget in seconds (1-180)",
     )
+    regress.add_argument("--output", type=Path, help="Optional path to write JSON report")
     args = parser.parse_args(argv)
     if args.command == "sandbox":
         if args.action == "audit":
@@ -455,22 +494,50 @@ def main(argv: list[str] | None = None) -> int:
         return _run_test(args, parser)
     if args.command == "trace":
         try:
+            if getattr(args, "output", None):
+                _validate_cli_output_target(args.output)
             manager = CodingWorkspaceManager()
             root = manager.session_root(args.repo, args.session_id, legacy_roots=(args.repo,))
             store = SessionStore(root, args.session_id)
             events = store.trace_events()
-        except ValueError as exc:
+            if getattr(args, "summary", False):
+                metrics = store.token_metrics()
+                if getattr(args, "json", False):
+                    rendered = json.dumps(
+                        {"session_id": args.session_id, **metrics},
+                        ensure_ascii=False,
+                        indent=2,
+                    ) + "\n"
+                else:
+                    cost_str = (
+                        f" · Estimated cost: ${metrics['cost']['total_cost_usd']:.4f} "
+                        f"({metrics.get('model') or 'calibrated'})"
+                        if metrics.get("cost")
+                        else ""
+                    )
+                    rendered = (
+                        f"Summary for session {args.session_id}:\n"
+                        f"  Total tokens: {metrics['total_tokens']:,} "
+                        f"(Prompt: {metrics['prompt_tokens']:,}, Completion: {metrics['completion_tokens']:,})"
+                        f"{cost_str}\n"
+                    )
+            elif getattr(args, "json", False):
+                rendered = json.dumps(
+                    {
+                        "session_id": args.session_id,
+                        "event_count": len(events),
+                        "events": events,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ) + "\n"
+            else:
+                rendered = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events)
+            if getattr(args, "output", None):
+                _write_cli_output(args.output, rendered)
+        except (ValueError, OSError) as exc:
             parser.error(str(exc))
-        if getattr(args, "summary", False):
-            metrics = store.token_metrics()
-            cost_str = (f" · Estimated cost: ${metrics['cost']['total_cost_usd']:.4f} ({metrics.get('model') or 'calibrated'})"
-                        if metrics.get("cost") else "")
-            print(f"Summary for session {args.session_id}:")
-            print(f"  Total tokens: {metrics['total_tokens']:,} "
-                  f"(Prompt: {metrics['prompt_tokens']:,}, Completion: {metrics['completion_tokens']:,}){cost_str}")
-            return 0
-        for event in events:
-            print(json.dumps(event, ensure_ascii=False))
+        print(rendered, end="")
         return 0
     if args.command == "workspaces":
         manager = CodingWorkspaceManager()
@@ -597,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
                 if getattr(args, "json", False) or getattr(args, "output", None):
                     rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
                     if args.output:
-                        args.output.write_text(rendered, encoding="utf-8")
+                        _write_cli_output(args.output, rendered)
                         print(f"Workspace storage audit report written to {args.output}")
                     else:
                         print(rendered, end="")
@@ -674,6 +741,11 @@ def main(argv: list[str] | None = None) -> int:
         print(rendered, end="")
         return 0 if report["successes"] == report["runs"] else 1
     if args.command == "test-regression":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         raw_repo = args.repo
         legacy_roots = (
             (raw_repo.resolve(),)
@@ -693,6 +765,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
         rendered = report.model_dump_json(indent=2) + "\n"
+        if getattr(args, "output", None):
+            try:
+                _write_cli_output(args.output, rendered)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         print(rendered, end="")
         if report.status == "confirmed":
             return 0

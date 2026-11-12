@@ -113,6 +113,7 @@ flowchart LR
 | 3 | [SF-TEST-01](#sf-test-01) | Merged | Codex（审查整合） | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
 | 4 | [SF-EVAL-08](#sf-eval-08) | In Review | Codex | SF-DEV-01；策略已冻结 | [PR #61](https://github.com/liuzhouquan/selfforge-agent/pull/61)：新 Runtime 22 题 v3 评测规格、冻结输入与无模型 Docker 预检 |
 | 5 | [SF-TEST-02](#sf-test-02) | In Review | Antigravity | SF-TEST-01（Merged） | [PR #62](https://github.com/liuzhouquan/selfforge-agent/pull/62)：Web Coding 工作台接入独立回归验证面板、状态门槛与结构化证据展示 |
+| 6 | [SF-WS-05](#sf-ws-05) | In Review | Antigravity | SF-WS-04 / SF-TEST-01（Merged） | [PR #63](https://github.com/liuzhouquan/selfforge-agent/pull/63)：修复 `/api/workspaces/storage` 管理器复用不一致并补齐 CLI `trace` / `test-regression` 安全结构化导出 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -311,6 +312,38 @@ Owner / 状态：Antigravity / In Review
 已确认可复用结论与参考路径：src/selfforge_agent/api/static/index.html、src/selfforge_agent/api/static/app.js、src/selfforge_agent/api/static/style.css、tests/test_coding_web_regression_ui.py；CI Run #43209267239 & Run #43214170049
 仍在运行的本任务进程或 CI（无则写无）：等待当前 PR #62 docs-only 状态提交触发最终 CI；本地进程无
 下一步：PR #62 合并前需人工核对网页端渲染与交互；合并后按本 SDD 规则回填 Merge SHA/PR 状态并核对 main CI。
+```
+
+### SF-WS-05
+
+**目标：** 修复 `GET /api/workspaces/storage`（及 `/api/code/workspaces/storage`）忽略模块级 `_CODING_WORKSPACES` 注入而与 `/audit`/`/prune` 视图脱节的问题，并补齐 CLI `trace` 与 `test-regression` 的安全结构化导出能力（`--json` / `--output`，共用 fail-closed 写盘检查）。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/api/app.py`（`_storage_workspace_manager()` 与 `audit_workspaces_storage`）、`src/selfforge_agent/cli.py`（`_write_cli_output`、`trace`、`test-regression`、`workspaces storage` `--output`）及专项测试 `tests/test_ws_cli_export_and_storage_parity.py`；不改动 `benchmark/`、`api/static/` 或 `validate-regression` 安全脱敏规则。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-WS-05-A1 | 当服务端覆写模块级 `_CODING_WORKSPACES` 时，`GET /api/workspaces/storage` 与 `/api/code/workspaces/storage` 均复用该管理器与 `/audit`、`/prune` 保持一致；同时保留 `SELFFORGE_WORKSPACES_ROOT` 运行时环境变量覆写与非法 `quota_bytes` / 仓库路径 HTTP 400 拒绝 | FastAPI `TestClient` 正反对照与兼容性控制 | E1 |
+| SF-WS-05-A2 | `selfforge-agent test-regression --output PATH` 在 `confirmed`（exit 0）、`inconclusive`（exit 1）与 `error`（exit 2）报告下均将标准 JSON 写入 `PATH` 并保留 stdout 输出；`trace --json` 与 `trace --summary --json` 均支持结构化 JSON 输出及 `--output PATH`，同时保留既有 `--summary` / NDJSON 默认输出 | CLI `main()` 与真实 `SessionStore` / 回归报告导出回归 | E2 |
+| SF-WS-05-A3 | `test-regression`、`trace`、`workspaces storage` 共用同一 `_write_cli_output`：对符号链接目标、目录/FIFO 非常规文件、缺失父目录均提前 fail-closed 拒绝（非零退出且不破坏已有目标或跟随软链接写入） | 负路径（symlink/directory/missing-parent）回归断言 | E3 |
+| SF-WS-05-A4 | Ruff、SDD 一致性检查、`git diff --check`、专项及既有回归与全量非集成单测通过，CI 全绿 | `ruff check .` + `check_sdd.py` + `pytest` + CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-WS-05-A1 | `tests/test_ws_cli_export_and_storage_parity.py::test_storage_api_uses_configured_coding_workspaces_manager_consistently`、`tests/test_ws_cli_export_and_storage_parity.py::test_storage_api_preserves_env_override_compatibility` | FastAPI `TestClient` + 真实 Git worktree；验证 `_CODING_WORKSPACES` 覆写一致、`SELFFORGE_WORKSPACES_ROOT` 兼容及 `quota_bytes=-1` HTTP 400 拒绝；[PR #63](https://github.com/liuzhouquan/selfforge-agent/pull/63) | 源码 SHA `4805e05e2cd4d00d1086de0f7e38165fdfe164e3`；本地专项 `53 passed, 1 skipped`；CI [Run #43216637277](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43216637277) success |
+| E2 | SF-WS-05-A2 | `tests/test_ws_cli_export_and_storage_parity.py::test_cli_test_regression_writes_output_report_across_statuses`、`tests/test_ws_cli_export_and_storage_parity.py::test_cli_trace_supports_json_and_output_while_keeping_legacy_modes` | `CLI main()` + 真实 `SessionStore` trace/metrics 及 `test-regression` exit 0/1/2 三态报告导出；兼容既有 `tests/test_session_metrics.py::test_cli_trace_summary_output` | `4805e05e2cd4d00d1086de0f7e38165fdfe164e3`；passed；CI [Run #43216637277](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43216637277) success |
+| E3 | SF-WS-05-A3 | `tests/test_ws_cli_export_and_storage_parity.py::test_cli_outputs_fail_closed_for_symlinks_directories_and_missing_parents` | `trace` / `test-regression` / `workspaces storage` 三入口共测 symlink、目录、缺失父目录及 FIFO fail-closed（含 `O_NOFOLLOW`/`lstat`/`fstat` 防护，不覆写目标文件） | `4805e05e2cd4d00d1086de0f7e38165fdfe164e3`；passed；CI [Run #43216637277](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43216637277) success |
+| E4 | SF-WS-05-A4 | `tests/test_ws_cli_export_and_storage_parity.py::test_storage_api_uses_configured_coding_workspaces_manager_consistently`、`tests/test_incoming_storage_regressions.py::test_api_preserves_incomplete_scan_and_unknown_quota`、`tests/test_session_metrics.py::test_cli_trace_summary_output` | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -q -m "not integration"` 与 GitHub Actions CI（含全套 Docker 集成） | `4805e05e2cd4d00d1086de0f7e38165fdfe164e3`；本地 `648 passed, 14 deselected`；CI [Run #43216637277](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43216637277) success |
+
+执行记录（Owner/状态以上表为准）：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`feat/sf-ws-05`；Worktree=`selfforge-sf-ws-05`；PR=[#63](https://github.com/liuzhouquan/selfforge-agent/pull/63)。先运行 TDD 红灯复现（6 failed，包括复现 `workspaces storage --output` 跟随符号链接覆盖目标文件以及 `/api/workspaces/storage` 忽略 `_CODING_WORKSPACES`），随后实现修复与导出一致性，并在源码提交 `4805e05e2cd4d00d1086de0f7e38165fdfe164e3` 通过本地全套非集成验证与 CI `Run #43216637277`；本状态提交仅修改文档。
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：19882cc1cf7d6c29309e677c1449b5154c6f8e1c / feat/sf-ws-05 (worktree: selfforge-sf-ws-05) / 已验证源码 4805e05e2cd4d00d1086de0f7e38165fdfe164e3；本次状态提交仅文档
+已完成验收与证据 ID：SF-WS-05-A1..A4（E1、E2、E3、E4）
+明确不做或未验证项（说明原因）：不改动 benchmark/ 或 api/static/（与开放 PR #61/#62 无源码冲突）；不扩展新的工作区后端或修改 validate-regression 脱敏边界；本机未安装 Docker，真实 Docker 集成由 GitHub Actions CI 运行
+已确认可复用结论与参考路径：src/selfforge_agent/api/app.py、src/selfforge_agent/cli.py、tests/test_ws_cli_export_and_storage_parity.py；CI Run #43216637277
+仍在运行的本任务进程或 CI（无则写无）：等待当前 PR #63 docs-only 状态提交触发最终 CI；本地进程无
+下一步：在统一审核合并 PR #61 / #62 / #63 时按顺序解决 docs/SDD.md 队列条目与各自规格节的合并并核对最终 main CI。
 ```
 
 ## 5. 验收追踪与执行记录格式
