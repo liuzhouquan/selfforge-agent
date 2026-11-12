@@ -9,6 +9,10 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, Field
 
 from selfforge_agent.runtime.execution import (
@@ -212,6 +216,247 @@ def load_requirement_profile(repository: Path | None = None, *, lock_file: Path 
         return export_requirements_txt(contents), path, True
 
 
+def _convert_poetry_spec(spec: str) -> str:
+    spec = spec.strip()
+    if not spec or spec == "*":
+        return ""
+    if spec.startswith("^"):
+        v = spec[1:].strip()
+        parts = [int(p) if p.isdigit() else 0 for p in v.split(".")]
+        while len(parts) < 3:
+            parts.append(0)
+        major, minor, patch = parts[:3]
+        if major > 0:
+            return f">={v}, <{major + 1}.0.0"
+        if minor > 0:
+            return f">={v}, <0.{minor + 1}.0"
+        return f">={v}, <0.0.{patch + 1}"
+    if spec.startswith("~"):
+        v = spec[1:].strip()
+        parts = [int(p) if p.isdigit() else 0 for p in v.split(".")]
+        while len(parts) < 3:
+            parts.append(0)
+        major, minor, _ = parts[:3]
+        return f">={v}, <{major}.{minor + 1}.0"
+    return spec
+
+
+def _extract_declared_dependencies(repo: Path) -> tuple[list[dict[str, Any]], Path | None]:
+    declared: list[dict[str, Any]] = []
+    decl_file: Path | None = None
+
+    pyproject_path = repo / "pyproject.toml"
+    if pyproject_path.is_file() and not pyproject_path.is_symlink() and pyproject_path.stat().st_size <= 512 * 1024:
+        try:
+            data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+            # 1. PEP 621 [project.dependencies]
+            project = data.get("project", {})
+            if isinstance(project, dict):
+                deps = project.get("dependencies", [])
+                if isinstance(deps, list):
+                    for item in deps:
+                        if isinstance(item, str) and item.strip():
+                            try:
+                                r = Requirement(item.strip())
+                                if r.marker and not r.marker.evaluate():
+                                    continue
+                                declared.append({
+                                    "name": canonicalize_name(r.name),
+                                    "raw_name": r.name,
+                                    "specifier": str(r.specifier) if r.specifier else "",
+                                    "source_file": str(pyproject_path),
+                                })
+                            except (InvalidRequirement, ValueError):
+                                pass
+            # 2. Poetry [tool.poetry.dependencies]
+            tool = data.get("tool", {})
+            if isinstance(tool, dict):
+                poetry = tool.get("poetry", {})
+                if isinstance(poetry, dict):
+                    p_deps = poetry.get("dependencies", {})
+                    if isinstance(p_deps, dict):
+                        for name, val in p_deps.items():
+                            if name.lower() == "python":
+                                continue
+                            spec = ""
+                            if isinstance(val, str):
+                                spec = _convert_poetry_spec(val)
+                            elif isinstance(val, dict) and "version" in val:
+                                spec = _convert_poetry_spec(str(val["version"]))
+                            declared.append({
+                                "name": canonicalize_name(name),
+                                "raw_name": name,
+                                "specifier": spec,
+                                "source_file": str(pyproject_path),
+                            })
+            if declared:
+                decl_file = pyproject_path
+        except (tomllib.TOMLDecodeError, OSError):
+            pass
+
+    if decl_file is None:
+        req_in = repo / "requirements.in"
+        if req_in.is_file() and not req_in.is_symlink() and req_in.stat().st_size <= 512 * 1024:
+            try:
+                for line in req_in.read_text(encoding="utf-8").splitlines():
+                    cleaned = line.strip()
+                    if not cleaned or cleaned.startswith(("#", "-")):
+                        continue
+                    try:
+                        r = Requirement(cleaned)
+                        if r.marker and not r.marker.evaluate():
+                            continue
+                        declared.append({
+                            "name": canonicalize_name(r.name),
+                            "raw_name": r.name,
+                            "specifier": str(r.specifier) if r.specifier else "",
+                            "source_file": str(req_in),
+                        })
+                    except (InvalidRequirement, ValueError):
+                        pass
+                if declared:
+                    decl_file = req_in
+            except OSError:
+                pass
+
+    if decl_file is None:
+        pipfile = repo / "Pipfile"
+        if pipfile.is_file() and not pipfile.is_symlink() and pipfile.stat().st_size <= 512 * 1024:
+            try:
+                data = tomllib.loads(pipfile.read_text(encoding="utf-8"))
+                pkgs = data.get("packages", {})
+                if isinstance(pkgs, dict):
+                    for name, val in pkgs.items():
+                        spec = ""
+                        if isinstance(val, str) and val != "*":
+                            spec = val
+                        elif isinstance(val, dict) and "version" in val and val["version"] != "*":
+                            spec = str(val["version"])
+                        declared.append({
+                            "name": canonicalize_name(name),
+                            "raw_name": name,
+                            "specifier": spec,
+                            "source_file": str(pipfile),
+                        })
+                if declared:
+                    decl_file = pipfile
+            except (tomllib.TOMLDecodeError, OSError):
+                pass
+
+    return declared, decl_file
+
+
+def check_dependency_freshness(
+    repo: Path,
+    *,
+    lock_file: Path | None = None,
+    requirements_file: Path | None = None,
+) -> dict[str, Any]:
+    """Diagnose freshness and consistency between declared dependencies and lockfile."""
+    repository = repo.expanduser().resolve()
+    if not repository.is_dir():
+        raise ValueError(f"Repository directory does not exist: {repo}")
+
+    req_text, req_source_path, _ = load_requirement_profile(
+        repository, lock_file=lock_file, requirements_file=requirements_file
+    )
+    packages = parse_locked_requirements(req_text.encode("utf-8"))
+    locked_by_name = {canonicalize_name(p["name"]): p for p in packages}
+
+    declared, decl_file = _extract_declared_dependencies(repository)
+
+    if not decl_file:
+        return {
+            "version": 1,
+            "fresh": True,
+            "status": "no_declarations",
+            "lock_file": str(req_source_path),
+            "declaration_file": None,
+            "declared_count": 0,
+            "locked_count": len(packages),
+            "missing_packages": [],
+            "incompatible_packages": [],
+            "is_stale_by_mtime": False,
+            "warnings": ["No dependency declaration file (pyproject.toml, requirements.in, Pipfile) found in repository."],
+        }
+
+    is_stale_by_mtime = False
+    try:
+        decl_mtime = decl_file.stat().st_mtime
+        lock_mtime = req_source_path.stat().st_mtime
+        if decl_mtime > (lock_mtime + 1.0):
+            is_stale_by_mtime = True
+    except OSError:
+        pass
+
+    missing_packages: list[dict[str, Any]] = []
+    incompatible_packages: list[dict[str, Any]] = []
+
+    for dep in declared:
+        name = dep["name"]
+        if name not in locked_by_name:
+            missing_packages.append({
+                "name": dep["raw_name"],
+                "specifier": dep["specifier"],
+                "source_file": dep["source_file"],
+            })
+        else:
+            locked_pkg = locked_by_name[name]
+            locked_ver_str = locked_pkg.get("version", "")
+            if dep["specifier"] and locked_ver_str:
+                try:
+                    spec = SpecifierSet(dep["specifier"])
+                    ver = Version(locked_ver_str)
+                    if not spec.contains(ver, prereleases=True):
+                        incompatible_packages.append({
+                            "name": dep["raw_name"],
+                            "declared_specifier": dep["specifier"],
+                            "locked_version": locked_ver_str,
+                            "source_file": dep["source_file"],
+                        })
+                except (InvalidSpecifier, InvalidVersion, ValueError):
+                    pass
+
+    warnings: list[str] = []
+    if missing_packages:
+        missing_names = ", ".join(m["name"] for m in missing_packages)
+        warnings.append(f"Declared dependencies missing from lockfile: {missing_names}")
+    if incompatible_packages:
+        incomp_details = ", ".join(f"{i['name']} ({i['locked_version']} !~ {i['declared_specifier']})"
+                                   for i in incompatible_packages)
+        warnings.append(f"Locked packages conflict with declared version constraints: {incomp_details}")
+    if is_stale_by_mtime:
+        warnings.append(
+            f"Declaration file '{decl_file.name}' is newer than lockfile '{req_source_path.name}'; "
+            "dependencies may have changed since the lockfile was generated."
+        )
+
+    if missing_packages:
+        status = "missing_dependencies"
+    elif incompatible_packages:
+        status = "incompatible_versions"
+    elif is_stale_by_mtime:
+        status = "stale_mtime"
+    else:
+        status = "fresh"
+
+    fresh = (len(missing_packages) == 0 and len(incompatible_packages) == 0 and not is_stale_by_mtime)
+
+    return {
+        "version": 1,
+        "fresh": fresh,
+        "status": status,
+        "lock_file": str(req_source_path),
+        "declaration_file": str(decl_file),
+        "declared_count": len(declared),
+        "locked_count": len(packages),
+        "missing_packages": missing_packages,
+        "incompatible_packages": incompatible_packages,
+        "is_stale_by_mtime": is_stale_by_mtime,
+        "warnings": warnings,
+    }
+
+
 def plan_environment_preparation(
     repository: Path,
     *,
@@ -275,6 +520,16 @@ def plan_environment_preparation(
         "--wheelhouse", whl_dest, "--tag", target_tag,
     ])
 
+    warnings = list(detected.get("warnings", []))
+    freshness = check_dependency_freshness(
+        repo, lock_file=lock_file, requirements_file=requirements_file
+    )
+    if not freshness["fresh"]:
+        warnings.append(
+            f"Lockfile is stale or missing declared dependencies ({freshness['status']}). "
+            "Consider re-locking before build."
+        )
+
     return {
         "version": 1,
         "repository": str(repo),
@@ -298,6 +553,8 @@ def plan_environment_preparation(
         "readiness_scope": "Hash-allowed inputs only; wheel format, platform and dependency resolution require build",
         "download_command": download_cmd,
         "build_command": build_cmd,
+        "warnings": warnings,
+        "freshness": freshness,
         "safety_invariants": [
             "Offline build only (--network=none)",
             "Hash-locked wheels required (--require-hashes)",
