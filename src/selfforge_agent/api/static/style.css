@@ -367,6 +367,52 @@ button {
   white-space:pre-wrap;
   overflow-wrap:anywhere
 }
+.coding-regression-result {
+  margin-top:12px;
+  padding:12px;
+  border:1px solid #d5e5d7;
+  border-radius:10px;
+  background:#f8fcf8
+}
+.coding-regression-summary {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  margin-bottom:10px;
+  font-size:12px
+}
+.coding-regression-badge {
+  display:inline-block;
+  padding:3px 8px;
+  border-radius:999px;
+  background:#245d3e;
+  color:#fff;
+  font-weight:700;
+  font-size:11px
+}
+.coding-regression-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:10px
+}
+.coding-regression-card {
+  padding:10px;
+  border:1px solid #dfeadf;
+  border-radius:8px;
+  background:#fff;
+  font-size:12px
+}
+.coding-regression-card p {
+  margin:6px 0 0;
+  color:#334f3f
+}
+.coding-regression-hashes {
+  margin:10px 0 0;
+  font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:#4f6858;
+  overflow-wrap:anywhere
+}
 .coding-workflow [hidden] {
   display:none
 }

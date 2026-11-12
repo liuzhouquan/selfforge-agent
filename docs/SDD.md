@@ -112,6 +112,7 @@ flowchart LR
 | 2 | [SF-DOC-01](#sf-doc-01) | Merged | Codex（审查整合） | 本 SDD | 有界 SDD 一致性检查，阻止失配状态与虚假验收引用（[PR #58](https://github.com/liuzhouquan/selfforge-agent/pull/58)） |
 | 3 | [SF-TEST-01](#sf-test-01) | Merged | Codex（审查整合） | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
 | 4 | [SF-EVAL-08](#sf-eval-08) | Waiting | 未认领 | SF-DEV-01；固定新策略 | 新 Runtime 的后续评测规格、冻结输入和无模型预检 |
+| 5 | [SF-TEST-02](#sf-test-02) | In Progress | Antigravity | SF-TEST-01（Merged） | Web Coding 工作台接入独立回归验证面板、状态门槛与结构化证据展示 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -259,6 +260,21 @@ PR / 准确 head CI / merge SHA（有则填）：PR #59 / https://github.com/liu
 | SF-EVAL-08-A3 | 后续真实模型运行单独列执行计划、有效供应商及调用/时间/费用上限；没有结果不填成绩 | 策略审查；本任务不得写成已完成模型评测 | 未验证；前提未满足 |
 
 执行记录（Owner/状态以上表为准）：Base/Branch/PR=无。SF-DEV-01 已合并；评测任务集、镜像、模型/回退与预算等新策略尚未冻结，保持 Waiting，补全后才能改 Ready；不要因拥有 API Key 就把付费整套测量包含进本任务。
+
+### SF-TEST-02
+
+**目标：** 将 `SF-TEST-01` 已合入的独立回归验证能力（`POST /api/code/workspaces/{session_id}/validate-regression`）接入 Web Coding 工作台 UI（`src/selfforge_agent/api/static/index.html`、`src/selfforge_agent/api/static/app.js`、`src/selfforge_agent/api/static/style.css`），使用户在 Docker 隔离工作区完成或暂停编程任务后，可直接指定候选测试文件与有界超时，查看 Base 与当前工作区的独立运行对照结果及 SHA 指纹，同时严格遵守只读展示、失败闭合与状态同步边界。
+
+**范围/入口：** 仅在 `#coding-job` 内增加回归验证面板（不改动 PR 审查/修复/TestGen 主流程，不新建自动化测试生成循环，不修改后端 `validate-regression` 的安全校验、脱敏与只读边界）。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-TEST-02-A1 | 当 Coding 会话绑定在 Docker 独立工作区（`branch` 存在、`sandbox === "docker"`）且非运行态时，提交 `test_file` 与 `timeout`（默认 60，范围 1–180）调用 `POST /api/code/workspaces/{session_id}/validate-regression`，正确渲染结构化 `RegressionValidationReport`（`status`：`confirmed`/`not_confirmed`/`error`、`reason`、`base_sha`、`workspace_sha256`、`test_sha256` 与 `base_result`/`repaired_result` 明细），且不篡改 `#metric-verification` | Web UI/API 回归测试（Node DOM 运行时行为验证 + FastAPI TestClient 序列化验证） | 未验证；进行中 |
+| SF-TEST-02-A2 | 本机执行（`sandbox === "host"`）、直接修改原仓库或已清理工作区（`!branch`）、未记录隔离环境、任务运行中（`codingJobRunning`）、空 `test_file` 或越界 `timeout`（<1 或 >180 或非整数）均被严格拦截或禁用并给出清晰原因；后端 HTTP 400/404/409/422 错误展示清晰且不破坏既有 Diff 与交付表单 | 前端状态门槛测试 + HTTP 错误路径与不变量断言 | 未验证；进行中 |
+| SF-TEST-02-A3 | 切换历史任务、发起新任务、恢复会话或清理工作区时自动重置上一会话的回归结果、错误与提交态；全部服务端字符串经 `textContent` / DOM API 安全渲染，禁止 `innerHTML` 拼接 | 会话切换/清理/XSS 转义自动化断言 | 未验证；进行中 |
+| SF-TEST-02-A4 | JS 语法检查、Web 回归测试、Ruff、SDD 一致性检查与全量非集成测试通过；本地若无可用浏览器则明确记录验证层级边界 | `node --check` + `pytest` + `ruff check .` + `check_sdd.py` + CI | 未验证；进行中 |
+
+执行记录（Owner/状态以上表为准）：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`feat/sf-test-02`；Worktree=`selfforge-sf-test-02`。先补全 TDD 失败用例验证缺口，再实现 Web UI 回归验证面板。
 
 ## 5. 验收追踪与执行记录格式
 
