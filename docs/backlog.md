@@ -25,7 +25,7 @@
 | SF-EVAL-05 | Complete | 实际报告schema比较和回归门禁 | PR #46；计数精确比较，缺失/无效输入不能通过门禁 |
 | SF-EVAL-06 | In Review | 增加1道真实仓库多文件修改任务的参考正负控 | PR #48；jmespath跨模块建议机制与独立正负控 |
 | SF-WS-04 | In Review | 工作区磁盘配额与存储占用审计诊断 | PR #54；有界目录体积测量、缓存隔离统计、配额超额预警与回收建议 |
-| SF-PROV-01 | In Review | 扩充常见大模型预设供应商与通用健康检查机制 | PR #55；内置 opencode, chatgpt, claude, gemini, grok, kimi, glm 预设与统一 /models 校验 |
+| SF-PROV-01 | Complete | 扩充常见大模型预设供应商与通用健康检查机制 | PR #55；内置 opencode, chatgpt, claude, gemini, grok, kimi, glm 预设与统一 /models 校验 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
