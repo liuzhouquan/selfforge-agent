@@ -581,3 +581,31 @@ def test_ci_workflow_and_docs_declare_sdd_consistency_scope() -> None:
     assert "不证明测试执行或语义充分" in sdd_text
     assert "check_sdd.py" in dev_text
     assert "不证明测试执行或语义充分" in dev_text
+
+
+@pytest.mark.parametrize(('code', 'node'), [
+    ('def helper():\n    def test_ghost(): pass\n', 'test_ghost'),
+    ('class TestSuite:\n    def test_ghost(self): pass\n', 'test_ghost'),
+    ('class NotATest:\n    def test_ghost(self): pass\n', 'NotATest::test_ghost'),
+    ('class TestSuite:\n    def helper(self):\n        def test_ghost(): pass\n',
+     'TestSuite::test_ghost'),
+    ('__test__ = False\ndef test_ghost(): pass\n', 'test_ghost'),
+    ('class TestSuite:\n    __test__ = False\n    def test_ghost(self): pass\n',
+     'TestSuite::test_ghost'),
+])
+def test_cli_rejects_uncollectable_test_references(tmp_path: Path, code: str, node: str) -> None:
+    spec = _task_spec(
+        'SF-ONE-01', acc_rows='| SF-ONE-01-A1 | g / w / t | tests | E1 |',
+        evidence_table=(
+            '| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |\n'
+            '| --- | --- | --- | --- | --- |\n'
+            f'| E1 | SF-ONE-01-A1 | `tests/test_sample.py::{node}` | `pytest -q` | `{SHA_A}`；passed |'
+        ),
+    )
+    root = _write_minimal_repo(tmp_path, specs=spec, test_code=code)
+    (root / "tests/test_example.py").write_text("def test_ok(): pass\n")
+    sdd = root / "docs/SDD.md"
+    sdd.write_text(sdd.read_text().replace(
+        "tests/test_sample.py::test_ok", "tests/test_example.py::test_ok",
+    ))
+    _assert_contract_failure(_run_check(root), 'test node')

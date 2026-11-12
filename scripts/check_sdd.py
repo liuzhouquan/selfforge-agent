@@ -397,20 +397,35 @@ def _is_placeholder(val: str) -> bool:
     return _strip_backticks(val).lower() in PLACEHOLDER_VALUES
 
 
-def _python_has_test_node(tree: ast.AST, cls_name: str | None, func_name: str) -> bool:
-    if cls_name is None:
-        return any(
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name
-            for node in ast.walk(tree)
-        )
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == cls_name:
-            return any(
-                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and child.name == func_name
-                for child in ast.walk(node)
-            )
+def _test_collection_disabled(body: list[ast.stmt]) -> bool:
+    for node in body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__test__" for target in node.targets
+        ) and isinstance(node.value, ast.Constant) and node.value.value is False:
+            return True
     return False
+
+
+def _python_has_test_node(tree: ast.AST, cls_name: str | None, func_name: str) -> bool:
+    if not isinstance(tree, ast.Module) or _test_collection_disabled(tree.body):
+        return False
+    if not func_name.startswith("test"):
+        return False
+    body = tree.body
+    if cls_name is not None:
+        if not cls_name.startswith("Test"):
+            return False
+        classes = [node for node in body if isinstance(node, ast.ClassDef) and node.name == cls_name]
+        if not classes or _test_collection_disabled(classes[0].body):
+            return False
+        body = classes[0].body
+        if any(isinstance(node, ast.FunctionDef) and node.name in {"__init__", "__new__"}
+               for node in body):
+            return False
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name
+        for node in body
+    )
 
 
 def _verify_test_node(reader: SafeRepoReader, file_rel: str, cls_name: str | None, func_name: str) -> str | None:
