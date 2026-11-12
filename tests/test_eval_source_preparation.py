@@ -695,3 +695,38 @@ def test_ci_workflow_uses_shared_prepare_eval_sources_script() -> None:
     assert "git -C .local/benchmark/repos/" not in ci_text
     assert "https://github.com/jmespath/jmespath.py.git" not in ci_text
     assert "https://github.com/mahmoud/boltons.git" not in ci_text
+
+
+def test_cli_rejects_fifo_state_without_blocking(tmp_path: Path) -> None:
+    root = tmp_path / "cache"
+    root.mkdir()
+    state = root / ".selfforge-eval-sources.json"
+    os.mkfifo(state)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--root", str(root), "--timeout", "1"],
+        capture_output=True, text=True, timeout=3, check=False,
+    )
+    assert result.returncode != 0
+    assert "not a regular file" in result.stderr
+    assert stat.S_ISFIFO(state.lstat().st_mode)
+    assert list(root.iterdir()) == [state]
+
+
+def test_preparation_does_not_execute_checkout_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_prepare_module()
+    remote, _, _ = _make_remote_repo(tmp_path, "filtered", "payload.txt")
+    (remote / ".gitattributes").write_text("*.txt filter=probe\n")
+    _git(remote, "add", ".gitattributes")
+    _git(remote, "commit", "-qm", "register filter")
+    revision = _git(remote, "rev-parse", "HEAD")
+    marker = tmp_path / "filter-executed"
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "filter.probe.smudge")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", f"touch '{marker}'; cat")
+    mod.prepare_sources(
+        tmp_path / "cache", sources=[mod.PinnedEvalSource("filtered", str(remote), revision)],
+    )
+    assert not marker.exists()
+    assert _git(tmp_path / "cache" / "filtered", "rev-parse", "HEAD") == revision

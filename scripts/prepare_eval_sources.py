@@ -283,7 +283,7 @@ def _normalize_url(raw: str) -> str:
 
 def _read_state(root: Path) -> dict[str, Any] | None:
     state_path = root / STATE_FILENAME
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(state_path, flags)
     except FileNotFoundError:
@@ -480,13 +480,9 @@ def _ensure_named_ref(repo: Path, source: PinnedEvalSource, *, deadline: float) 
         )
         only_git_dir = [p.name for p in repo.iterdir()] == [".git"]
         if head_exists is None and only_git_dir:
-            branch_name = source.ref_name.removeprefix("refs/heads/")
-            _run_git(
-                ["checkout", "--quiet", "-b", branch_name, source.revision],
-                cwd=repo,
-                deadline=deadline,
-                fail_on_stdout_overflow=False,
-            )
+            # Populate refs only: checkout would execute configured smudge filters.
+            _run_git(["update-ref", source.ref_name, source.revision], cwd=repo, deadline=deadline)
+            _run_git(["symbolic-ref", "HEAD", source.ref_name], cwd=repo, deadline=deadline)
             return [source.ref_name]
         _run_git(["update-ref", source.ref_name, source.revision], cwd=repo, deadline=deadline)
         return [source.ref_name]
