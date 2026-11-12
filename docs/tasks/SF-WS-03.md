@@ -98,3 +98,10 @@
 - 交付状态：实施与全量验证已完成，PR [#50](https://github.com/liuzhouquan/selfforge-agent/pull/50) 已创建等待审查合并。
 - 当前分支：`feat/workspace-dirty-state-guard`。主分支 `main` 保持纯净。
 
+## Integration review (2026-11-12)
+
+Reconciled with PR #55 base `944cfca` without discarding original commits.
+The original development results above are historical, not the verification
+results for the current combination. Corrections, boundaries and evidence:
+[PR #48–#54 review](../review-pr48-54.md). Exact tested heads and CI are recorded
+in the delivery comments on the corresponding PR. No paid model run.
