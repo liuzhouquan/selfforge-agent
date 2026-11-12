@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "boltons_remap_mappings",
+      "repository": "../../.local/benchmark/repos/boltons",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "task": "In boltons, remap (boltons.iterutils) does not properly support mapping types from boltons.dictutils. Specifically: 1) Remapping a structure with a FrozenDict crashes with TypeError ('FrozenDict object is immutable') during default_exit because it attempts to call in-place update(). In default_exit, catch (AttributeError, TypeError) when updating Mappings and fall back to constructing new_parent.__class__(new_items). Also add a copy() method on FrozenDict that returns self to preserve immutability. 2) Remapping an OrderedMultiDict loses duplicate keys because default_enter uses ItemsView(value), which only returns the last value per key. In default_enter, if value has items(multi=True) and addlist, traverse value.items(multi=True). In default_exit, if new_parent has update_extend, call new_parent.update_extend(new_items). Add regression tests to tests/test_iterutils.py and tests/test_dictutils.py.",
+      "allowed_changes": [
+        "boltons/dictutils.py",
+        "boltons/iterutils.py",
+        "tests/test_dictutils.py",
+        "tests/test_iterutils.py"
+      ],
+      "holdout_test": "holdouts/test_boltons_remap_mappings.py",
+      "agent_test_path": "tests/test_iterutils.py",
+      "reference_patch": "references/boltons_remap_mappings.patch",
+      "image": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+    }
+  ]
+}
+

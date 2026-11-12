@@ -1,0 +1,82 @@
+diff --git a/boltons/dictutils.py b/boltons/dictutils.py
+index 5238596..285206e 100644
+--- a/boltons/dictutils.py
++++ b/boltons/dictutils.py
+@@ -1120,6 +1120,9 @@ class FrozenDict(dict):
+     def __copy__(self):
+         return self  # immutable types don't copy, see tuple's behavior
+ 
++    def copy(self):
++        return self
++
+     # block everything else
+     def _raise_frozen_typeerror(self, *a, **kw):
+         "raises a TypeError, because FrozenDicts are immutable"
+diff --git a/boltons/iterutils.py b/boltons/iterutils.py
+index f63cda5..c929b4b 100644
+--- a/boltons/iterutils.py
++++ b/boltons/iterutils.py
+@@ -1106,6 +1106,8 @@ def default_enter(path, key, value):
+     if isinstance(value, (str, bytes)):
+         return value, False
+     elif isinstance(value, Mapping):
++        if hasattr(value, "items") and hasattr(value, "addlist"):
++            return value.__class__(), value.items(multi=True)
+         return value.__class__(), ItemsView(value)
+     elif isinstance(value, Sequence):
+         try:
+@@ -1130,7 +1132,13 @@ def default_exit(path, key, old_parent, new_parent, new_items):
+     #       % (path, key, old_parent, new_parent, new_items))
+     ret = new_parent
+     if isinstance(new_parent, Mapping):
+-        new_parent.update(new_items)
++        if hasattr(new_parent, "update_extend"):
++            new_parent.update_extend(new_items)
++        else:
++            try:
++                new_parent.update(new_items)
++            except (AttributeError, TypeError):
++                return new_parent.__class__(new_items)
+     elif isinstance(new_parent, Sequence):
+         vals = [v for i, v in new_items]
+         if hasattr(new_parent, '_make'):
+diff --git a/tests/test_dictutils.py b/tests/test_dictutils.py
+index f42bf5b..32d71cf 100644
+--- a/tests/test_dictutils.py
++++ b/tests/test_dictutils.py
+@@ -678,3 +678,10 @@ def test_frozendict_api():
+ 
+     import copy
+     assert copy.copy(fd) is fd
++
++
++def test_frozendict_copy_returns_self():
++    fd = FrozenDict({'a': 1})
++    copied = fd.copy()
++    assert isinstance(copied, FrozenDict)
++    assert copied is fd
+diff --git a/tests/test_iterutils.py b/tests/test_iterutils.py
+index e3d0695..ec01510 100644
+--- a/tests/test_iterutils.py
++++ b/tests/test_iterutils.py
+@@ -780,3 +780,20 @@ def test_frange_xfrange_zero_step():
+         frange(10, step=0)
+     with pytest.raises(ValueError):
+         list(xfrange(10, step=0))
++
++
++def test_remap_frozendict():
++    from boltons.dictutils import FrozenDict
++    fd = FrozenDict({'a': 1, 'b': 2})
++    res = remap(fd)
++    assert isinstance(res, FrozenDict)
++    assert res == fd
++
++
++def test_remap_ordered_multidict():
++    from boltons.dictutils import OrderedMultiDict
++    omd = OrderedMultiDict([('k', 1), ('k', 2), ('x', 3)])
++    res = remap(omd)
++    assert isinstance(res, OrderedMultiDict)
++    assert res.getlist('k') == [1, 2]
++    assert res.getlist('x') == [3]
