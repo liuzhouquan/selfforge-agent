@@ -127,12 +127,29 @@ flowchart LR
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-DEV-01-A1 | 空临时根显式在线准备后，两固定提交能从生成仓库独立 clone/checkout | `tests/test_eval_source_preparation.py`；本地 Git remote 替身测控制流，CI 实际固定 URL | 未验证；节点待实现 |
-| SF-DEV-01-A2 | 已有合格缓存使用 `--offline`，成功且不联网、不改变用户 HEAD/文件 | 同文件 CLI 回归 + 前后状态；替身阻断 fetch | 未验证；节点待实现 |
-| SF-DEV-01-A3 | 超时、坏源、缺提交、离线缺缓存、symlink/未知目录输入均失败，保留已有内容 | 同文件错误注入；可观察退出码与磁盘内容 | 未验证；节点待实现 |
-| SF-DEV-01-A4 | 新 checkout 按文档先准备再运行全部测试；CI 不再复制 fetch 命令 | 真实 CI + Docker 两候选控制；不需要模型密钥 | 未验证 |
+| SF-DEV-01-A1 | 空临时根显式在线准备后，两固定提交能从生成仓库独立 clone/checkout | `tests/test_eval_source_preparation.py`；本地 Git remote 替身测控制流，CI 实际固定 URL | E1（本地控制流通过；真实 CI 固定 URL 待远端运行） |
+| SF-DEV-01-A2 | 已有合格缓存使用 `--offline`，成功且不联网、不改变用户 HEAD/文件 | 同文件 CLI 回归 + 前后状态；替身阻断 fetch | E2（本地通过） |
+| SF-DEV-01-A3 | 超时、坏源、缺提交、离线缺缓存、symlink/未知目录输入均失败，保留已有内容 | 同文件错误注入；可观察退出码与磁盘内容 | E3（本地通过） |
+| SF-DEV-01-A4 | 新 checkout 按文档先准备再运行全部测试；CI 不再复制 fetch 命令 | 真实 CI + Docker 两候选控制；不需要模型密钥 | E4（本地 CI 配置检查通过；真实 CI + Docker 待运行） |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-DEV-01-A1 | `tests/test_eval_source_preparation.py::test_online_preparation_creates_cloneable_repos_and_ownership_marker`、`tests/test_eval_source_preparation.py::test_pinned_sources_match_candidate_manifests_and_policy`、`tests/test_eval_source_preparation.py::test_default_root_uses_env_var_and_cli_subprocess`、`tests/test_eval_source_preparation.py::test_online_fetch_into_existing_repo_preserves_head_and_candidate_branch` | Host 本地 Git remote 替身 + `git clone --no-local` 实测；`PYTHONPATH=src python -m pytest -vv tests/test_eval_source_preparation.py` 与 `PYTHONPATH=src python -m pytest -q -m "not integration"`、`ruff check .` | `81c9dd96027c189248c6135fd182200511fc0fae`；专项 18 passed / 非集成全量 573 passed, 13 deselected / Ruff passed；真实 URL 远端 CI 待运行 |
+| E2 | SF-DEV-01-A2 | `tests/test_eval_source_preparation.py::test_offline_mode_succeeds_without_fetch_and_preserves_user_head_and_files` | 同上（Host 本地缓存 + git wrapper 阻断 mutating/fetch 命令 + 前后 HEAD 与文件比对） | `81c9dd96027c189248c6135fd182200511fc0fae`；本地 passed / 非集成全量 573 passed, 13 deselected |
+| E3 | SF-DEV-01-A3 | `tests/test_eval_source_preparation.py::test_invalid_timeout_cli_rejected`、`tests/test_eval_source_preparation.py::test_timeout_kills_slow_git_and_leaves_diagnosable_unready_state`、`tests/test_eval_source_preparation.py::test_online_bad_remote_and_missing_commit_fail_and_recover_on_retry`、`tests/test_eval_source_preparation.py::test_run_git_stdout_overflow_fails_closed`、`tests/test_eval_source_preparation.py::test_offline_rejects_missing_cache_bad_origin_and_orphan_commit`、`tests/test_eval_source_preparation.py::test_rejects_symlinks_unknown_dirs_and_nested_parent_repo_without_modification`、`tests/test_eval_source_preparation.py::test_bounded_output_and_corrupt_state_file_fail_closed` | 同上（Host CLI 子进程退出码、超时期限进程组终止、错误注入与磁盘内容保留检查） | `81c9dd96027c189248c6135fd182200511fc0fae`；本地 passed / 非集成全量 573 passed, 13 deselected |
+| E4 | SF-DEV-01-A4 | `tests/test_eval_source_preparation.py::test_ci_workflow_uses_shared_prepare_eval_sources_script`；`.github/workflows/ci.yml` | 同上（本地检查 CI 工作流改用 `scripts/prepare_eval_sources.py`）；本机 WSL 未安装 `docker`，尚未执行 `-m integration` 与远端 CI | `81c9dd96027c189248c6135fd182200511fc0fae`；本地静态检查 passed；真实 CI 与 Docker 集成待运行 |
 
 执行记录（Owner/状态以上表为准）：Base=`e07153e092150ab2d1f86aa98545a676836b6e14`；Branch=`feat/sf-dev-01`；Worktree=`selfforge-sf-dev-01`；PR=无。最先核对现有两条固定 SHA 和独立 clone 行为，再写失败用例；完成后保留一个共享实现与一份准备说明。
+
+```text
+Owner / 状态：Antigravity Agent / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：e07153e092150ab2d1f86aa98545a676836b6e14 / feat/sf-dev-01 (worktree: selfforge-sf-dev-01) / 已验证源码提交 81c9dd96027c189248c6135fd182200511fc0fae（本交接提交仅含 docs/SDD.md 文档差异）
+已完成验收与证据 ID：本地完成 E1（控制流与独立 clone）、E2（--offline）、E3（超时/坏源/缺提交/symlink/未知目录/有界输出）及 E4 本地 CI 配置检查；源码提交 81c9dd96027c189248c6135fd182200511fc0fae 通过 Ruff 与全部非集成单测（573 passed, 13 deselected）
+未完成 / 环境限制 / 未提交内容归属：当前 WSL2 环境未启用 docker 命令，本地无法运行 `-m integration` Docker 集成测试；当前会话未推送分支或创建 PR，远端真实 URL fetch 与 GitHub CI + Docker 两候选控制尚未验证（SF-DEV-01-A1 真实 URL 与 SF-DEV-01-A4 待远端执行）。无未提交内容。
+PR / 准确 head CI / merge SHA（有则填）：无（尚未推送或创建 PR）
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：获授权后将 `feat/sf-dev-01` 推送至远端并创建 PR，验证 GitHub Actions 的 `Provision pinned multi-file candidate sources` 与 `Docker integration tests` 通过后再更新状态为 In Review / Merged。
+```
 
 ### SF-DOC-01
 
