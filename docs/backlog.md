@@ -27,6 +27,7 @@
 | SF-WS-04 | In Review | 工作区磁盘配额与存储占用审计诊断 | PR #54；有界目录体积测量、缓存隔离统计、配额超额预警与回收建议 |
 | SF-PROV-01 | Complete | 扩充常见大模型预设供应商与通用健康检查机制 | PR #55；内置 opencode, chatgpt, claude, gemini, grok, kimi, glm 预设与统一 /models 校验 |
 | SF-RUN-05 | In Review | 代码修改目标定位失败与连续重试回退指导 | PR #49；详见 [SF-RUN-05](./tasks/SF-RUN-05.md)；连续 edit 失败检出与瞬态指导，复位与隔离 |
+| SF-WS-03 | In Review | 工作区未提交改动与脏状态防覆盖防护 | PR #50；详见 [SF-WS-03](./tasks/SF-WS-03.md)；直接模式前置 dirty 检查与 allow-dirty 显式门禁 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
