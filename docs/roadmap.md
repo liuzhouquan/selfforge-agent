@@ -1,6 +1,6 @@
 # Roadmap
 
-This is a capability map, not a task queue. Take one bounded work unit from the [backlog](./backlog.md), use the [agent workflow](./agent-workflow.md), and verify through the [development guide](./development.md). Historical test counts and model results stay in their pinned [integration](./runtime-integration.md), [delivery review](./pr-delivery-review.md) and [evaluation](./evaluation.md) records. Formal evaluation coverage is the next product priority; automatic dependency installation, causal proof and model-specific exact tokenization remain open.
+This is a capability map, not a task queue. Start from the [unified SDD](./SDD.md) for the active task queue, acceptance and handoff. This page is a historical capability map, not a second current-state ledger. Consult the [development guide](./development.md) for technical details. Historical test counts and model results stay in their pinned [integration](./runtime-integration.md), [delivery review](./pr-delivery-review.md) and [evaluation](./evaluation.md) records. Formal evaluation coverage is the next product priority; automatic dependency installation, causal proof and model-specific exact tokenization remain open.
 
 | Priority | Status | Work |
 | --- | --- | --- |

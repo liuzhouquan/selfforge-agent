@@ -1,6 +1,8 @@
 # SF-EVAL-03：按冻结的 v2 策略执行 20 题 × 3 次真实模型评测
 
-- 状态：Complete
+> 已核对：PR #37 已合并，merge SHA `5f7be3f816a5c09c78ffd9d4eeef73d3f9f7e8d8`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：7eabefc67439432001921e5dbe81aad50b2bfc18（已核对 origin/main）
 - 分支 / 所属 worktree：feat/eval-twenty-tasks-model-run
@@ -68,7 +70,7 @@
 - [x] 是否保留已冻结的清单与参考资产：清单、holdout 与 reference 保持完全冻结无修改。
 - [x] 是否杜绝了密钥、私有日志与会话泄漏：原始报告存放于 `.local/benchmark/`，无任何私有数据或密钥进入暂存区。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：本地实现完成并经过完整 60 次真实模型运行验证，待审查合并。
 - 当前 HEAD：`7eabefc`（基线 commit）+ 本地任务卡/文档 commit。

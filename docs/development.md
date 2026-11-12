@@ -1,25 +1,25 @@
 # 开发指南
 
+当前开发从 [统一 SDD](./SDD.md) 开始；本指南作为技术参考，不维护第二套任务队列。
+
 本指南回答新贡献者或 coding agent 的四个问题：先读什么、改哪里、怎样验收、如何交接。产品目标是面向 Python Git 仓库的 Coding Agent 与测试框架；CLI/Web 共用 Runtime，PR Review/差异测试/Repair 是专项流程。
 
 ## Reading order
 
-1. [AGENTS.md](../AGENTS.md)：自动读取的短入口、任务边界与通用交付规则。
-2. [Agent 协作流程](./agent-workflow.md)：确认现场 → 写任务 → 实施 → 验证 → 交接；小任务自主推进，不等待形式审批。
-3. [产品边界](./product-scope.md)与[可接手任务](./backlog.md)：分清目标、已实现、待验证和本轮选中的一个工作单元。
-4. 下方模块表，以及涉及模块的[工程约束](./engineering-invariants.md)和专门契约；无需一开始通读所有历史报告。
-5. 需要追踪执行路径时读[架构](./architecture.md)；调查旧问题时再读带基线 SHA 的审计/评测记录。
+1. [SDD](./SDD.md)：产品边界、当前 Ready 规格、验收、验证和交接。
+2. 涉及具体模块时查阅下方入口表及[工程不变量](./engineering-invariants.md)。
+3. 需要实现细节时查[架构](./architecture.md)；旧任务/审计仅用于追溯历史。
 
-跨模块或行为变更使用[任务卡](./task-template.md)。Owner、分支、基线、验收、真实结果和下一步放在同一个记录里，避免依赖聊天上下文。人和 agent 使用相同流程；是否启动并行 agent 由当前用户/工具授权决定。
+新任务的当前状态、规格和交接直接维护在 SDD 对应节，不要求另建 task 文件。
 
 ## 文档职责与冲突处理
 
 | 文件 | 回答的问题 | 更新时机 |
 | --- | --- | --- |
-| 当前用户任务 / 任务卡 | 这一轮到底做什么、哪些不做、谁接手 | 开工、必要范围变化、交接 |
+| 当前用户任务 / `SDD.md` | 这一轮做什么、谁接手、验收和当前状态 | 开工、范围变化、交接与合并 |
 | `AGENTS.md` | 全局规则、读取顺序、交付要求 | 协作规则变化；保持简短 |
 | `product-scope.md` / `.en.md` | 最终产品边界及完成条件 | 产品能力/验收边界变化；两种语言同步 |
-| `backlog.md` | 下一位可以接哪个小任务、前提是否满足 | 认领/完成/优先级变化 |
+| `backlog.md` / `tasks/` | 历史任务规格和证据；不是当前任务队列 | 历史更正保留版本，不复制新队列 |
 | `engineering-invariants.md` 及链接契约 | 哪些执行、权限、状态和证据规则不能回退 | 所属行为变化且有对应验证时 |
 | `architecture.md` | 实际模块职责和调用路径 | 数据流/职责变化 |
 | `roadmap.md` | 能力级状态和较长期方向 | 功能状态变化；不当作一次任务清单 |
@@ -31,7 +31,7 @@
 
 已有一套原生 Tool Calling Runtime、受限工具、会话/轨迹、Docker 执行、Web 工作台、持久 worktree、非空 JUnit 与内容指纹证据，以及显式 commit/PR 交付。已有只读依赖/布局发现、有限锁导出、只读离线准备计划/有界 wheelhouse 审计、离线镜像准备、风险排序、堆栈关联、交互审批和可选配置费率估算。
 
-v2 首轮 20 题 × 3 次真实模型测量为 53/60，历史环境来源记录有限，见[评测记录](./evaluation.md)；自动安装构建环境、因果反事实验证和模型专用精确 Tokenizer 仍开放。Repair proposer loop 仍独立。详细状态以产品边界为准，下一步从 Backlog 选择，不重复实现已合并能力。
+v2 首轮 20 题 × 3 次真实模型测量为 53/60，历史环境来源记录有限，见[评测记录](./evaluation.md)；自动安装构建环境、因果反事实验证和模型专用精确 Tokenizer 仍开放。Repair proposer loop 仍独立。详细状态以产品边界为准，下一步从 SDD 队列选择，不重复实现已合并能力。
 
 当前不增加多 Agent 产品编排、通用 MCP 平台、额外 RAG、大型前端或另一套 Runtime；开发时多人/agent 分工与产品内的 Multi-Agent 能力是两件事。
 
@@ -67,7 +67,7 @@ uv run --no-sync pytest -q tests/test_delivery_safety.py
 uv run --no-sync ruff check .
 # Docker 相关/最终隔离验证前启用 daemon 并准备镜像
 docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
-# 对最终组合执行一次完整回归
+# 先按 docs/SDD.md 准备两道固定评测源；对最终组合执行一次完整回归
 uv run --no-sync pytest -q
 git diff --check
 ```
@@ -90,6 +90,6 @@ git diff --check
 
 ## 交付完成条件
 
-任务卡的每个验收编号都有实际结果或明确未完成项；错误路径、消费者和必要的集成边界已覆盖；没有删除/削弱旧断言；源码、文档声明与验证口径一致；敏感 diff 已检查；HEAD、PR、CI 和剩余事项已写入交接。
+SDD 中每个验收编号都有实际结果或明确未完成项；错误路径、消费者和必要的集成边界已覆盖；没有删除/削弱旧断言；源码、文档声明与验证口径一致；敏感 diff 已检查；HEAD、PR、CI 和剩余事项已写入交接。
 
 已实现、本地验证、CI 通过、已合并是不同状态。仅在当前用户授权整合后完成合并；整合时保留提交历史并确认 main。完整流程及可复制的接手指令见 [Agent 协作流程](./agent-workflow.md)。

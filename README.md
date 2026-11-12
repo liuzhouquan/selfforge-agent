@@ -4,7 +4,7 @@
 
 具备完整基础 Harness、以自主编程与测试验证为特色的 Python Coding Agent。
 
-[简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [产品边界](./docs/product-scope.md) · [路线图](./docs/roadmap.md) · [开发指南](./docs/development.md)
+[简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [产品边界](./docs/product-scope.md) · [路线图](./docs/roadmap.md) · [开发指南](./docs/development.md) · [开发规格 SDD](./docs/SDD.md)
 
 ```text
 用户任务 → 原生 Tool Calling → 搜索与阅读代码 → 精确修改 → 运行 pytest → 检查 JUnit 证据与轨迹
@@ -201,11 +201,11 @@ Web 工作台也可以导入自己或他人的可访问 GitHub PR，查看 Diff 
 
 ## Roadmap
 
-已完成 [20 题 / 5 仓库参考预检与 v2 策略冻结](./benchmark/validated-candidates/twenty-tasks-v2.md)；已完成首轮 53/60 测量；下一步补齐未来评测来源元数据并改进失败恢复，见[评测记录](./docs/evaluation.md)。已有显式 commit/PR 交付和只读环境发现；自动依赖安装、更广的环境配置仍开放。一次接手一个工作单元，见[可接手任务](./docs/backlog.md)与[产品边界](./docs/product-scope.md)。
+已完成 [20 题 / 5 仓库参考预检与 v2 策略冻结](./benchmark/validated-candidates/twenty-tasks-v2.md)；已完成首轮 53/60 测量；下一步补齐未来评测来源元数据并改进失败恢复，见[评测记录](./docs/evaluation.md)。已有显式 commit/PR 交付和只读环境发现；自动依赖安装、更广的环境配置仍开放。一次接手一个工作单元，见[SDD 任务队列](./docs/SDD.md#4-下一阶段里程碑与任务队列)与[产品边界](./docs/product-scope.md)。
 
 ## 开发与 Agent 协作
 
-新贡献者或 coding agent 从 [AGENTS.md](./AGENTS.md) 和[开发指南](./docs/development.md)开始，再按[协作流程](./docs/agent-workflow.md)领取一个任务。[任务卡模板](./docs/task-template.md)统一范围、验收和交接；[工程约束](./docs/engineering-invariants.md)按模块查阅。Roadmap 是方向，历史审计是指定版本的证据，都不能直接当成本轮整份任务单。贡献入口见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+新贡献者或 coding agent 从 [docs/SDD.md](./docs/SDD.md) 开始：产品边界、Ready 任务规格、验收证据、验证和交接集中在同一文件。涉及具体模块再查实现契约。历史 Backlog/任务卡用于追溯，不是当前队列。贡献入口见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 CLI/Web 现使用统一协同工作区锁，CLI/API 可生成只读离线依赖准备计划与有界 wheelhouse 审计；升级与能力边界见[整合审查](./docs/incoming-branches-review.md)。
 

@@ -1,6 +1,8 @@
 # SF-PROV-01：扩充多模型供应商预设与通用健康检查机制
 
-- 状态：In Review
+> 已核对：PR #55 已合并，merge SHA `944cfca4c1196fdb69ec29d6e23ea9b6a0e267cc`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/expand-provider-presets`
@@ -81,7 +83,7 @@
 - 严格保持向后兼容：现有 DeepSeek 与 OpenRouter 配置、环境变量、费率卡完全不受影响。
 - 安全防护一致性：所有新增预设受相同的 `validate_base_url`、本地 0600 文件锁以及 API Key 不回显策略保护。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：开发与本地验证已就绪，准备推送到 GitHub 远端并提交 PR #55。
 - 分支：`feat/expand-provider-presets`

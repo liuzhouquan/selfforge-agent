@@ -4,7 +4,7 @@
 
 A Python coding agent with a complete foundational harness, focused on autonomous coding and test-backed verification.
 
-[简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Product scope](./docs/product-scope.en.md) · [Roadmap](./docs/roadmap.md) · [Development guide (中文)](./docs/development.md)
+[简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Product scope](./docs/product-scope.en.md) · [Roadmap](./docs/roadmap.md) · [Development guide (中文)](./docs/development.md) · [Development SDD (中文)](./docs/SDD.md)
 
 ```text
 User task → native tool calling → search/read code → exact edits → pytest → JUnit evidence and trace
@@ -201,11 +201,11 @@ The web workbench can also import your own or someone else's accessible GitHub P
 
 ## Roadmap
 
-The [twenty-case v2 suite and policy](./benchmark/validated-candidates/twenty-tasks-v2.md) passed reference qualification; its first three-attempt-per-case measurement scored 53/60 with provenance limitations; see the evaluation record. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [backlog](./docs/backlog.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
+The [twenty-case v2 suite and policy](./benchmark/validated-candidates/twenty-tasks-v2.md) passed reference qualification; its first three-attempt-per-case measurement scored 53/60 with provenance limitations; see the evaluation record. Explicit commit/PR delivery and read-only environment discovery already exist; automatic dependency installation and broader profiles remain open. Pick one work unit from the [SDD](./docs/SDD.md); product acceptance is defined in [scope](./docs/product-scope.en.md).
 
 ## Development and agent collaboration
 
-New contributors and coding agents start with [AGENTS.md](./AGENTS.md) and the [development guide](./docs/development.md), then take one task through the [collaboration workflow](./docs/agent-workflow.md). The [task template](./docs/task-template.md) records scope, acceptance and handoff; read [engineering invariants](./docs/engineering-invariants.md) by affected module. Roadmap items are directions, and audit records describe pinned versions; neither is a request to implement everything in one branch. See [CONTRIBUTING.md](./CONTRIBUTING.md).
+Start development with [docs/SDD.md](./docs/SDD.md): one entry for product scope, Ready task specifications, acceptance evidence, verification and handoff. Consult implementation contracts only for affected modules. The historical Backlog and task cards are references, not an active queue. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 CLI/Web now share cooperative workspace ownership. CLI/API provide read-only offline dependency plans and bounded wheelhouse audits. The [v2 policy](./benchmark/validated-candidates/twenty-tasks-v2.md) is frozen; its first 60 live-model attempts scored 53/60 with provenance limitations. See [integration review](./docs/incoming-branches-review.md) for upgrade instructions and limits.
 

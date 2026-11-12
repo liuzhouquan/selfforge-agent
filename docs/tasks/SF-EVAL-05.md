@@ -1,6 +1,8 @@
 # SF-EVAL-05：多轮评测报告回归对比分析与差异报告
 
-- 状态：In Review
+> 已核对：PR #46 已合并，merge SHA `8050febd7404f30a233030925ce00986001577a1`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/evaluation-report-diff`
@@ -88,7 +90,7 @@
 - CLI `eval-diff` 提供 `--fail-on-regression` 退出码门禁，并支持 JSON、Markdown 与纯文本导出。
 - Web API `POST /api/benchmark/diff` 路由同步提供比对支持。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：本地实现与全量测试完成，准备提交并创建 PR。
 

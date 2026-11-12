@@ -1,6 +1,8 @@
 # SF-WS-04：工作区磁盘配额与存储审计
 
-- 状态：In Review
+> 已核对：PR #54 已合并，merge SHA `04452154addaeff3375fcd15996585c2d5e374e3`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/workspace-storage-quota-audit`
@@ -81,7 +83,7 @@
 - 安全边界不变量：`measure_directory` 严格采用 `followlinks=False` 与 `os.lstat`，避免穿越宿主机目录或链接死循环，且设定文件上限有界防范。
 - 纯只读性：审计仅收集元数据与磁盘指标，绝不擅自清空或修改任何用户文件或分支。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：实施与全量验证已完成，准备提交并创建 PR。
 - 当前分支：`feat/workspace-storage-quota-audit`。主分支 `main` 保持纯净。

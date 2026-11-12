@@ -20,5 +20,4 @@ These numbers are project acceptance targets, not achieved results. A useful mod
 
 ## Near-term order
 
-1. Expand and freeze at least 20 distinct tasks from 3 or more real repositories, each with a behavior contract and reference fix; run each at least three times under a fixed provider policy and report failure categories.
-2. Use the [backlog](./backlog.md) for small work units. Reproduced reliability problems take priority, followed by formal evaluation. Do not reimplement delivery, read-only environment discovery or Web recovery. Commands and acceptance process are in the [development guide](./development.md); the [roadmap](./roadmap.md) records capability direction.
+The [unified SDD](./SDD.md) owns current milestones, Ready specifications, acceptance and handoff. The first twenty-case measurement is complete, not a task to repeat implicitly. The next stage focuses on reproducible verification setup, specification-to-test evidence and independent regression validation for general Coding repairs. Larger work such as automatic environment installation needs separately defined specifications.

@@ -1,18 +1,11 @@
 # Contributing to selfForge Agent
 
-Start with [AGENTS.md](./AGENTS.md), then the [development guide](./docs/development.md). The same workflow applies to human contributors and coding agents.
+Start with [docs/SDD.md](./docs/SDD.md). It contains product scope, current Ready tasks, concrete acceptance criteria, source entry points, verification and handoff in one place. The same specification applies to humans and coding agents.
 
-| Need | Read |
-| --- | --- |
-| Understand the product and what remains open | [Product scope](./docs/product-scope.md) |
-| Pick a small, bounded next task | [Backlog](./docs/backlog.md) |
-| Set up, implement, verify and hand off | [Agent workflow](./docs/agent-workflow.md) |
-| Copy a task brief and completion record | [Task template](./docs/task-template.md) |
-| Change Runtime, state, permissions or evidence | Relevant sections of [engineering invariants](./docs/engineering-invariants.md) |
-| Find source/test entry points | [Development guide](./docs/development.md#module-entry-points), [architecture](./docs/architecture.md) |
+[AGENTS.md](./AGENTS.md) is the automatically loaded rule entry. Consult the [development guide](./docs/development.md), [architecture](./docs/architecture.md) and relevant [engineering invariants](./docs/engineering-invariants.md) when the selected task needs implementation detail.
 
-Deliver one coherent behavior per task. Planned features in the Roadmap are not a request to implement all of them in one branch. Use a separate owned checkout/worktree for simultaneous work, and preserve other contributors' changes and commits.
+Claim one task in the SDD after checking open PRs and workspace ownership. Record its acceptance IDs, exact test nodes/commands, tested SHA and CI; update its status and handoff there. Do not create another live Backlog or duplicate task specification. Old Backlog/task cards are historical evidence.
 
-Bug fixes need a reproducible failure and a meaningful regression. Source changes need the combined test/lint gates; documentation changes need link/path and whitespace checks. Record real outcomes and missing environment requirements. The PR template makes these boundaries reviewable.
+Preserve unknown work and original commits. Bugs need meaningful failing regressions. Source changes need the combined pytest/Ruff gates and relevant Docker/API/process verification; documentation-only changes need links, anchors, references and whitespace checks. Never weaken assertions, permissions or evidence to obtain green checks.
 
-Use current session authorization for external services and repository integration. No new permissions, keys, or services are required merely to read these guides.
+Use current session authorization for external actions and integration. The SDD does not grant permissions or add an approval layer.
