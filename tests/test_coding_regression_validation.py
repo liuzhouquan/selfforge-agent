@@ -904,3 +904,20 @@ def test_final_fingerprint_uses_validation_deadline(tmp_path, monkeypatch):
     assert len(deadlines) == 3
     assert None not in deadlines
     assert len(set(deadlines)) == 1
+
+
+@pytest.mark.parametrize('error_type', [OSError, ValueError])
+def test_api_sanitizes_unclassified_validation_errors(monkeypatch, error_type):
+    secret = 'SECRET_PRIVATE_ERROR /home/private/session.jsonl'
+
+    def fail(*args, **kwargs):
+        raise error_type(secret)
+
+    monkeypatch.setattr(api_module, 'validate_workspace_regression', fail)
+    response = TestClient(api_module.app).post(
+        '/api/code/workspaces/session123/validate-regression',
+        json={'repository': '/nonexistent', 'test_file': 'candidate.py', 'timeout': 30},
+    )
+    assert response.status_code == 400
+    assert secret not in response.text
+    assert response.json() == {'detail': 'Regression validation failed'}

@@ -716,8 +716,10 @@ def code_workspace_validate_regression(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RegressionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (RegressionValidationError, ValueError, OSError) as exc:
+    except RegressionValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail="Regression validation failed") from exc
 
 
 @app.get("/api/code/jobs", response_model=list[CodingJobResponse])
