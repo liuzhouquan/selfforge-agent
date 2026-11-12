@@ -55,8 +55,39 @@ counts are not distinct defect counts.
 
 ## Verification status
 
-Full final regression and exact-head remote CI are recorded in PR delivery
-comments. Local Docker Desktop WSL integration is currently unavailable; no local
-Docker pass is claimed. CI must actually qualify both new candidates and run the
-existing Docker group before merge. Frozen v2 manifests/assets remain unchanged.
-Historical 53/60 predates this Runtime and is not a score for these changes.
+Docker Desktop became available during review (Engine 29.8.0). The final
+combination's Docker integration group passed locally: **13 passed, 555
+deselected**, no skips (53.28 seconds). This includes both candidate baselines
+and independent reference-visible/holdout controls, using the candidate image
+`sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20`.
+No image override was used locally. Pinned sources were read from an existing
+external cache via `SELFFORGE_EVAL_SOURCE_ROOT`; the tests made fresh checkouts.
+
+The matching combined source tree also passed the complete unit selection:
+**555 passed, 13 deselected**, no skips (305.85 seconds). A separate production-only
+installation imported CLI/API successfully, without pytest. The complete combined
+invocation is recorded in final delivery evidence.
+
+Locked dependency installation, Ruff, frontend `node --check`, and full diff
+whitespace checks passed. The new direct-mode checkbox was syntax checked and
+its API guard tested; no interactive browser smoke is claimed. Full unit
+regression and exact-head remote CI results are recorded in the PR delivery
+comments. CI uses an explicit temporary image override after building its image;
+its qualification is not reported as a historical frozen-image run. Frozen v2
+manifests/assets remain unchanged. Historical 53/60 predates this Runtime and
+is not a score for these changes.
+
+## Candidate input hashes after review
+
+These candidate assets are separate from frozen v2 history; corrections were
+made before acceptance. Original task-card base SHAs were corrected to the
+actual `4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`.
+
+| Asset | SHA-256 |
+| --- | --- |
+| `suite-jmespath-unknown-function.json` | `ceff19fe8cdad6a4daea593da91fb3b0dffa328e833187b678624e723043f136` |
+| `holdouts/test_jmespath_unknown_function.py` | `a7f202ae9754b955e1b49f0919ab8e83ca6e7b75b3e2af18c3f90ac95490f151` |
+| `references/jmespath_unknown_function.patch` | `0bb053b387ea88cfae28dd254e6fa41a5a6a0f502b4a7a08688d3a75b8e6c62d` |
+| `suite-boltons-remap-mappings.json` | `600cef38963ea86e111ce36e43bf84be6cc11b612cba694c60418192a0352bdf` |
+| `holdouts/test_boltons_remap_mappings.py` | `1eec036ec2d862a8ab9244ebed8b8faaef4a6680220261f4ff715734c950446d` |
+| `references/boltons_remap_mappings.patch` | `ff72165a2d98d41499130efdd879d1345816d2a928a1722090cfb7df80c49cae` |

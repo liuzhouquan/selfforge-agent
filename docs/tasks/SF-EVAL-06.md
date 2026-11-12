@@ -2,7 +2,7 @@
 
 - 状态：In Review
 - Owner：Antigravity Agent
-- 基线：`4ecd6a5b6727fb2e2938cf15c929a7001ae4f849`（`origin/main`）
+- 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/eval-multi-file-task`
 - 依赖：无（基于已合并的 PR #47 / main）
 - PR：[#48](https://github.com/liuzhouquan/selfforge-agent/pull/48)

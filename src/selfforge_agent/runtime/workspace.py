@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import re
+import stat
+import time
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -17,6 +19,65 @@ from selfforge_agent.coding.worktree import WorktreeError, git, git_bounded
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+
+
+CACHE_DIR_NAMES = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache"})
+
+def _measure_directory(path: Path, *, max_files: int = 50_000,
+                       cache_dir_names: frozenset[str] = CACHE_DIR_NAMES,
+                       deadline: float | None = None, max_entries: int = 50_000) -> dict:
+    """Bounded no-follow scan of apparent file bytes, with explicit incomplete results."""
+    deadline = deadline if deadline is not None else time.monotonic() + 10
+    result = {"total_bytes": 0, "cache_bytes": 0, "file_count": 0,
+              "complete": True, "scan_error": None}
+    entries = 0
+
+    def scan(fd: int, depth: int, cached: bool) -> None:
+        nonlocal entries
+        if depth > 128:
+            raise ValueError("depth_limit")
+        with os.scandir(fd) as iterator:
+            for entry in iterator:
+                if time.monotonic() >= deadline:
+                    raise ValueError("time_limit")
+                entries += 1
+                if entries > max_entries:
+                    raise ValueError("entry_limit")
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=fd)
+                    try:
+                        scan(child, depth + 1, cached or entry.name in cache_dir_names)
+                    finally:
+                        os.close(child)
+                else:
+                    if result["file_count"] >= max_files:
+                        raise ValueError("file_limit")
+                    result["file_count"] += 1
+                    result["total_bytes"] += info.st_size
+                    if cached and stat.S_ISREG(info.st_mode):
+                        result["cache_bytes"] += info.st_size
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            scan(fd, 0, False)
+        finally:
+            os.close(fd)
+        if time.monotonic() >= deadline:
+            raise ValueError("time_limit")
+    except (OSError, ValueError) as exc:
+        result["complete"] = False
+        result["scan_error"] = str(exc) if isinstance(exc, ValueError) else "unreadable_entry"
+    return result
+
+
+def measure_directory(path: Path, *, max_files: int = 50_000,
+                      cache_dir_names: frozenset[str] = CACHE_DIR_NAMES) -> tuple[int, int, int]:
+    """Compatibility tuple of measured lower bounds; audit_storage exposes completeness."""
+    result = _measure_directory(path, max_files=max_files, cache_dir_names=cache_dir_names)
+    return result["total_bytes"], result["cache_bytes"], result["file_count"]
 
 
 class WorkspaceError(ValueError):
@@ -305,3 +366,110 @@ class CodingWorkspaceManager:
             finally:
                 unlock_workspace(fd)
         return result
+
+    def audit_storage(
+        self,
+        repository: Path,
+        *,
+        quota_bytes: int | None = None,
+        head_ref: str = "HEAD",
+        max_files_per_worktree: int = 50_000,
+    ) -> dict[str, Any]:
+        if quota_bytes is not None and (isinstance(quota_bytes, bool) or quota_bytes < 0):
+            raise ValueError("Quota must be nonnegative")
+        repo = self.validate_repository(repository)
+        deadline = time.monotonic() + 10
+        complete = True
+        workspaces_data = []
+        total_repo_bytes = 0
+        total_repo_cache_bytes = 0
+        total_reclaimable_bytes = 0
+        prunable_count = 0
+        locked_count = 0
+        dirty_count = 0
+
+        for ws in self.list(repo):
+            if time.monotonic() >= deadline or len(workspaces_data) >= 1000:
+                raise WorkspaceError("Storage audit time/workspace limit exceeded")
+            fd = try_workspace_lock(ws.path, root=self.locks_root)
+            is_locked = fd is None
+            if fd is not None:
+                unlock_workspace(fd)
+            if is_locked:
+                locked_count += 1
+
+            is_dirty = self._dirty(ws)
+            if is_dirty:
+                dirty_count += 1
+
+            is_merged = self._merged(ws, head_ref)
+            prunable = not is_locked and not is_dirty and is_merged
+            if prunable:
+                prunable_count += 1
+
+            measurement = _measure_directory(ws.path, max_files=max_files_per_worktree,
+                                             deadline=deadline)
+            complete = complete and measurement["complete"]
+            prunable = prunable and measurement["complete"]
+            total_b, cache_b, f_count = (measurement[k] for k in
+                                       ("total_bytes", "cache_bytes", "file_count"))
+            reclaimable_b = (total_b if prunable else cache_b) if not is_locked else 0
+
+            total_repo_bytes += total_b
+            total_repo_cache_bytes += cache_b
+            total_reclaimable_bytes += reclaimable_b
+
+            workspaces_data.append({
+                "session_id": ws.session_id,
+                "path": str(ws.path),
+                "branch": ws.branch,
+                "base_sha": ws.base_sha,
+                "complete": measurement["complete"],
+                "scan_error": measurement["scan_error"],
+                "total_bytes": total_b,
+                "cache_bytes": cache_b,
+                "file_count": f_count,
+                "is_locked": is_locked,
+                "is_dirty": is_dirty,
+                "is_merged": is_merged,
+                "prunable": prunable,
+                "reclaimable_bytes": reclaimable_b,
+            })
+
+        quota_exceeded = ((True if total_repo_bytes > quota_bytes else (False if complete else None))
+                          if quota_bytes is not None else False)
+        recommendations = []
+        if not complete:
+            recommendations.append("Incomplete scan: byte counts are lower bounds; quota may be unknown.")
+        if quota_exceeded and quota_bytes is not None:
+            over_bytes = total_repo_bytes - quota_bytes
+            recommendations.append(
+                f"Workspaces total size ({total_repo_bytes} bytes) exceeds quota "
+                f"({quota_bytes} bytes) by {over_bytes} bytes."
+            )
+        if prunable_count > 0:
+            recommendations.append(
+                f"{prunable_count} workspace(s) may be prune candidates; cleanup rechecks state under lock."
+            )
+        if total_repo_cache_bytes > 0:
+            recommendations.append(
+                f"{total_repo_cache_bytes} bytes of ephemeral caches (__pycache__, .pytest_cache) detected across worktrees."
+            )
+        if locked_count > 0:
+            recommendations.append(
+                f"{locked_count} workspace(s) are currently locked by active processes."
+            )
+
+        return {
+            "repository": str(repo),
+            "workspace_count": len(workspaces_data),
+            "total_bytes": total_repo_bytes,
+            "total_cache_bytes": total_repo_cache_bytes,
+            "reclaimable_bytes": total_reclaimable_bytes,
+            "quota_bytes": quota_bytes,
+            "quota_exceeded": quota_exceeded,
+            "complete": complete,
+            "measurement_scope": "Apparent bytes, read-only non-atomic snapshot; no quota enforcement",
+            "recommendations": recommendations,
+            "workspaces": workspaces_data,
+        }
