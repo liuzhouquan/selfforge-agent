@@ -48,6 +48,7 @@
             </div>
             <label class="provider-fallback"><input id="coding-fallback" type="checkbox" checked /> 供应商失败时切换备用模型</label>
             <label class="trust-label" id="coding-direct-trust" hidden><input id="coding-confirm-direct" type="checkbox" /> 我确认允许 Agent 直接修改原仓库文件</label>
+            <label class="trust-label" id="coding-dirty-trust" hidden><input id="coding-allow-dirty" type="checkbox" /> 允许在含有未提交改动的工作区中直接运行</label>
             <label class="trust-label" id="coding-host-trust" hidden><input id="coding-trust" type="checkbox" /> 我信任此仓库，允许在本机执行命令和测试</label>
             <label for="coding-resume">续跑会话 ID（可选）</label>
             <input id="coding-resume" type="text" placeholder="留空则开始新会话" autocomplete="off" />

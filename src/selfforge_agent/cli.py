@@ -73,6 +73,14 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         if args.workspace == "worktree":
             workspace = (manager.get(root, session.session_id) if args.resume
                          else manager.create(root, session.session_id))
+        elif (args.workspace == "direct" and not args.resume
+              and not getattr(args, "allow_dirty", False) and manager.is_dirty(root)):
+            dirty_sample = manager.dirty_files(root, limit=5)
+            sample_str = f" ({', '.join(dirty_sample)})" if dirty_sample else ""
+            parser.error(
+                f"Direct workspace has uncommitted changes or untracked files{sample_str}; "
+                "commit or stash them before running in direct mode, or pass --allow-dirty"
+            )
         working_root = workspace.path if workspace else root
         executor = (HostExecutor(working_root, trusted=True) if args.sandbox == "host"
                     else DockerExecutor(working_root, image=args.image))
@@ -156,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
     code.add_argument("--resume", help="Resume a prior session ID")
     code.add_argument("--workspace", choices=["worktree", "direct"], default="worktree",
                       help="Persistent isolated worktree (default) or explicit direct edits")
+    code.add_argument("--allow-dirty", action="store_true",
+                      help="Allow running in direct workspace mode on a repository with uncommitted changes")
     code.add_argument("--sandbox", choices=["docker", "host"], default="docker")
     code.add_argument("--trust-local", action="store_true", help="Required for host execution")
     code.add_argument("--image", help="New Docker image (default sandbox); resume reuses saved ID")
