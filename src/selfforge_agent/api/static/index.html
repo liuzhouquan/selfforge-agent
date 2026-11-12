@@ -75,6 +75,18 @@
               <div id="coding-diff-files" class="coding-diff-files"></div>
               <pre id="coding-diff-patch" hidden></pre>
             </div>
+            <div id="coding-regression" class="coding-diff" hidden>
+              <div class="coding-diff-head"><strong>独立回归验证（Base 对照）</strong><small id="coding-regression-availability"></small></div>
+              <form id="coding-regression-form" style="margin-top:10px;">
+                <div class="coding-options">
+                  <label for="coding-regression-test-file">候选测试文件（相对仓库根目录）<input id="coding-regression-test-file" type="text" placeholder="例如：tests/test_regression.py" autocomplete="off" /></label>
+                  <label for="coding-regression-timeout">超时预算（秒，1–180）<input id="coding-regression-timeout" type="number" min="1" max="180" step="1" value="60" /></label>
+                </div>
+                <button id="coding-regression-btn" type="submit" style="margin-top:10px;">运行独立回归验证</button>
+              </form>
+              <div id="coding-regression-status" class="model-state" hidden></div>
+              <div id="coding-regression-result" class="coding-regression-result" hidden></div>
+            </div>
             <div id="coding-delivery" class="coding-diff" hidden>
               <div class="coding-diff-head"><strong>交付工作流</strong></div>
               <form id="coding-commit-form" style="margin-top:10px;">

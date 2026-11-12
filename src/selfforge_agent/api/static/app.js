@@ -9,9 +9,12 @@ let currentCodingSession = null;
 let currentCodingRepo = null;
 let currentCodingBranch = "";
 let currentCodingSandbox = "docker";
+let currentCodingSandboxRaw = null;
 let codingJobRunning = false;
 let codingPollTimer = null;
 let codingDiffJobId = null;
+let codingRegressionRunning = false;
+let codingRegressionJobId = null;
 
 function providerLabel(name) {
   const labels = {
@@ -89,13 +92,123 @@ function refreshCodingAvailability() {
       : "请使用已准备好项目依赖的本机镜像；运行测试时保持禁网";
 }
 
+function resetCodingRegressionState(statusMessage = "") {
+  codingRegressionRunning = false;
+  $("coding-regression-result").hidden = true;
+  $("coding-regression-result").replaceChildren();
+  if (statusMessage) {
+    $("coding-regression-status").textContent = statusMessage;
+    $("coding-regression-status").hidden = false;
+  } else {
+    $("coding-regression-status").textContent = "";
+    $("coding-regression-status").hidden = true;
+  }
+}
+
+function refreshCodingRegressionAvailability() {
+  const panel = $("coding-regression");
+  const btn = $("coding-regression-btn");
+  const note = $("coding-regression-availability");
+  const hasWorktree = Boolean(currentCodingBranch && currentCodingSession && currentCodingRepo);
+  panel.hidden = !hasWorktree;
+  if (!hasWorktree) {
+    btn.disabled = true;
+    btn.textContent = "运行独立回归验证";
+    note.textContent = "";
+    return;
+  }
+  btn.textContent = codingRegressionRunning ? "正在独立验证…" : "运行独立回归验证";
+  if (codingRegressionRunning) {
+    btn.disabled = true;
+    note.textContent = "正在隔离对比 Base 与当前工作区…";
+  } else if (codingJobRunning) {
+    btn.disabled = true;
+    note.textContent = "任务运行中，完成后可执行独立回归验证";
+  } else if (currentCodingSandboxRaw === "host") {
+    btn.disabled = true;
+    note.textContent = "仅 Docker 隔离工作区支持独立回归验证（本机执行不支持）";
+  } else if (currentCodingSandboxRaw !== "docker") {
+    btn.disabled = true;
+    note.textContent = "会话未记录 Docker 隔离环境，无法执行独立回归验证";
+  } else {
+    btn.disabled = false;
+    note.textContent = "仅对比 Base 与当前工作区结果，不改动 Coding 测试验证状态";
+  }
+}
+
+function regressionStatusLabel(status) {
+  return ({
+    confirmed: "已确认（Base 失败 / 当前工作区通过）",
+    inconclusive: "未确认（未满足复现与修复条件）",
+    error: "执行错误",
+  })[status] || status;
+}
+
+function regressionReasonLabel(reason) {
+  return ({
+    base_failed_repaired_passed: "Base 失败且当前工作区通过（成功复现修复）",
+    both_passed: "Base 与当前工作区均通过（未能证明故障复现）",
+    base_did_not_fail: "Base 未能按预期失败",
+    repaired_failed: "当前工作区测试未通过",
+    repaired_had_skipped_tests: "当前工作区存在跳过测试（不得确认通过）",
+    workspace_changed: "验证期间工作区发生变化",
+    empty_or_all_skipped: "未收集到有效测试或全部被跳过",
+    collection_or_runtime_error: "测试收集或执行异常",
+    timeout: "回归验证超时",
+    snapshot_error: "隔离快照准备失败",
+  })[reason] || reason;
+}
+
+function renderRegressionRunCard(title, summary) {
+  const card = element("div", "coding-regression-card");
+  const heading = element("strong", "", title);
+  card.append(heading);
+  if (!summary) {
+    card.append(element("p", "", "未运行"));
+    return card;
+  }
+  const exitText = summary.exit_code === null || summary.exit_code === undefined ? "-" : summary.exit_code;
+  card.append(
+    element("p", "", `${summary.status} · 退出码 ${exitText} · 耗时 ${summary.duration_seconds}s`),
+    element("p", "", `通过 ${summary.passed} / 失败 ${summary.failed} / 错误 ${summary.errors} / 跳过 ${summary.skipped}`),
+  );
+  return card;
+}
+
+function renderCodingRegressionReport(report) {
+  const container = $("coding-regression-result");
+  const summaryLine = element("div", "coding-regression-summary");
+  summaryLine.append(
+    element("span", "coding-regression-badge", `${regressionStatusLabel(report.status)} (${report.status})`),
+    element("span", "", `${regressionReasonLabel(report.reason)} (${report.reason})`),
+  );
+  const grid = element("div", "coding-regression-grid");
+  grid.append(
+    renderRegressionRunCard("Base 基线快照", report.base_result),
+    renderRegressionRunCard("当前工作区快照", report.repaired_result),
+  );
+  const hashes = element(
+    "p",
+    "coding-regression-hashes",
+    `会话 ${report.session_id} · Base ${report.base_sha.slice(0, 12)} · 工作区 SHA ${report.workspace_sha256.slice(0, 12)} · 测试 SHA ${report.test_sha256.slice(0, 12)}`,
+  );
+  hashes.title = `base=${report.base_sha} | workspace=${report.workspace_sha256} | test=${report.test_sha256}`;
+  container.replaceChildren(summaryLine, grid, hashes);
+  container.hidden = false;
+}
+
 function renderCodingJob(job) {
   activeCodingJob = job.job_id;
   currentCodingSession = job.session_id;
   currentCodingRepo = job.repository;
   currentCodingBranch = job.branch;
   currentCodingSandbox = job.sandbox || "docker";
+  currentCodingSandboxRaw = job.sandbox || null;
   codingJobRunning = ["queued", "running"].includes(job.state);
+  if (codingRegressionJobId !== job.job_id) {
+    codingRegressionJobId = job.job_id;
+    resetCodingRegressionState();
+  }
   const labels = {
     queued: "等待运行", running: "正在执行", completed: "已验证完成",
     unverified: "完成但未通过测试验证", failed: "执行失败",
@@ -163,6 +276,7 @@ function renderCodingJob(job) {
   if (codingJobRunning) sessionStorage.setItem("selfforge-coding-job", job.job_id);
   else sessionStorage.removeItem("selfforge-coding-job");
   refreshCodingAvailability();
+  refreshCodingRegressionAvailability();
 }
 
 async function pollCodingJob(jobId) {
@@ -321,6 +435,8 @@ $("coding-revert-workspace").addEventListener("click", async () => {
     const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/revert`, {
       repository: currentCodingRepo,
     });
+    resetCodingRegressionState("工作区已还原，之前的回归验证结果已失效；如有需要请重新运行。");
+    refreshCodingRegressionAvailability();
     loadCodingDiff();
     alert(`工作区已还原，共处理 ${res.reverted_files.length} 个文件。`);
   } catch (error) {
@@ -343,8 +459,62 @@ $("coding-remove-workspace").addEventListener("click", async () => {
     $("coding-resume-current").hidden = true;
     $("coding-delivery").hidden = true;
     currentCodingBranch = "";
+    resetCodingRegressionState();
+    refreshCodingRegressionAvailability();
   } catch (error) {
     showCodingError(`${error.message}。请先在工作区提交或还原改动，再清理。`);
+  }
+});
+
+$("coding-regression-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentCodingSession || !currentCodingRepo || !currentCodingBranch) return;
+  if (codingJobRunning || codingRegressionRunning) return;
+  const statusEl = $("coding-regression-status");
+  if (currentCodingSandboxRaw !== "docker") {
+    statusEl.textContent = "仅 Docker 隔离工作区支持独立回归验证。";
+    statusEl.hidden = false;
+    return;
+  }
+  const testFile = $("coding-regression-test-file").value.trim();
+  if (!testFile) {
+    statusEl.textContent = "请输入候选测试文件路径（相对仓库根目录）。";
+    statusEl.hidden = false;
+    return;
+  }
+  const rawTimeout = $("coding-regression-timeout").value.trim();
+  const timeout = Number(rawTimeout);
+  if (!rawTimeout || !Number.isFinite(timeout) || timeout < 1 || timeout > 180) {
+    statusEl.textContent = "超时预算必须在 1 到 180 秒之间。";
+    statusEl.hidden = false;
+    return;
+  }
+  const requestJobId = activeCodingJob;
+  const requestSession = currentCodingSession;
+  codingRegressionRunning = true;
+  $("coding-regression-result").hidden = true;
+  statusEl.textContent = "正在隔离运行 Base 与当前工作区对照验证…";
+  statusEl.hidden = false;
+  refreshCodingRegressionAvailability();
+  try {
+    const report = await postJson(
+      `/api/code/workspaces/${encodeURIComponent(requestSession)}/validate-regression`,
+      { repository: currentCodingRepo, test_file: testFile, timeout },
+    );
+    if (requestJobId !== activeCodingJob || requestSession !== currentCodingSession) return;
+    renderCodingRegressionReport(report);
+    statusEl.textContent = `独立回归验证完成：${regressionStatusLabel(report.status)}（不改变 Coding 测试验证标记）。`;
+    statusEl.hidden = false;
+  } catch (error) {
+    if (requestJobId !== activeCodingJob || requestSession !== currentCodingSession) return;
+    $("coding-regression-result").hidden = true;
+    statusEl.textContent = `回归验证失败：${error.message}`;
+    statusEl.hidden = false;
+  } finally {
+    if (requestJobId === activeCodingJob && requestSession === currentCodingSession) {
+      codingRegressionRunning = false;
+      refreshCodingRegressionAvailability();
+    }
   }
 });
 
