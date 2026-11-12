@@ -64,3 +64,28 @@ uv run python examples/benchmark_demo.py --live
 Docker is the default and does not provide network access to executed code. The default image contains Python and pytest only. Build a suitable image for each project's dependencies, set `image` per case, or use `--image` as the suite-wide fallback. Image references are resolved to immutable local image IDs before baseline checks and every repeat uses the resolved ID; rebuilds of a tag during a run cannot silently change its environment. The report includes a case-to-image reference/ID map. Host execution can read files outside the benchmark workspace; use it only with trusted local fixtures. The Agent receives the natural-language task and visible repository tests, never the holdout source. After the Agent stops, the evaluator creates separate visible and holdout copies of its final workspace **before** running either selection. It runs the visible tests without a hidden file, then installs and runs the holdout only in its own copy. A `tests` selection cannot accidentally include hidden checks, and Host visible-test file writes cannot change the holdout snapshot. Trusted Host code still has host access; separate copies do not create a security sandbox. The report records Git revision, holdout SHA-256, image IDs, visible and hidden JUnit counts, per-case results, failure categories, duration, and provider-reported token usage. Per-run `agent_steps`, `tools_used`, and the last 100 allowlisted tool names/success flags help diagnose step limits without storing model messages, tool outputs, or test text. Agent failures include a sanitized category such as `provider_http_400`, without raw provider response text. Prices are not inferred from token counts.
 
 A run succeeds only if the Agent finishes `completed`, changes at least one file, changes no file outside `allowed_changes`, the specified visible selection independently passes at least one test, and the independent holdout passes at least one test. Timeouts, assertion failures, collection errors, and empty/error selections fail with distinct reasons. A green unrelated Agent test cannot replace the specified visible selection. Each repeat uses a fresh checkout and model adapter. Reports omit raw model and test output. The generated demonstration and [three-repository pilot](../benchmark/real-pilot/README.md) are separate from the planned 20-task acceptance set.
+
+
+## Multi-file candidate qualification
+
+PR #48 and #52 add independent jmespath/boltons candidate manifests. They do not
+change the frozen v2 twenty-task suite or its historical 53/60 model result.
+Structure tests use temporary local Git fixtures. Real reference qualification
+is marked `integration`, requires pinned source caches and a Docker daemon/image,
+and never implicitly opts into Host execution. CI explicitly fetches the two
+source revisions in its workflow before running this group.
+
+For local integration tests, provision the manifest-pinned repositories under
+`.local/benchmark/repos/{jmespath,boltons}`, or set `SELFFORGE_EVAL_SOURCE_ROOT` to
+the parent of those two caches. Each must have a named ref containing its pinned
+commit so benchmark's independent clone can obtain it. Run:
+
+```sh
+uv run --no-sync pytest -q -m integration
+```
+
+By default the candidate manifests use their original immutable image IDs.
+`SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest` explicitly selects a local
+built image for the integration fixtures; this creates a separate temporary
+manifest/report hash. It is not a rerun under the historical image policy,
+and does not overwrite committed manifests or record a model score.

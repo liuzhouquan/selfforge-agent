@@ -36,5 +36,18 @@ jobs:
       - name: Build sandbox image
         run: docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
 
+      - name: Provision pinned multi-file candidate sources
+        shell: bash
+        run: |
+          mkdir -p .local/benchmark/repos
+          git init .local/benchmark/repos/jmespath
+          git -C .local/benchmark/repos/jmespath fetch --depth=1 https://github.com/jmespath/jmespath.py.git 2812594e69d43098ef60f81f4efc404c071b0418
+          git -C .local/benchmark/repos/jmespath checkout -b candidate 2812594e69d43098ef60f81f4efc404c071b0418
+          git init .local/benchmark/repos/boltons
+          git -C .local/benchmark/repos/boltons fetch --depth=1 https://github.com/mahmoud/boltons.git d31d821d56c8f7756af9c30a864077f2e5855321
+          git -C .local/benchmark/repos/boltons checkout -b candidate d31d821d56c8f7756af9c30a864077f2e5855321
+
       - name: Docker integration tests
+        env:
+          SELFFORGE_EVAL_IMAGE: selfforge-agent-sandbox:latest
         run: uv run --no-sync pytest -q -m integration
