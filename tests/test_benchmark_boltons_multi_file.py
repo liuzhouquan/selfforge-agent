@@ -3,17 +3,20 @@
 import hashlib
 from pathlib import Path
 
-from selfforge_agent.runtime.benchmark import load_suite, validate_suite
+import pytest
+
+from selfforge_agent.runtime.benchmark import BenchmarkSuite, load_suite, validate_suite
 
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATES = ROOT / "benchmark" / "validated-candidates"
 
 
-def test_boltons_multi_file_manifest_structural_integrity() -> None:
+def test_boltons_multi_file_manifest_structural_integrity(structure_manifest) -> None:
     manifest_path = CANDIDATES / "suite-boltons-remap-mappings.json"
     assert manifest_path.is_file()
 
-    suite, prepared = load_suite(manifest_path)
+    suite = BenchmarkSuite.model_validate_json(manifest_path.read_bytes())
+    _, prepared = load_suite(structure_manifest(manifest_path))
     assert len(suite.cases) == 1
     assert len(prepared) == 1
     case = suite.cases[0]
@@ -47,9 +50,10 @@ def test_boltons_multi_file_manifest_structural_integrity() -> None:
     assert "boltons/iterutils.py" in diff_targets
 
 
-def test_boltons_multi_file_task_reference_validation() -> None:
+@pytest.mark.integration
+def test_boltons_multi_file_task_reference_validation(qualification_manifest) -> None:
     manifest_path = CANDIDATES / "suite-boltons-remap-mappings.json"
-    report = validate_suite(manifest_path, sandbox="host", trusted_host=True)
+    report = validate_suite(qualification_manifest(manifest_path), sandbox="docker")
 
     assert report["status"] == "validated"
     assert report["cases"] == 1
@@ -84,4 +88,3 @@ def test_historical_v2_suite_and_assets_remain_unmodified() -> None:
     assert hashlib.sha256(v2_assets.read_bytes()).hexdigest() == (
         "89bd73aaa068193257a7e5392632f2eedd831e3c9723cdf8ca5bd8fee001795d"
     )
-

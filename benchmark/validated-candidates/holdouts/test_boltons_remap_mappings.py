@@ -59,4 +59,3 @@ def test_frozendict_copy_protocol():
     c = fd.copy()
     assert isinstance(c, FrozenDict)
     assert c is fd
-
