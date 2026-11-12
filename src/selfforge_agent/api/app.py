@@ -128,6 +128,14 @@ _STATIC = Path(__file__).resolve().parent / "static"
 _WORKSPACES = Path(__file__).resolve().parents[3] / ".workspaces"
 _CODING_JOBS = CodingJobManager()
 _CODING_WORKSPACES = CodingWorkspaceManager()
+_DEFAULT_CODING_WORKSPACES = _CODING_WORKSPACES
+
+
+def _storage_workspace_manager() -> CodingWorkspaceManager:
+    """Use explicit module override when configured; otherwise honor live env configuration."""
+    if _CODING_WORKSPACES is not _DEFAULT_CODING_WORKSPACES:
+        return _CODING_WORKSPACES
+    return CodingWorkspaceManager()
 app.mount("/assets", StaticFiles(directory=_STATIC), name="assets")
 
 
@@ -598,7 +606,7 @@ def audit_workspaces_storage(
     _require_local(client)
     repo = Path(repository).expanduser().resolve()
     try:
-        manager = CodingWorkspaceManager()
+        manager = _storage_workspace_manager()
         return manager.audit_storage(repo, quota_bytes=quota_bytes, head_ref=head_ref)
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
