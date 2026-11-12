@@ -67,7 +67,7 @@ uv run --no-sync pytest -q tests/test_delivery_safety.py
 uv run --no-sync ruff check .
 # Docker 相关/最终隔离验证前启用 daemon 并准备镜像
 docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
-# 先按 docs/SDD.md 准备两道固定评测源；对最终组合执行一次完整回归
+# 先按 docs/benchmark.md 准备两道固定评测源；对最终组合执行一次完整回归
 uv run --no-sync pytest -q
 git diff --check
 ```
