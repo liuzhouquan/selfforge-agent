@@ -312,6 +312,8 @@ class WorkspaceAuditItem(BaseModel):
 
 
 class WorkspaceStorageItem(BaseModel):
+    complete: bool = True
+    scan_error: str | None = None
     session_id: str
     path: str
     branch: str
@@ -333,7 +335,9 @@ class WorkspaceStorageReport(BaseModel):
     total_cache_bytes: int
     reclaimable_bytes: int
     quota_bytes: int | None = None
-    quota_exceeded: bool
+    quota_exceeded: bool | None
+    complete: bool = True
+    measurement_scope: str = ""
     recommendations: list[str] = Field(default_factory=list)
     workspaces: list[WorkspaceStorageItem] = Field(default_factory=list)
 

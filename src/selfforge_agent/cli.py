@@ -589,7 +589,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"  Total Space: {report['total_bytes']:,} bytes (Caches: {report['total_cache_bytes']:,} bytes)")
                     print(f"  Reclaimable Storage: {report['reclaimable_bytes']:,} bytes")
                     if report["quota_bytes"] is not None:
-                        status_str = "EXCEEDED" if report["quota_exceeded"] else "OK"
+                        status_str = ("EXCEEDED" if report["quota_exceeded"] else
+                                      ("OK" if report["complete"] else "UNKNOWN"))
                         print(f"  Quota: {report['quota_bytes']:,} bytes [{status_str}]")
                     if report["recommendations"]:
                         print("  Recommendations:")
@@ -611,7 +612,7 @@ def main(argv: list[str] | None = None) -> int:
                             print(f"  {ws['session_id']} ({ws['branch']}){flag_desc}:")
                             print(f"    Path: {ws['path']}")
                             print(f"    Size: {ws['total_bytes']:,} bytes ({ws['file_count']} files) | Caches: {ws['cache_bytes']:,} bytes")
-                return 1 if report["quota_exceeded"] else 0
+                return 2 if not report["complete"] else (1 if report["quota_exceeded"] else 0)
         except (ValueError, RuntimeError, OSError, DeliveryError) as exc:
             parser.error(str(exc))
         return 0

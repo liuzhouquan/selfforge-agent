@@ -86,3 +86,10 @@
 - 交付状态：实施与全量验证已完成，准备提交并创建 PR。
 - 当前分支：`feat/workspace-storage-quota-audit`。主分支 `main` 保持纯净。
 
+## Integration review (2026-11-12)
+
+Reconciled with PR #55 base `944cfca` without discarding original commits.
+The original development results above are historical, not the verification
+results for the current combination. Corrections, boundaries and evidence:
+[PR #48–#54 review](../review-pr48-54.md). Exact tested heads and CI are recorded
+in the delivery comments on the corresponding PR. No paid model run.

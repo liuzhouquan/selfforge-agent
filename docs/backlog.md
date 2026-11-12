@@ -23,14 +23,14 @@
 | SF-ENV-04 | Complete | 有界 pip-compile / flat 锁导出和规范化计划 | PR #43；仅规范化后才能构建的输入会返回显式 export_command |
 | SF-ENV-05 | Complete | 共享有界 wheelhouse 审计与哈希就绪诊断 | PR #44；失败/超时不报告 ready，不证明可安装性 |
 | SF-EVAL-05 | Complete | 实际报告schema比较和回归门禁 | PR #46；计数精确比较，缺失/无效输入不能通过门禁 |
-| SF-EVAL-06 | In Review | 增加1道真实仓库多文件修改任务的参考正负控 | PR #48；jmespath跨模块建议机制与独立正负控 |
-| SF-WS-04 | In Review | 工作区磁盘配额与存储占用审计诊断 | PR #54；有界目录体积测量、缓存隔离统计、配额超额预警与回收建议 |
+| SF-EVAL-06 | Complete | 增加1道真实仓库多文件修改任务的参考正负控 | PR #48；jmespath跨模块建议机制与独立正负控 |
+| SF-WS-04 | Complete | 工作区磁盘配额与存储占用审计诊断 | PR #54；有界目录体积测量、缓存隔离统计、配额超额预警与回收建议 |
 | SF-PROV-01 | Complete | 扩充常见大模型预设供应商与通用健康检查机制 | PR #55；内置 opencode, chatgpt, claude, gemini, grok, kimi, glm 预设与统一 /models 校验 |
-| SF-RUN-05 | In Review | 代码修改目标定位失败与连续重试回退指导 | PR #49；详见 [SF-RUN-05](./tasks/SF-RUN-05.md)；连续 edit 失败检出与瞬态指导，复位与隔离 |
-| SF-WS-03 | In Review | 工作区未提交改动与脏状态防覆盖防护 | PR #50；详见 [SF-WS-03](./tasks/SF-WS-03.md)；直接模式前置 dirty 检查与 allow-dirty 显式门禁 |
-| SF-ENV-06 | In Review | 依赖声明与锁文件一致性新鲜度校验与 Dry-run 诊断 | PR #51；详见 [SF-ENV-06](./tasks/SF-ENV-06.md)；静态解析声明与锁定覆盖校验，脱节诊断 |
-| SF-EVAL-07 | In Review | 增加第2道真实仓库多文件修改任务的参考正负控 | PR #52；boltons映射类型跨模块联动与正负控 |
-| SF-RUN-06 | In Review | 上下文 Token 预算感知与高压预警瞬态引导 | PR #53；启发式 Token 高压预警、压缩状态告知、瞬态注入无历史污染 |
+| SF-RUN-05 | Complete | 代码修改目标定位失败与连续重试回退指导 | PR #49；详见 [SF-RUN-05](./tasks/SF-RUN-05.md)；连续 edit 失败检出与瞬态指导，复位与隔离 |
+| SF-WS-03 | Complete | 工作区未提交改动与脏状态防覆盖防护 | PR #50；详见 [SF-WS-03](./tasks/SF-WS-03.md)；直接模式前置 dirty 检查与 allow-dirty 显式门禁 |
+| SF-ENV-06 | Complete | 依赖声明与锁文件一致性新鲜度校验与 Dry-run 诊断 | PR #51；详见 [SF-ENV-06](./tasks/SF-ENV-06.md)；静态解析声明与锁定覆盖校验，脱节诊断 |
+| SF-EVAL-07 | Complete | 增加第2道真实仓库多文件修改任务的参考正负控 | PR #52；boltons映射类型跨模块联动与正负控 |
+| SF-RUN-06 | Complete | 上下文 Token 预算感知与高压预警瞬态引导 | PR #53；启发式 Token 高压预警、压缩状态告知、瞬态注入无历史污染 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
