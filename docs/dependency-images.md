@@ -105,3 +105,15 @@ Pipfile JSON validates both present sections and rejects duplicate keys and non-
 `sandbox audit` and local `POST /api/sandbox/audit` report hash readiness and discrepancies using the same bounded scanner as planning/building. The directory limit is1000 entries and200 wheels;128MiB includes lock bytes. Oversized files are rejected before reads, read/race errors abort, and finite audit timeouts are checked after I/O. A report is not an installability certificate.
 
 Pip-compile/flat locks can be normalized through `sandbox export-lock`. Planning returns an explicit export step when the source cannot be consumed directly by strict pip/build inputs (e.g. uppercase hash syntax); supported already-buildable files are used directly. Invalid hash tokens are rejected, and valid epoch versions are retained.
+
+
+### Declaration freshness diagnosis
+
+`sandbox freshness --repo PATH` (alias `sandbox check`) and
+`POST /api/sandbox/freshness` compare supported declarations with finite hashed
+lock pins. The preparation plan includes the same diagnosis. Invalid TOML,
+requirements, direct sources, includes/options, dynamic dependencies and unsupported
+conditions fail explicitly; they are not evidence of freshness. PEP 621 optional
+groups are all checked conservatively; markers use the current Host environment.
+This is not a target-container resolver, extras activation proof, or proof that
+a lockfile was regenerated. Modification time is only a drift warning.

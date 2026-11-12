@@ -9,6 +9,10 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, Field
 
 from selfforge_agent.runtime.execution import (
@@ -212,6 +216,243 @@ def load_requirement_profile(repository: Path | None = None, *, lock_file: Path 
         return export_requirements_txt(contents), path, True
 
 
+def _convert_poetry_spec(spec: str) -> str:
+    spec = spec.strip()
+    if not spec or spec == "*":
+        return ""
+    if spec.startswith(("^", "~")) and not spec.startswith("~="):
+        operator, version = spec[0], spec[1:].strip()
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", version):
+            raise ValueError("Unsupported Poetry range")
+        parts = [int(p) for p in version.split(".")]
+        if operator == "~":
+            index = 0 if len(parts) == 1 else 1
+        else:
+            index = next((i for i, n in enumerate(parts) if n), len(parts) - 1)
+        upper = parts + [0] * (3 - len(parts))
+        upper[index] += 1
+        upper[index + 1:] = [0] * (2 - index)
+        return f">={version}, <{'.'.join(map(str, upper))}"
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", spec):
+        return "==" + spec
+    SpecifierSet(spec)
+    return spec
+
+
+def _extract_declared_dependencies(repo: Path) -> tuple[list[dict[str, Any]], Path | None]:
+    """Finite read-only diagnosis; unsupported declarations fail instead of certifying freshness."""
+    declared: list[dict[str, Any]] = []
+
+    def add(item: str, path: Path, *, extra: str = "") -> None:
+        if not isinstance(item, str):
+            raise TypeError("Dependency declarations must be strings")
+        try:
+            requirement = Requirement(item)
+            if requirement.url:
+                raise ValueError("Direct dependency sources cannot be checked against version pins")
+            if requirement.marker and not requirement.marker.evaluate({"extra": extra}):
+                return
+        except (InvalidRequirement, ValueError) as exc:
+            raise ValueError(f"Invalid or unsupported dependency declaration in {path.name}") from exc
+        declared.append({"name": canonicalize_name(requirement.name),
+                         "raw_name": requirement.name, "specifier": str(requirement.specifier),
+                         "source_file": str(path)})
+
+    def toml(path: Path) -> dict:
+        try:
+            return tomllib.loads(_read(path, 512 * 1024).decode("utf-8"))
+        except (tomllib.TOMLDecodeError, UnicodeError, RecursionError) as exc:
+            raise ValueError(f"Invalid dependency declaration file: {path.name}") from exc
+
+    def mapped(values: object, path: Path, *, poetry: bool = False) -> None:
+        if not isinstance(values, dict):
+            raise TypeError("Dependency table must be a mapping")
+        for name, value in values.items():
+            if poetry and name.lower() == "python":
+                continue
+            if isinstance(value, dict):
+                if set(value) - {"version", "markers", "optional", "extras"}:
+                    raise ValueError("Unsupported dependency source or condition")
+                marker = value.get("markers")
+                if marker is not None and not isinstance(marker, str):
+                    raise ValueError("Dependency marker must be a string")
+                version = value.get("version", "*")
+                extras = value.get("extras", [])
+                if not isinstance(extras, list) or not all(isinstance(x, str) for x in extras):
+                    raise ValueError("Invalid dependency extras")
+            elif isinstance(value, str):
+                version, marker, extras = value, None, []
+            else:
+                raise TypeError("Unsupported dependency value")
+            if not isinstance(version, str):
+                raise TypeError("Dependency version must be a string")
+            spec = _convert_poetry_spec(version) if poetry else ("" if version == "*" else version)
+            suffix = "[" + ",".join(extras) + "]" if extras else ""
+            add(name + suffix + spec + ("; " + marker if marker else ""), path)
+
+    path = repo / "pyproject.toml"
+    if path.exists() or path.is_symlink():
+        data = toml(path)
+        project = data.get("project", {})
+        if not isinstance(project, dict):
+            raise ValueError("project must be a table")
+        if set(project.get("dynamic", [])) & {"dependencies", "optional-dependencies"}:
+            raise ValueError("Dynamic dependencies cannot be diagnosed offline")
+        if "dependencies" in project or "optional-dependencies" in project:
+            deps = project.get("dependencies", [])
+            optional = project.get("optional-dependencies", {})
+            if not isinstance(deps, list) or not isinstance(optional, dict):
+                raise ValueError("Invalid project dependency structure")
+            for item in deps:
+                add(item, path)
+            for group, items in optional.items():
+                if not isinstance(items, list):
+                    raise TypeError("Optional dependency group must be a list")
+                for item in items:
+                    add(item, path, extra=group)
+            return declared, path
+        tool = data.get("tool", {})
+        if not isinstance(tool, dict) or not isinstance(tool.get("poetry", {}), dict):
+            raise ValueError("Invalid tool.poetry table")
+        poetry = tool.get("poetry", {})
+        if "dependencies" in poetry:
+            mapped(poetry["dependencies"], path, poetry=True)
+            return declared, path
+
+    path = repo / "requirements.in"
+    if path.exists() or path.is_symlink():
+        for line in _read(path, 512 * 1024).decode("utf-8").splitlines():
+            line = line.split(" #", 1)[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("-"):
+                raise ValueError("Requirements includes/options are unsupported for freshness diagnosis")
+            add(line, path)
+        return declared, path
+
+    path = repo / "Pipfile"
+    if path.exists() or path.is_symlink():
+        data = toml(path)
+        mapped(data.get("packages", {}), path)
+        mapped(data.get("dev-packages", {}), path)
+        return declared, path
+    return declared, None
+
+
+def check_dependency_freshness(
+    repo: Path,
+    *,
+    lock_file: Path | None = None,
+    requirements_file: Path | None = None,
+) -> dict[str, Any]:
+    """Diagnose freshness and consistency between declared dependencies and lockfile."""
+    repository = repo.expanduser().resolve()
+    if not repository.is_dir():
+        raise ValueError(f"Repository directory does not exist: {repo}")
+
+    req_text, req_source_path, _ = load_requirement_profile(
+        repository, lock_file=lock_file, requirements_file=requirements_file
+    )
+    packages = parse_locked_requirements(req_text.encode("utf-8"))
+    locked_by_name = {canonicalize_name(p["name"]): p for p in packages}
+
+    try:
+        declared, decl_file = _extract_declared_dependencies(repository)
+    except TypeError as exc:
+        raise ValueError("Invalid dependency declaration structure") from exc
+
+    if not decl_file:
+        return {
+            "version": 1,
+            "fresh": True,
+            "status": "no_declarations",
+            "lock_file": str(req_source_path),
+            "declaration_file": None,
+            "declared_count": 0,
+            "locked_count": len(packages),
+            "missing_packages": [],
+            "incompatible_packages": [],
+            "is_stale_by_mtime": False,
+            "warnings": ["No dependency declaration file (pyproject.toml, requirements.in, Pipfile) found in repository."],
+        }
+
+    is_stale_by_mtime = False
+    try:
+        decl_mtime = decl_file.stat().st_mtime
+        lock_mtime = req_source_path.stat().st_mtime
+        if decl_mtime > (lock_mtime + 1.0):
+            is_stale_by_mtime = True
+    except OSError:
+        pass
+
+    missing_packages: list[dict[str, Any]] = []
+    incompatible_packages: list[dict[str, Any]] = []
+
+    for dep in declared:
+        name = dep["name"]
+        if name not in locked_by_name:
+            missing_packages.append({
+                "name": dep["raw_name"],
+                "specifier": dep["specifier"],
+                "source_file": dep["source_file"],
+            })
+        else:
+            locked_pkg = locked_by_name[name]
+            locked_ver_str = locked_pkg.get("version", "")
+            if dep["specifier"] and locked_ver_str:
+                try:
+                    spec = SpecifierSet(dep["specifier"])
+                    ver = Version(locked_ver_str)
+                    if not spec.contains(ver, prereleases=True):
+                        incompatible_packages.append({
+                            "name": dep["raw_name"],
+                            "declared_specifier": dep["specifier"],
+                            "locked_version": locked_ver_str,
+                            "source_file": dep["source_file"],
+                        })
+                except (InvalidSpecifier, InvalidVersion, ValueError) as exc:
+                    raise ValueError("Invalid declared or locked version") from exc
+
+    warnings: list[str] = []
+    if missing_packages:
+        missing_names = ", ".join(m["name"] for m in missing_packages)
+        warnings.append(f"Declared dependencies missing from lockfile: {missing_names}")
+    if incompatible_packages:
+        incomp_details = ", ".join(f"{i['name']} ({i['locked_version']} !~ {i['declared_specifier']})"
+                                   for i in incompatible_packages)
+        warnings.append(f"Locked packages conflict with declared version constraints: {incomp_details}")
+    if is_stale_by_mtime:
+        warnings.append(
+            f"Declaration file '{decl_file.name}' is newer than lockfile '{req_source_path.name}'; "
+            "dependencies may have changed since the lockfile was generated."
+        )
+
+    if missing_packages:
+        status = "missing_dependencies"
+    elif incompatible_packages:
+        status = "incompatible_versions"
+    elif is_stale_by_mtime:
+        status = "stale_mtime"
+    else:
+        status = "fresh"
+
+    fresh = (len(missing_packages) == 0 and len(incompatible_packages) == 0 and not is_stale_by_mtime)
+
+    return {
+        "version": 1,
+        "fresh": fresh,
+        "status": status,
+        "lock_file": str(req_source_path),
+        "declaration_file": str(decl_file),
+        "declared_count": len(declared),
+        "locked_count": len(packages),
+        "missing_packages": missing_packages,
+        "incompatible_packages": incompatible_packages,
+        "is_stale_by_mtime": is_stale_by_mtime,
+        "warnings": warnings,
+    }
+
+
 def plan_environment_preparation(
     repository: Path,
     *,
@@ -275,6 +516,16 @@ def plan_environment_preparation(
         "--wheelhouse", whl_dest, "--tag", target_tag,
     ])
 
+    warnings = list(detected.get("warnings", []))
+    freshness = check_dependency_freshness(
+        repo, lock_file=lock_file, requirements_file=requirements_file
+    )
+    if not freshness["fresh"]:
+        warnings.append(
+            f"Lockfile is stale or missing declared dependencies ({freshness['status']}). "
+            "Consider re-locking before build."
+        )
+
     return {
         "version": 1,
         "repository": str(repo),
@@ -298,6 +549,8 @@ def plan_environment_preparation(
         "readiness_scope": "Hash-allowed inputs only; wheel format, platform and dependency resolution require build",
         "download_command": download_cmd,
         "build_command": build_cmd,
+        "warnings": warnings,
+        "freshness": freshness,
         "safety_invariants": [
             "Offline build only (--network=none)",
             "Hash-locked wheels required (--require-hashes)",
