@@ -29,6 +29,34 @@ from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
 MAX_REFERENCE_BYTES = 256 * 1024
 
+FAILURE_REASON_TAXONOMY: tuple[str, ...] = (
+    "agent_max_steps",
+    "agent_timed_out",
+    "agent_failed",
+    "agent_cancelled",
+    "no_code_change",
+    "unexpected_file_changes",
+    "revision_changed",
+    "visible_test_missing",
+    "visible_test_timeout",
+    "visible_test_collection_error",
+    "visible_test_assertion_failed",
+    "visible_test_environment_error",
+    "holdout_timeout",
+    "holdout_collection_error",
+    "holdout_assertion_failed",
+    "holdout_environment_error",
+    "harness_error",
+)
+
+AGENT_ERROR_CODE_TAXONOMY: tuple[str, ...] = (
+    "provider_http_<status>",
+    "provider_unavailable",
+    "model_finish_reason",
+    "runtime_error",
+    "unknown",
+)
+
 
 class BenchmarkCase(BaseModel):
     model_config = ConfigDict(extra="forbid")

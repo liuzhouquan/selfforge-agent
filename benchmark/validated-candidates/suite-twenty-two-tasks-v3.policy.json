@@ -1,0 +1,124 @@
+{
+  "policy_version": 3,
+  "suite_id": "twenty-two-tasks-v3",
+  "manifest": "suite-twenty-two-tasks-v3.json",
+  "manifest_sha256": "b8351e6210f89d29563a01b48b84490a53e111c02b6a87ec828e464631c48f19",
+  "assets_inventory": "suite-twenty-two-tasks-v3.assets.json",
+  "assets_inventory_sha256": "21a11779c924341ebce86a81c4e12567fbf0fe759663d8d14504d4f159490a35",
+  "historical_baseline": {
+    "manifest": "suite-twenty-tasks-v2.json",
+    "manifest_sha256": "3b4aa3fa27c18d183af8ac109de05ca9bdef22294b911d13e70d287cfe5344b6",
+    "assets_inventory": "suite-twenty-tasks-v2.assets.json",
+    "assets_inventory_sha256": "89bd73aaa068193257a7e5392632f2eedd831e3c9723cdf8ca5bd8fee001795d",
+    "runs": 60,
+    "successes": 53,
+    "separate_from_new_policy": true
+  },
+  "repositories": {
+    "pocketflow": {
+      "url": "https://github.com/The-Pocket/PocketFlow.git",
+      "revision": "f74d023f93607b8c3268133339a5e532a949898c"
+    },
+    "boltons": {
+      "url": "https://github.com/mahmoud/boltons.git",
+      "revision": "d31d821d56c8f7756af9c30a864077f2e5855321"
+    },
+    "more-itertools": {
+      "url": "https://github.com/more-itertools/more-itertools.git",
+      "revision": "4aeb4338ae1407d8da9723e86da99efeb446f719"
+    },
+    "itsdangerous": {
+      "url": "https://github.com/pallets/itsdangerous.git",
+      "revision": "672971d66a2ef9f85151e53283113f33d642dabd"
+    },
+    "jmespath": {
+      "url": "https://github.com/jmespath/jmespath.py.git",
+      "revision": "2812594e69d43098ef60f81f4efc404c071b0418"
+    }
+  },
+  "environment": {
+    "sandbox": "docker",
+    "network_mode": "none",
+    "image_policy": "resolve_fresh_local_build",
+    "images": {
+      "default": {
+        "reference": "selfforge-agent-sandbox:latest",
+        "dockerfile": "docker/Dockerfile",
+        "cases": 20,
+        "historical_digest_distinct_from": "sha256:abad14d310ba4ebd9e05b65ab6b4782a195f44987beab82e79087184e1767d20"
+      },
+      "itsdangerous": {
+        "reference": "selfforge-itsdangerous:locked",
+        "lockfile": "../../docker/profiles/itsdangerous.lock",
+        "lockfile_sha256": "884dc01acbd6ed8ae06a14bc5069afe5bb861cf5194d67ac1bd824d59b5c40fc",
+        "cases": 2,
+        "historical_digest_distinct_from": "sha256:205fa9f663b395ace68468c42cfdfdb6c0b180593504c67d913634f962860da6"
+      }
+    },
+    "lockfiles": {
+      "itsdangerous": {
+        "path": "../../docker/profiles/itsdangerous.lock",
+        "sha256": "884dc01acbd6ed8ae06a14bc5069afe5bb861cf5194d67ac1bd824d59b5c40fc"
+      }
+    }
+  },
+  "provider_policy": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "base_url": "https://api.deepseek.com",
+    "fallback": false,
+    "require_effective_config_check": true
+  },
+  "budgets": {
+    "repeats": 3,
+    "total_planned_runs": 66,
+    "max_steps": 18,
+    "time_budget_seconds": 180,
+    "test_timeout_seconds": 30,
+    "context_budget_tokens": 8000
+  },
+  "ceilings": {
+    "max_case_attempts": 66,
+    "max_model_calls_upper_bound": 1188,
+    "max_wall_clock_minutes": 90,
+    "max_spend_usd": 25.0,
+    "require_rate_card_for_spend_estimate": true,
+    "allow_auto_rerun": false
+  },
+  "failure_taxonomy": {
+    "success_reason": "passed",
+    "failure_reasons": [
+      "agent_max_steps",
+      "agent_timed_out",
+      "agent_failed",
+      "agent_cancelled",
+      "no_code_change",
+      "unexpected_file_changes",
+      "revision_changed",
+      "visible_test_missing",
+      "visible_test_timeout",
+      "visible_test_collection_error",
+      "visible_test_assertion_failed",
+      "visible_test_environment_error",
+      "holdout_timeout",
+      "holdout_collection_error",
+      "holdout_assertion_failed",
+      "holdout_environment_error",
+      "harness_error"
+    ],
+    "agent_error_codes": [
+      "provider_http_<status>",
+      "provider_unavailable",
+      "model_finish_reason",
+      "runtime_error",
+      "unknown"
+    ]
+  },
+  "execution_status": {
+    "model_benchmark_executed": false,
+    "completed_runs": 0,
+    "successes": null,
+    "success_rate": null,
+    "score_status": "pending_live_execution"
+  }
+}

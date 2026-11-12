@@ -65,6 +65,38 @@ PINNED_SOURCES: tuple[PinnedEvalSource, ...] = (
     ),
 )
 
+V3_ADDITIONAL_SOURCES: tuple[PinnedEvalSource, ...] = (
+    PinnedEvalSource(
+        name="pocketflow",
+        url="https://github.com/The-Pocket/PocketFlow.git",
+        revision="f74d023f93607b8c3268133339a5e532a949898c",
+    ),
+    PinnedEvalSource(
+        name="more-itertools",
+        url="https://github.com/more-itertools/more-itertools.git",
+        revision="4aeb4338ae1407d8da9723e86da99efeb446f719",
+    ),
+    PinnedEvalSource(
+        name="itsdangerous",
+        url="https://github.com/pallets/itsdangerous.git",
+        revision="672971d66a2ef9f85151e53283113f33d642dabd",
+    ),
+)
+
+SOURCE_PROFILES: dict[str, tuple[PinnedEvalSource, ...]] = {
+    "candidates": PINNED_SOURCES,
+    "v3": (*PINNED_SOURCES, *V3_ADDITIONAL_SOURCES),
+}
+
+
+def get_profile_sources(profile: str) -> tuple[PinnedEvalSource, ...]:
+    """Return pinned evaluation sources for the requested profile cleanly."""
+    if profile == "candidates":
+        return tuple(PINNED_SOURCES)
+    if profile == "v3":
+        return (*PINNED_SOURCES, *V3_ADDITIONAL_SOURCES)
+    raise PreparationError(f"Unknown source profile: {profile!r}")
+
 
 class PreparationError(RuntimeError):
     """Controlled, bounded failure during evaluation source preparation."""
@@ -604,11 +636,14 @@ def prepare_sources(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     offline: bool = False,
     sources: Sequence[PinnedEvalSource] | None = None,
+    profile: str = "candidates",
 ) -> dict[str, list[str]]:
     """Prepare or validate pinned evaluation repositories under root."""
     validated_timeout = _validate_timeout(timeout)
     deadline = time.monotonic() + validated_timeout
-    selected_sources = tuple(PINNED_SOURCES if sources is None else sources)
+    selected_sources = (
+        get_profile_sources(profile) if sources is None else tuple(sources)
+    )
     for source in selected_sources:
         if not _COMMIT_RE.fullmatch(source.revision):
             raise PreparationError(f"Invalid pinned revision for {source.name}: {source.revision}")
@@ -698,6 +733,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate existing caches offline without fetching or modifying HEAD/files",
     )
+    parser.add_argument(
+        "--profile",
+        choices=tuple(SOURCE_PROFILES),
+        default="candidates",
+        help="Pinned source set profile: 'candidates' (jmespath/boltons) or 'v3' (all 5 v3 repos)",
+    )
     return parser
 
 
@@ -705,12 +746,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
-        prepared = prepare_sources(args.root, timeout=args.timeout, offline=args.offline)
+        prepared = prepare_sources(
+            args.root,
+            timeout=args.timeout,
+            offline=args.offline,
+            profile=args.profile,
+        )
     except PreparationError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
 
-    for source in PINNED_SOURCES:
+    for source in get_profile_sources(args.profile):
         refs = ", ".join(prepared.get(source.name, []))
         print(f"[ready] {source.name}: {source.revision} (refs={refs})")
     return 0
