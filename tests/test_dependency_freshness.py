@@ -308,4 +308,3 @@ def test_api_sandbox_freshness_endpoint(tmp_path: Path) -> None:
     assert body["fresh"] is True
     assert body["status"] == "fresh"
     assert body["declared_count"] == 1
-

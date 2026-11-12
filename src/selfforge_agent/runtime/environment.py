@@ -220,130 +220,123 @@ def _convert_poetry_spec(spec: str) -> str:
     spec = spec.strip()
     if not spec or spec == "*":
         return ""
-    if spec.startswith("^"):
-        v = spec[1:].strip()
-        parts = [int(p) if p.isdigit() else 0 for p in v.split(".")]
-        while len(parts) < 3:
-            parts.append(0)
-        major, minor, patch = parts[:3]
-        if major > 0:
-            return f">={v}, <{major + 1}.0.0"
-        if minor > 0:
-            return f">={v}, <0.{minor + 1}.0"
-        return f">={v}, <0.0.{patch + 1}"
-    if spec.startswith("~"):
-        v = spec[1:].strip()
-        parts = [int(p) if p.isdigit() else 0 for p in v.split(".")]
-        while len(parts) < 3:
-            parts.append(0)
-        major, minor, _ = parts[:3]
-        return f">={v}, <{major}.{minor + 1}.0"
+    if spec.startswith(("^", "~")) and not spec.startswith("~="):
+        operator, version = spec[0], spec[1:].strip()
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", version):
+            raise ValueError("Unsupported Poetry range")
+        parts = [int(p) for p in version.split(".")]
+        if operator == "~":
+            index = 0 if len(parts) == 1 else 1
+        else:
+            index = next((i for i, n in enumerate(parts) if n), len(parts) - 1)
+        upper = parts + [0] * (3 - len(parts))
+        upper[index] += 1
+        upper[index + 1:] = [0] * (2 - index)
+        return f">={version}, <{'.'.join(map(str, upper))}"
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", spec):
+        return "==" + spec
+    SpecifierSet(spec)
     return spec
 
 
 def _extract_declared_dependencies(repo: Path) -> tuple[list[dict[str, Any]], Path | None]:
+    """Finite read-only diagnosis; unsupported declarations fail instead of certifying freshness."""
     declared: list[dict[str, Any]] = []
-    decl_file: Path | None = None
 
-    pyproject_path = repo / "pyproject.toml"
-    if pyproject_path.is_file() and not pyproject_path.is_symlink() and pyproject_path.stat().st_size <= 512 * 1024:
+    def add(item: str, path: Path, *, extra: str = "") -> None:
+        if not isinstance(item, str):
+            raise TypeError("Dependency declarations must be strings")
         try:
-            data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-            # 1. PEP 621 [project.dependencies]
-            project = data.get("project", {})
-            if isinstance(project, dict):
-                deps = project.get("dependencies", [])
-                if isinstance(deps, list):
-                    for item in deps:
-                        if isinstance(item, str) and item.strip():
-                            try:
-                                r = Requirement(item.strip())
-                                if r.marker and not r.marker.evaluate():
-                                    continue
-                                declared.append({
-                                    "name": canonicalize_name(r.name),
-                                    "raw_name": r.name,
-                                    "specifier": str(r.specifier) if r.specifier else "",
-                                    "source_file": str(pyproject_path),
-                                })
-                            except (InvalidRequirement, ValueError):
-                                pass
-            # 2. Poetry [tool.poetry.dependencies]
-            tool = data.get("tool", {})
-            if isinstance(tool, dict):
-                poetry = tool.get("poetry", {})
-                if isinstance(poetry, dict):
-                    p_deps = poetry.get("dependencies", {})
-                    if isinstance(p_deps, dict):
-                        for name, val in p_deps.items():
-                            if name.lower() == "python":
-                                continue
-                            spec = ""
-                            if isinstance(val, str):
-                                spec = _convert_poetry_spec(val)
-                            elif isinstance(val, dict) and "version" in val:
-                                spec = _convert_poetry_spec(str(val["version"]))
-                            declared.append({
-                                "name": canonicalize_name(name),
-                                "raw_name": name,
-                                "specifier": spec,
-                                "source_file": str(pyproject_path),
-                            })
-            if declared:
-                decl_file = pyproject_path
-        except (tomllib.TOMLDecodeError, OSError):
-            pass
+            requirement = Requirement(item)
+            if requirement.url:
+                raise ValueError("Direct dependency sources cannot be checked against version pins")
+            if requirement.marker and not requirement.marker.evaluate({"extra": extra}):
+                return
+        except (InvalidRequirement, ValueError) as exc:
+            raise ValueError(f"Invalid or unsupported dependency declaration in {path.name}") from exc
+        declared.append({"name": canonicalize_name(requirement.name),
+                         "raw_name": requirement.name, "specifier": str(requirement.specifier),
+                         "source_file": str(path)})
 
-    if decl_file is None:
-        req_in = repo / "requirements.in"
-        if req_in.is_file() and not req_in.is_symlink() and req_in.stat().st_size <= 512 * 1024:
-            try:
-                for line in req_in.read_text(encoding="utf-8").splitlines():
-                    cleaned = line.strip()
-                    if not cleaned or cleaned.startswith(("#", "-")):
-                        continue
-                    try:
-                        r = Requirement(cleaned)
-                        if r.marker and not r.marker.evaluate():
-                            continue
-                        declared.append({
-                            "name": canonicalize_name(r.name),
-                            "raw_name": r.name,
-                            "specifier": str(r.specifier) if r.specifier else "",
-                            "source_file": str(req_in),
-                        })
-                    except (InvalidRequirement, ValueError):
-                        pass
-                if declared:
-                    decl_file = req_in
-            except OSError:
-                pass
+    def toml(path: Path) -> dict:
+        try:
+            return tomllib.loads(_read(path, 512 * 1024).decode("utf-8"))
+        except (tomllib.TOMLDecodeError, UnicodeError, RecursionError) as exc:
+            raise ValueError(f"Invalid dependency declaration file: {path.name}") from exc
 
-    if decl_file is None:
-        pipfile = repo / "Pipfile"
-        if pipfile.is_file() and not pipfile.is_symlink() and pipfile.stat().st_size <= 512 * 1024:
-            try:
-                data = tomllib.loads(pipfile.read_text(encoding="utf-8"))
-                pkgs = data.get("packages", {})
-                if isinstance(pkgs, dict):
-                    for name, val in pkgs.items():
-                        spec = ""
-                        if isinstance(val, str) and val != "*":
-                            spec = val
-                        elif isinstance(val, dict) and "version" in val and val["version"] != "*":
-                            spec = str(val["version"])
-                        declared.append({
-                            "name": canonicalize_name(name),
-                            "raw_name": name,
-                            "specifier": spec,
-                            "source_file": str(pipfile),
-                        })
-                if declared:
-                    decl_file = pipfile
-            except (tomllib.TOMLDecodeError, OSError):
-                pass
+    def mapped(values: object, path: Path, *, poetry: bool = False) -> None:
+        if not isinstance(values, dict):
+            raise TypeError("Dependency table must be a mapping")
+        for name, value in values.items():
+            if poetry and name.lower() == "python":
+                continue
+            if isinstance(value, dict):
+                if set(value) - {"version", "markers", "optional", "extras"}:
+                    raise ValueError("Unsupported dependency source or condition")
+                marker = value.get("markers")
+                if marker is not None and not isinstance(marker, str):
+                    raise ValueError("Dependency marker must be a string")
+                version = value.get("version", "*")
+                extras = value.get("extras", [])
+                if not isinstance(extras, list) or not all(isinstance(x, str) for x in extras):
+                    raise ValueError("Invalid dependency extras")
+            elif isinstance(value, str):
+                version, marker, extras = value, None, []
+            else:
+                raise TypeError("Unsupported dependency value")
+            if not isinstance(version, str):
+                raise TypeError("Dependency version must be a string")
+            spec = _convert_poetry_spec(version) if poetry else ("" if version == "*" else version)
+            suffix = "[" + ",".join(extras) + "]" if extras else ""
+            add(name + suffix + spec + ("; " + marker if marker else ""), path)
 
-    return declared, decl_file
+    path = repo / "pyproject.toml"
+    if path.exists() or path.is_symlink():
+        data = toml(path)
+        project = data.get("project", {})
+        if not isinstance(project, dict):
+            raise ValueError("project must be a table")
+        if set(project.get("dynamic", [])) & {"dependencies", "optional-dependencies"}:
+            raise ValueError("Dynamic dependencies cannot be diagnosed offline")
+        if "dependencies" in project or "optional-dependencies" in project:
+            deps = project.get("dependencies", [])
+            optional = project.get("optional-dependencies", {})
+            if not isinstance(deps, list) or not isinstance(optional, dict):
+                raise ValueError("Invalid project dependency structure")
+            for item in deps:
+                add(item, path)
+            for group, items in optional.items():
+                if not isinstance(items, list):
+                    raise TypeError("Optional dependency group must be a list")
+                for item in items:
+                    add(item, path, extra=group)
+            return declared, path
+        tool = data.get("tool", {})
+        if not isinstance(tool, dict) or not isinstance(tool.get("poetry", {}), dict):
+            raise ValueError("Invalid tool.poetry table")
+        poetry = tool.get("poetry", {})
+        if "dependencies" in poetry:
+            mapped(poetry["dependencies"], path, poetry=True)
+            return declared, path
+
+    path = repo / "requirements.in"
+    if path.exists() or path.is_symlink():
+        for line in _read(path, 512 * 1024).decode("utf-8").splitlines():
+            line = line.split(" #", 1)[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("-"):
+                raise ValueError("Requirements includes/options are unsupported for freshness diagnosis")
+            add(line, path)
+        return declared, path
+
+    path = repo / "Pipfile"
+    if path.exists() or path.is_symlink():
+        data = toml(path)
+        mapped(data.get("packages", {}), path)
+        mapped(data.get("dev-packages", {}), path)
+        return declared, path
+    return declared, None
 
 
 def check_dependency_freshness(
@@ -363,7 +356,10 @@ def check_dependency_freshness(
     packages = parse_locked_requirements(req_text.encode("utf-8"))
     locked_by_name = {canonicalize_name(p["name"]): p for p in packages}
 
-    declared, decl_file = _extract_declared_dependencies(repository)
+    try:
+        declared, decl_file = _extract_declared_dependencies(repository)
+    except TypeError as exc:
+        raise ValueError("Invalid dependency declaration structure") from exc
 
     if not decl_file:
         return {
@@ -414,8 +410,8 @@ def check_dependency_freshness(
                             "locked_version": locked_ver_str,
                             "source_file": dep["source_file"],
                         })
-                except (InvalidSpecifier, InvalidVersion, ValueError):
-                    pass
+                except (InvalidSpecifier, InvalidVersion, ValueError) as exc:
+                    raise ValueError("Invalid declared or locked version") from exc
 
     warnings: list[str] = []
     if missing_packages:

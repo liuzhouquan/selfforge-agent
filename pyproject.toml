@@ -3,7 +3,7 @@ name = "selfforge-agent"
 version = "0.2.0"
 description = "A Python Coding Agent with Reliable Execution and Self-Testing"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.115,<1", "pydantic>=2,<3", "uvicorn>=0.30,<1"]
+dependencies = ["packaging>=24,<27", "fastapi>=0.115,<1", "pydantic>=2,<3", "uvicorn>=0.30,<1"]
 
 [project.scripts]
 selfforge-agent = "selfforge_agent.cli:main"
