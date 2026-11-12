@@ -311,6 +311,33 @@ class WorkspaceAuditItem(BaseModel):
     prunable: bool
 
 
+class WorkspaceStorageItem(BaseModel):
+    session_id: str
+    path: str
+    branch: str
+    base_sha: str
+    total_bytes: int
+    cache_bytes: int
+    file_count: int
+    is_locked: bool
+    is_dirty: bool
+    is_merged: bool
+    prunable: bool
+    reclaimable_bytes: int
+
+
+class WorkspaceStorageReport(BaseModel):
+    repository: str
+    workspace_count: int
+    total_bytes: int
+    total_cache_bytes: int
+    reclaimable_bytes: int
+    quota_bytes: int | None = None
+    quota_exceeded: bool
+    recommendations: list[str] = Field(default_factory=list)
+    workspaces: list[WorkspaceStorageItem] = Field(default_factory=list)
+
+
 class WorkspacePruneRequest(BaseModel):
     repository: str
     dry_run: bool = False
@@ -544,6 +571,23 @@ def prune_workspaces(request: WorkspacePruneRequest, client: Request) -> dict:
             merged_only=request.merged_only,
             head_ref=request.head_ref,
         )
+    except (ValueError, OSError, WorktreeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/workspaces/storage", response_model=WorkspaceStorageReport)
+@app.get("/api/code/workspaces/storage", response_model=WorkspaceStorageReport)
+def audit_workspaces_storage(
+    repository: str,
+    client: Request,
+    quota_bytes: int | None = None,
+    head_ref: str = "HEAD",
+) -> dict:
+    _require_local(client)
+    repo = Path(repository).expanduser().resolve()
+    try:
+        manager = CodingWorkspaceManager()
+        return manager.audit_storage(repo, quota_bytes=quota_bytes, head_ref=head_ref)
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
