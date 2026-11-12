@@ -182,6 +182,33 @@ def detect_edit_failure_loop(
     return None
 
 
+def evaluate_context_pressure(
+    estimated_tokens: int,
+    token_budget: int,
+    *,
+    was_compacted: bool = False,
+    high_watermark: float = 0.75,
+) -> dict[str, Any] | None:
+    """Evaluate context token usage against budget and compaction status.
+
+    Returns a dict with context pressure metrics if usage exceeds high_watermark
+    or if compaction was active, else None.
+    """
+    if token_budget <= 0:
+        return None
+    ratio = estimated_tokens / token_budget
+    if ratio >= high_watermark or was_compacted:
+        return {
+            "estimated_tokens": estimated_tokens,
+            "token_budget": token_budget,
+            "ratio": round(ratio, 3),
+            "percent": int(ratio * 100),
+            "was_compacted": was_compacted,
+            "high_pressure": ratio >= high_watermark,
+        }
+    return None
+
+
 def budget_notice(
     *,
     step: int,
@@ -190,6 +217,7 @@ def budget_notice(
     tests_passed: bool,
     tool_loop: dict | None = None,
     edit_failure: dict | None = None,
+    context_info: dict | None = None,
 ) -> dict:
     """Describe actual runtime state, without adding turns or granting evidence."""
     remaining_turns = max_steps - step + 1
@@ -216,6 +244,31 @@ def budget_notice(
             f"Consecutive edit failures on '{path}' ({count} times). "
             f"Use read_file to inspect the exact lines and indentation of '{path}' and review the tool error before further edits; respect permission and approval restrictions.\n"
         )
+    if context_info and not (remaining_turns == 1 and tests_passed):
+        est = context_info.get("estimated_tokens", 0)
+        budget = context_info.get("token_budget", 0)
+        pct = context_info.get("percent", int((est / budget * 100) if budget else 0))
+        was_compacted = context_info.get("was_compacted", False)
+        high_pressure = context_info.get("high_pressure", False)
+        if was_compacted and high_pressure:
+            content += (
+                f"Context compaction active: earlier conversation history has been summarized "
+                f"to stay within the {budget}-token limit. Context usage remains high "
+                f"({est}/{budget} tokens, {pct}%). Use targeted edits and avoid large outputs "
+                "to prevent loss of recent turn details.\n"
+            )
+        elif was_compacted:
+            content += (
+                f"Context compaction active: earlier conversation history has been summarized "
+                f"to stay within the {budget}-token limit ({est} tokens currently used). "
+                "Keep responses focused on required file edits and run_tests verification.\n"
+            )
+        elif high_pressure:
+            content += (
+                f"High context window usage: conversation history is consuming approximately "
+                f"{est}/{budget} tokens ({pct}%). Avoid dumping full files or large command "
+                "outputs; use targeted searches and concise edits to prevent history compaction.\n"
+            )
     if remaining_turns == 1:
         if tests_passed:
             content += (
