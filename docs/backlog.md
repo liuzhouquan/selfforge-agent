@@ -29,6 +29,7 @@
 | SF-RUN-05 | In Review | 代码修改目标定位失败与连续重试回退指导 | PR #49；详见 [SF-RUN-05](./tasks/SF-RUN-05.md)；连续 edit 失败检出与瞬态指导，复位与隔离 |
 | SF-WS-03 | In Review | 工作区未提交改动与脏状态防覆盖防护 | PR #50；详见 [SF-WS-03](./tasks/SF-WS-03.md)；直接模式前置 dirty 检查与 allow-dirty 显式门禁 |
 | SF-ENV-06 | In Review | 依赖声明与锁文件一致性新鲜度校验与 Dry-run 诊断 | PR #51；详见 [SF-ENV-06](./tasks/SF-ENV-06.md)；静态解析声明与锁定覆盖校验，脱节诊断 |
+| SF-EVAL-07 | In Review | 增加第2道真实仓库多文件修改任务的参考正负控 | PR #52；boltons映射类型跨模块联动与正负控 |
 
 ## SF-EVAL-01：增加一个有参考控制的任务
 
