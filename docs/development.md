@@ -86,7 +86,7 @@ git diff --check
 
 无需 API Key 的链路演示为 `uv run --no-sync python examples/coding_demo.py`；它证明协议与改测链路，不代表模型能力。真实供应商/写入 GitHub 的操作沿用当前授权和预算，记录 mock 与真实调用的区别，不重复请求已有授权。
 
-`.github/workflows/ci.yml` 在 PR 和 main push 上执行锁定依赖、Ruff、单元与 Docker 集成测试；工作流 token 保持只读，不能加入模型密钥。CI 配置变更需检查真实远端运行，不能用本地 pytest 代替。
+`.github/workflows/ci.yml` 在 PR 和 main push 上执行锁定依赖、Ruff、SDD 一致性门禁（`uv run --no-sync python scripts/check_sdd.py`；仅校验文档结构与本地引用一致性，不证明测试执行或语义充分）、单元与 Docker 集成测试；工作流 token 保持只读，不能加入模型密钥。CI 配置变更需检查真实远端运行，不能用本地 pytest 代替。
 
 ## 交付完成条件
 
