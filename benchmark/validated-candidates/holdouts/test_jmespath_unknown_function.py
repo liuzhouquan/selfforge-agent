@@ -77,3 +77,28 @@ def test_error_type_hierarchy():
         jmespath.search('unknown_fn(@)', 'abc')
     with pytest.raises(ValueError):
         jmespath.search('unknown_fn(@)', 'abc')
+
+
+def test_custom_function_body_typeerror_is_not_retried():
+    from jmespath import functions
+
+    class Custom(functions.Functions):
+        calls = 0
+
+        @functions.signature({'types': ['string']})
+        def _func_explode(self, value):
+            self.calls += 1
+            raise TypeError('custom body failed')
+
+    custom = Custom()
+    with pytest.raises(TypeError, match='custom body failed'):
+        jmespath.search('explode(@)', 'text', options=Options(custom_functions=custom))
+    assert custom.calls == 1
+
+
+def test_legacy_custom_dispatch_without_suggest_keyword():
+    class Legacy:
+        def call_function(self, name, args):
+            return (name, args)
+
+    assert jmespath.search('legacy(@)', 'value', options=Options(custom_functions=Legacy())) == ('legacy', ['value'])

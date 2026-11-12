@@ -3,17 +3,20 @@
 import hashlib
 from pathlib import Path
 
-from selfforge_agent.runtime.benchmark import load_suite, validate_suite
+import pytest
+
+from selfforge_agent.runtime.benchmark import BenchmarkSuite, load_suite, validate_suite
 
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATES = ROOT / "benchmark" / "validated-candidates"
 
 
-def test_multi_file_manifest_structural_integrity() -> None:
+def test_multi_file_manifest_structural_integrity(structure_manifest) -> None:
     manifest_path = CANDIDATES / "suite-jmespath-unknown-function.json"
     assert manifest_path.is_file()
 
-    suite, prepared = load_suite(manifest_path)
+    suite = BenchmarkSuite.model_validate_json(manifest_path.read_bytes())
+    _, prepared = load_suite(structure_manifest(manifest_path))
     assert len(suite.cases) == 1
     assert len(prepared) == 1
     case = suite.cases[0]
@@ -45,9 +48,10 @@ def test_multi_file_manifest_structural_integrity() -> None:
     assert set(diff_targets).issubset(set(case.allowed_changes))
 
 
-def test_multi_file_task_reference_validation() -> None:
+@pytest.mark.integration
+def test_multi_file_task_reference_validation(qualification_manifest) -> None:
     manifest_path = CANDIDATES / "suite-jmespath-unknown-function.json"
-    report = validate_suite(manifest_path, sandbox="host", trusted_host=True)
+    report = validate_suite(qualification_manifest(manifest_path), sandbox="docker")
 
     assert report["status"] == "validated"
     assert report["cases"] == 1

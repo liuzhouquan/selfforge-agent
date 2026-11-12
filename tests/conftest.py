@@ -47,3 +47,52 @@ def demo_repo(tmp_path: Path) -> tuple[Path, str, str]:
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "introduce regression")
     return repo, base, git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def structure_manifest(tmp_path):
+    """Exercise the real manifest loader against a hermetic Git fixture, no upstream execution."""
+    def prepare(manifest):
+        data = json.loads(manifest.read_text())
+        repo = tmp_path / "structure-repo"
+        repo.mkdir()
+        git(repo, "init", "-q")
+        git(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "--allow-empty", "-qm", "structure fixture")
+        for case in data["cases"]:
+            case["repository"] = str(repo)
+            case["revision"] = git(repo, "rev-parse", "HEAD")
+            for key in ("holdout_test", "reference_patch"):
+                case[key] = str((manifest.parent / case[key]).resolve())
+        path = tmp_path / "structure.json"
+        path.write_text(json.dumps(data))
+        return path
+    return prepare
+
+
+@pytest.fixture
+def qualification_manifest(tmp_path):
+    """Explicitly provisioned sources; upstream code executes only in Docker.
+
+    CI fetches pinned source before the integration group. Image overrides create
+    a distinct temporary manifest/report hash, never mutate the frozen candidate.
+    """
+    import os
+    root = Path(os.environ.get("SELFFORGE_EVAL_SOURCE_ROOT",
+                              Path(__file__).resolve().parents[1] / ".local/benchmark/repos"))
+
+    def prepare(manifest):
+        data = json.loads(manifest.read_text())
+        for case in data["cases"]:
+            source = root / Path(case["repository"]).name
+            if not source.is_dir():
+                pytest.fail("Provision pinned candidate sources before integration tests; see docs/benchmark.md")
+            case["repository"] = str(source.resolve())
+            for key in ("holdout_test", "reference_patch"):
+                case[key] = str((manifest.parent / case[key]).resolve())
+            if os.environ.get("SELFFORGE_EVAL_IMAGE"):
+                case["image"] = os.environ["SELFFORGE_EVAL_IMAGE"]
+        path = tmp_path / manifest.name
+        path.write_text(json.dumps(data))
+        return path
+    return prepare
