@@ -44,7 +44,7 @@ This specification freezes the next-round evaluation inputs, Docker environment 
 
 ## 2. Docker Environment & Model-Free Reference Preflight (`SF-EVAL-08-A2`)
 
-Policy v3 does **not** reuse or alias historical v2 Docker image IDs (`sha256:abad14d3...`, `sha256:205fa9f6...`). Operators and CI build fresh images from the checked-in `docker/Dockerfile` and hash-locked `docker/profiles/itsdangerous.lock`, and `eval-validate` / `eval-suite` resolve each image tag once to its immutable local `sha256:...` digest before executing cases:
+Policy v3 uses explicit build tags and records the actual resolved local image IDs separately from historical v2 evidence (`sha256:abad14d3...`, `sha256:205fa9f6...`). A rebuild can reuse an identical content ID through Docker caching; a different policy/run does not require artificially changing image bytes. Operators and CI build images from the checked-in `docker/Dockerfile` and hash-locked `docker/profiles/itsdangerous.lock`, and `eval-validate` / `eval-suite` resolve each image tag once to its immutable local `sha256:...` digest before executing cases:
 
 1. Build the base sandbox and locked `itsdangerous` dependency image:
    ```sh

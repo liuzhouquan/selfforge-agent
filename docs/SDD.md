@@ -4,7 +4,7 @@
 
 - 文档版本：1；更新：2026-11-12。
 - 已核验产品基线：`04452154addaeff3375fcd15996585c2d5e374e3`；开工必须重新 fetch 并记录实际基线，不把这里的 SHA 当作永远最新。
-- 本轮 SF-DEV-01 / SF-DOC-01 / SF-TEST-01 已实现并经组合验证：源码 `9bc111cb07cb3b6b6dd8e44a7483c49e34960220`，完整 pytest 653 passed、无跳过。合并状态以第 4 节及审查记录为准；SF-EVAL-08 仍是未来任务。
+- 前轮 SF-DEV-01 / SF-DOC-01 / SF-TEST-01 的已验证快照：源码 `9bc111cb07cb3b6b6dd8e44a7483c49e34960220`，完整 pytest 653 passed、无跳过。合并状态以第 4 节及审查记录为准；SF-EVAL-08 的新策略与无模型预检已交付；该策略下的真实模型测量尚未运行。
 - 当前用户指令优先。SDD 不增加外部服务、付费模型调用、推送或合并授权，也不增加重复确认程序；沿用会话已有授权和仓库保护。
 
 ## 1. 产品目标与范围
@@ -111,9 +111,9 @@ flowchart LR
 | 1 | [SF-DEV-01](#sf-dev-01) | Merged | Codex（审查整合） | 无 | [PR #57](https://github.com/liuzhouquan/selfforge-agent/pull/57)：新 checkout 与 CI 复用同一个固定评测源准备入口 |
 | 2 | [SF-DOC-01](#sf-doc-01) | Merged | Codex（审查整合） | 本 SDD | 有界 SDD 一致性检查，阻止失配状态与虚假验收引用（[PR #58](https://github.com/liuzhouquan/selfforge-agent/pull/58)） |
 | 3 | [SF-TEST-01](#sf-test-01) | Merged | Codex（审查整合） | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
-| 4 | [SF-EVAL-08](#sf-eval-08) | In Review | Codex | SF-DEV-01；策略已冻结 | [PR #61](https://github.com/liuzhouquan/selfforge-agent/pull/61)：新 Runtime 22 题 v3 评测规格、冻结输入与无模型 Docker 预检 |
-| 5 | [SF-TEST-02](#sf-test-02) | In Review | Antigravity | SF-TEST-01（Merged） | [PR #62](https://github.com/liuzhouquan/selfforge-agent/pull/62)：Web Coding 工作台接入独立回归验证面板、状态门槛与结构化证据展示 |
-| 6 | [SF-WS-05](#sf-ws-05) | In Review | Antigravity | SF-WS-04 / SF-TEST-01（Merged） | [PR #63](https://github.com/liuzhouquan/selfforge-agent/pull/63)：修复 `/api/workspaces/storage` 管理器复用不一致并补齐 CLI `trace` / `test-regression` 安全结构化导出 |
+| 4 | [SF-EVAL-08](#sf-eval-08) | Merged | Codex（审查整合） | SF-DEV-01；策略已冻结 | [PR #61](https://github.com/liuzhouquan/selfforge-agent/pull/61)：新 Runtime 22 题 v3 评测规格、冻结输入与无模型 Docker 预检 |
+| 5 | [SF-TEST-02](#sf-test-02) | Merged | Codex（审查整合） | SF-TEST-01（Merged） | [PR #62](https://github.com/liuzhouquan/selfforge-agent/pull/62)：Web Coding 工作台接入独立回归验证面板、状态门槛与结构化证据展示 |
+| 6 | [SF-WS-05](#sf-ws-05) | Merged | Codex（审查整合） | SF-WS-04 / SF-TEST-01（Merged） | [PR #63](https://github.com/liuzhouquan/selfforge-agent/pull/63)：修复 `/api/workspaces/storage` 管理器复用不一致并补齐 CLI `trace` / `test-regression` 安全结构化导出 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -260,26 +260,33 @@ PR / 准确 head CI / merge SHA（有则填）：PR #59 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-EVAL-08-A1 | 新策略有明确任务/允许路径/预算/重复/失败口径与资产哈希；与历史可区分 | 新 manifest/资产索引结构回归 + 旧资产哈希保持 | E1 |
-| SF-EVAL-08-A2 | 所选任务都通过独立 Docker 参考正负控，报告来源明确且无模型构造 | 既有 `eval-validate`；记录实际镜像、源 SHA、报告哈希 | E2 |
-| SF-EVAL-08-A3 | 后续真实模型运行单独列执行计划、有效供应商及调用/时间/费用上限；没有结果不填成绩 | 策略审查；本任务不得写成已完成模型评测 | E3 |
+| SF-EVAL-08-A1 | 新策略有明确任务/允许路径/预算/重复/失败口径与资产哈希；与历史可区分 | 新 manifest/资产索引结构回归 + 旧资产哈希保持 | E4（本轮复验） |
+| SF-EVAL-08-A2 | 所选任务都通过独立 Docker 参考正负控，报告来源明确且无模型构造 | 既有 `eval-validate`；记录实际镜像、源 SHA、报告哈希 | E5（本轮复验） |
+| SF-EVAL-08-A3 | 后续真实模型运行单独列执行计划、有效供应商及调用/时间/费用上限；没有结果不填成绩 | 策略审查；本任务不得写成已完成模型评测 | E6（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
 | E1 | SF-EVAL-08-A1 | `tests/test_eval_v3_policy.py::test_v3_policy_bundle_integrity_and_historical_v2_preservation`、`tests/test_eval_v3_policy.py::test_v3_policy_normalization_and_fail_closed_rejections` | `pytest -q -m "not integration"`（校验 v3 22 题清单 `b8351e62...`、资产索引 `21a11779...`、策略 `c7f20757...` 及历史 v1/v2 哈希不变；覆盖 symlink/篡改/残缺分类反例） | `ada36e2824b89dc1ff73900af5210163966561c1`；645 passed, 15 deselected；CI [R1 43200650684](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43200650684) `Unit tests` 645 passed |
 | E2 | SF-EVAL-08-A2 | `tests/test_eval_v3_policy.py::test_v3_suite_docker_reference_validation`、`tests/test_eval_v3_policy.py::test_eval_validate_v3_model_free_cli_and_source_shas`、`tests/test_eval_v3_policy.py::test_prepare_eval_sources_v3_profile_covers_all_five_repos` | 本地 Host 真实 `selfforge-agent eval-validate` CLI（禁用 provider/HTTP 构造）+ GitHub Actions `ubuntu-latest` 真 Docker (`--network=none`) 对 22 题运行 `validate_suite`，解析镜像 `selfforge-agent-sandbox:latest` (`sha256:db4ad5110e4edb4dae4ad7e7771b4c3707cf64dc2a23f15f4e1f23ec2335c115`) 与 `selfforge-itsdangerous:locked` (`sha256:bcbb09a24c9b6aadd8536fe4ff46e040037205e22052a417c5e283f826fab2b1`)，报告 SHA-256 `f68e74054a1412e06bdf1a9508fc1ec83f18e00dd310f5a538ece9ad89c8737b` | `ada36e2824b89dc1ff73900af5210163966561c1`；passed；CI [R1 43200650684](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43200650684) `Docker integration tests` 15 passed, 645 deselected |
 | E3 | SF-EVAL-08-A3 | `tests/test_eval_v3_policy.py::test_v3_policy_bundle_integrity_and_historical_v2_preservation`、[v3 规格文档](../benchmark/validated-candidates/twenty-two-tasks-v3.md) | 审查策略与约束门禁：`deepseek` / `deepseek-flash` / `--no-fallback`、`repeats=3`（66 次尝试）、上限 1188 次调用 / 90 分钟 / 25.00 USD、`model_benchmark_executed=false`、`success_rate=null`，未执行付费模型 | `ada36e2824b89dc1ff73900af5210163966561c1`；passed；CI [R1 43200650684](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43200650684) `passed` |
+| E4 | SF-EVAL-08-A1 | `tests/test_eval_v3_policy.py::test_v3_policy_bundle_integrity_and_historical_v2_preservation`、`tests/test_eval_v3_policy.py::test_policy_rejects_symlink_ancestor_before_resolution`、`tests/test_eval_v3_policy.py::test_policy_rejects_infinite_budgets`、`tests/test_eval_v3_policy.py::test_policy_checks_image_profile_lockfile_digest`、`tests/test_eval_v3_policy.py::test_policy_rejects_inconsistent_executed_scores` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；Linux 真 Docker；22 题无模型参考正负控；无付费模型调用 | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E5 | SF-EVAL-08-A2 | `tests/test_eval_v3_policy.py::test_v3_suite_docker_reference_validation`、`tests/test_eval_v3_policy.py::test_prepare_eval_sources_v3_profile_covers_all_five_repos` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；Linux 真 Docker；22 题无模型参考正负控；无付费模型调用 | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E6 | SF-EVAL-08-A3 | `tests/test_eval_v3_policy.py::test_v3_policy_bundle_integrity_and_historical_v2_preservation` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；Linux 真 Docker；22 题无模型参考正负控；无付费模型调用 | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
 
 执行记录（Owner/状态以上表为准）：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`feat/sf-eval-08`；PR=`#61` (`https://github.com/liuzhouquan/selfforge-agent/pull/61`)；Worktree=`selfforge-sf-eval-08`；Source=`ada36e2824b89dc1ff73900af5210163966561c1`。已交付 22 题 v3 清单 `suite-twenty-two-tasks-v3.json`（`b8351e62...`）、资产索引 `suite-twenty-two-tasks-v3.assets.json`（`21a11779...`）、机器校验策略 `suite-twenty-two-tasks-v3.policy.json`（`c7f20757...`）、规格说明 `twenty-two-tasks-v3.md`、`src/selfforge_agent/runtime/eval_policy.py` 与 `scripts/prepare_eval_sources.py --profile v3`；未运行付费整套模型评测。
 
+本轮记录 E4–E6 取代当前验收引用；原 E1–E3 是历史来源，不把旧计数相加。
+
+审查整合记录：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`review/pr61-63`；PR=#61；Merge=`9db8fc42bf60d25c4826cee1b918de3c6a4aa845`；Source=`f88c2b95355869834e9c4f8bb406dfc6f97baea9`。
+
 ```text
-Owner / 状态：Codex / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：19882cc1cf7d6c29309e677c1449b5154c6f8e1c / feat/sf-eval-08 (worktree: selfforge-sf-eval-08) / source SHA ada36e2824b89dc1ff73900af5210163966561c1（本交接提交仅更新 SDD 文档）
-已完成验收与证据 ID：SF-EVAL-08-A1..A3（E1、E2、E3）
-未完成 / 环境限制 / 未提交内容归属：工作区无未提交源码；本机 WSL2 无 Docker daemon，真实 Docker 22 题无模型参考正负控已由 GitHub Actions ubuntu-latest (R1 43200650684) 完整实测通过；付费模型整套评测按规格未执行
-PR / 准确 head CI / merge SHA（有则填）：PR #61 / source head CI R1 https://github.com/liuzhouquan/selfforge-agent/actions/runs/43200650684（docs head R2 待推送后更新） / 未合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待 R2 文档提交 CI 通过并人工审查后合入 PR #61；后续如明确需要执行 v3 付费模型评测，先核对 DeepSeek 生效配置与额度再单独执行 `twenty-two-tasks-v3.md` 第 3 节命令。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：19882cc1cf7d6c29309e677c1449b5154c6f8e1c / review/pr61-63 (worktree: selfforge-review-pr61-63) / 已验证源码 f88c2b95355869834e9c4f8bb406dfc6f97baea9；后续对账仅文档
+已完成验收与证据 ID：SF-EVAL-08-A1..A3（E4–E6）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；本次文档对账归 Codex；完整组合含真 Docker 无跳过；UI 浏览器 smoke 使用 API 替身，不能冒充真实端到端模型运行
+PR / 准确 head CI / merge SHA（有则填）：PR #61 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227（组合 head；各源 PR head CI 见审查记录） / 9db8fc42bf60d25c4826cee1b918de3c6a4aa845
+仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 的准确结果回填 PR #63 交付描述
+下一步：后续真实模型测量需另行明确执行任务并遵守 v3 冻结策略与预算，当前未运行该测量。
 ```
 
 ### SF-TEST-02
@@ -290,10 +297,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #61 / source head CI R1 http
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-TEST-02-A1 | 当 Coding 会话绑定在 Docker 独立工作区（`branch` 存在、`sandbox === "docker"`）且非运行态时，提交 `test_file` 与 `timeout`（默认 60，范围 1–180）调用 `POST /api/code/workspaces/{session_id}/validate-regression`，正确渲染结构化 `RegressionValidationReport`（`status`：`confirmed`/`inconclusive`/`error`、`reason`、`base_sha`、`workspace_sha256`、`test_sha256` 与 `base_result`/`repaired_result` 明细），且不篡改 `#metric-verification` | Web UI/API 回归测试（Node DOM 运行时行为验证 + FastAPI TestClient 序列化验证） | E1 |
-| SF-TEST-02-A2 | 本机执行（`sandbox === "host"`）、直接修改原仓库或已清理工作区（`!branch`）、未记录隔离环境、任务运行中（`codingJobRunning`）、空 `test_file` 或越界 `timeout`（<1 或 >180 或非整数）均被严格拦截或禁用并给出清晰原因；后端 HTTP 400/404/409/422 错误展示清晰且不破坏既有 Diff 与交付表单 | 前端状态门槛测试 + HTTP 错误路径与不变量断言 | E2 |
-| SF-TEST-02-A3 | 切换历史任务、发起新任务、恢复会话或清理工作区时自动重置上一会话的回归结果、错误与提交态；全部服务端字符串经 `textContent` / DOM API 安全渲染，禁止 `innerHTML` 拼接 | 会话切换/清理/XSS 转义自动化断言 | E3 |
-| SF-TEST-02-A4 | JS 语法检查、Web 回归测试、Ruff、SDD 一致性检查与全量非集成测试通过；本地若无可用浏览器则明确记录验证层级边界 | `node --check` + `pytest` + `ruff check .` + `check_sdd.py` + CI | E4 |
+| SF-TEST-02-A1 | 当 Coding 会话绑定在 Docker 独立工作区（`branch` 存在、`sandbox === "docker"`）且非运行态时，提交 `test_file` 与 `timeout`（默认 60，范围 1–180）调用 `POST /api/code/workspaces/{session_id}/validate-regression`，正确渲染结构化 `RegressionValidationReport`（`status`：`confirmed`/`inconclusive`/`error`、`reason`、`base_sha`、`workspace_sha256`、`test_sha256` 与 `base_result`/`repaired_result` 明细），且不篡改 `#metric-verification` | Web UI/API 回归测试（Node DOM 运行时行为验证 + FastAPI TestClient 序列化验证） | E5（本轮复验） |
+| SF-TEST-02-A2 | 本机执行（`sandbox === "host"`）、直接修改原仓库或已清理工作区（`!branch`）、未记录隔离环境、任务运行中（`codingJobRunning`）、空 `test_file` 或越界 `timeout`（<1 或 >180 或非整数）均被严格拦截或禁用并给出清晰原因；后端 HTTP 400/404/409/422 错误展示清晰且不破坏既有 Diff 与交付表单 | 前端状态门槛测试 + HTTP 错误路径与不变量断言 | E6（本轮复验） |
+| SF-TEST-02-A3 | 切换历史任务、发起新任务、恢复会话或清理工作区时自动重置上一会话的回归结果、错误与提交态；全部服务端字符串经 `textContent` / DOM API 安全渲染，禁止 `innerHTML` 拼接 | 会话切换/清理/XSS 转义自动化断言 | E7（本轮复验） |
+| SF-TEST-02-A4 | JS 语法检查、Web 回归测试、Ruff、SDD 一致性检查与全量非集成测试通过；本地若无可用浏览器则明确记录验证层级边界 | `node --check` + `pytest` + `ruff check .` + `check_sdd.py` + CI | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -301,17 +308,25 @@ PR / 准确 head CI / merge SHA（有则填）：PR #61 / source head CI R1 http
 | E2 | SF-TEST-02-A2 | `tests/test_coding_web_regression_ui.py::test_web_ui_enforces_sandbox_worktree_timeout_and_error_guards`、`tests/test_coding_web_regression_ui.py::test_web_ui_revert_invalidates_stale_report_and_unrecorded_sandbox_disables_submit` | 同文件 Node VM 执行实际 `app.js` 状态门槛、`validate-regression` 请求拦截与 HTTP 409 错误处理检查；既有 API/CLI 验证节点 `tests/test_coding_regression_validation.py` 保持通过 | `f4e392239b81ecfe5388528de6b48dd275fe94b5`；本地 6 passed（`test_coding_web_regression_ui.py`）；CI [Run #43214170049](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43214170049) success |
 | E3 | SF-TEST-02-A3 | `tests/test_coding_web_regression_ui.py::test_web_ui_resets_regression_state_on_job_switch_and_workspace_removal`、`tests/test_coding_web_regression_ui.py::test_web_ui_revert_invalidates_stale_report_and_unrecorded_sandbox_disables_submit` | Node VM 严格禁止 `innerHTML` 读写（`innerHTML` 写入即抛错）并验证 `inconclusive` 中文渲染、会话切换、工作区还原、工作区清理的不变量 | `f4e392239b81ecfe5388528de6b48dd275fe94b5`；本地 6 passed；CI [Run #43214170049](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43214170049) success |
 | E4 | SF-TEST-02-A4 | `tests/test_coding_web_regression_ui.py::test_coding_workbench_html_contains_regression_panel_inside_coding_job`、`tests/test_coding_web_regression_ui.py::test_web_ui_roundtrips_fastapi_validate_regression_endpoint`；`node --check src/selfforge_agent/api/static/app.js`、`ruff check .`、`python scripts/check_sdd.py` 与 GitHub Actions CI | 本地 Host + Node v24.18.0；本 WSL2 环境未安装 Chromium/Playwright，未执行桌面真实浏览器点击（以真实 DOM 清单 + Node VM + TestClient 替代并如实标注）；CI `ubuntu-latest` 运行完整单元与 Docker 集成 | 基线 `87997ed` 本地全量 `647 passed, 14 deselected` + CI [Run #43209267239](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43209267239) 全绿；修复提交 `f4e392239b81ecfe5388528de6b48dd275fe94b5` 本地 Ruff/Node/SDD/专项 6 passed + CI [Run #43214170049](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43214170049) success |
+| E5 | SF-TEST-02-A1 | `tests/test_coding_web_regression_ui.py::test_web_ui_submits_regression_validation_and_renders_report_safely` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；FastAPI TestClient + Node VM；另有真实 Chromium 桌面/390px smoke（API 替身） | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E6 | SF-TEST-02-A2 | `tests/test_coding_web_regression_ui.py::test_web_ui_enforces_sandbox_worktree_timeout_and_error_guards` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；FastAPI TestClient + Node VM；另有真实 Chromium 桌面/390px smoke（API 替身） | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E7 | SF-TEST-02-A3 | `tests/test_coding_web_regression_ui.py::test_regression_responses_cannot_survive_invalidation` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；FastAPI TestClient + Node VM；另有真实 Chromium 桌面/390px smoke（API 替身） | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E8 | SF-TEST-02-A4 | `tests/test_coding_web_regression_ui.py::test_web_ui_roundtrips_fastapi_validate_regression_endpoint` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；FastAPI TestClient + Node VM；另有真实 Chromium 桌面/390px smoke（API 替身） | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
 
 执行记录（Owner/状态以上表为准）：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`feat/sf-test-02`；Worktree=`selfforge-sf-test-02`；PR=[#62](https://github.com/liuzhouquan/selfforge-agent/pull/62)。先运行 `tests/test_coding_web_regression_ui.py` 确认 TDD 红灯（4 failed），随后完成 Web Coding UI 面板与状态约束（`87997ed`，CI `Run #43209267239` 全绿），并补充修正 `inconclusive` 状态键对齐（`f4e3922`，CI `Run #43214170049` success）；本状态提交仅修改文档。
 
+本轮记录 E5–E8 取代当前验收引用；原 E1–E4 是历史来源，不把旧计数相加。
+
+审查整合记录：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`review/pr61-63`；PR=#62；Merge=`22d7b4dc3c110b7a21016f83ace184143707ce13`；Source=`f88c2b95355869834e9c4f8bb406dfc6f97baea9`。
+
 ```text
-Owner / 状态：Antigravity / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：19882cc1cf7d6c29309e677c1449b5154c6f8e1c / feat/sf-test-02 (worktree: selfforge-sf-test-02) / 已验证源码 f4e392239b81ecfe5388528de6b48dd275fe94b5；本次状态提交仅文档
-已完成验收与证据 ID：SF-TEST-02-A1..A4（E1、E2、E3、E4）
-明确不做或未验证项（说明原因）：不改动 PR 审查/修复/TestGen 主流程或后端 validate-regression 安全边界；本 WSL2 环境未安装 Chromium/Playwright，桌面真实浏览器交互未在本地点击验证（已用 Node VM 执行真实 app.js + index.html DOM 清单与 TestClient 序列化验证，并在 CI 通过全量 Docker 集成测试）
-已确认可复用结论与参考路径：src/selfforge_agent/api/static/index.html、src/selfforge_agent/api/static/app.js、src/selfforge_agent/api/static/style.css、tests/test_coding_web_regression_ui.py；CI Run #43209267239 & Run #43214170049
-仍在运行的本任务进程或 CI（无则写无）：等待当前 PR #62 docs-only 状态提交触发最终 CI；本地进程无
-下一步：PR #62 合并前需人工核对网页端渲染与交互；合并后按本 SDD 规则回填 Merge SHA/PR 状态并核对 main CI。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：19882cc1cf7d6c29309e677c1449b5154c6f8e1c / review/pr61-63 (worktree: selfforge-review-pr61-63) / 已验证源码 f88c2b95355869834e9c4f8bb406dfc6f97baea9；后续对账仅文档
+已完成验收与证据 ID：SF-TEST-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；本次文档对账归 Codex；完整组合含真 Docker 无跳过；UI 浏览器 smoke 使用 API 替身，不能冒充真实端到端模型运行
+PR / 准确 head CI / merge SHA（有则填）：PR #62 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227（组合 head；各源 PR head CI 见审查记录） / 22d7b4dc3c110b7a21016f83ace184143707ce13
+仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 的准确结果回填 PR #63 交付描述
+下一步：后续真实模型测量需另行明确执行任务并遵守 v3 冻结策略与预算，当前未运行该测量。
 ```
 
 ### SF-WS-05
@@ -322,10 +337,10 @@ Owner / 状态：Antigravity / In Review
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-WS-05-A1 | 当服务端覆写模块级 `_CODING_WORKSPACES` 时，`GET /api/workspaces/storage` 与 `/api/code/workspaces/storage` 均复用该管理器与 `/audit`、`/prune` 保持一致；同时保留 `SELFFORGE_WORKSPACES_ROOT` 运行时环境变量覆写与非法 `quota_bytes` / 仓库路径 HTTP 400 拒绝 | FastAPI `TestClient` 正反对照与兼容性控制 | E1 |
-| SF-WS-05-A2 | `selfforge-agent test-regression --output PATH` 在 `confirmed`（exit 0）、`inconclusive`（exit 1）与 `error`（exit 2）报告下均将标准 JSON 写入 `PATH` 并保留 stdout 输出；`trace --json` 与 `trace --summary --json` 均支持结构化 JSON 输出及 `--output PATH`，同时保留既有 `--summary` / NDJSON 默认输出 | CLI `main()` 与真实 `SessionStore` / 回归报告导出回归 | E2 |
-| SF-WS-05-A3 | `test-regression`、`trace`、`workspaces storage` 共用同一 `_write_cli_output`：对符号链接目标、目录/FIFO 非常规文件、缺失父目录均提前 fail-closed 拒绝（非零退出且不破坏已有目标或跟随软链接写入） | 负路径（symlink/directory/missing-parent）回归断言 | E3 |
-| SF-WS-05-A4 | Ruff、SDD 一致性检查、`git diff --check`、专项及既有回归与全量非集成单测通过，CI 全绿 | `ruff check .` + `check_sdd.py` + `pytest` + CI | E4 |
+| SF-WS-05-A1 | 当服务端覆写模块级 `_CODING_WORKSPACES` 时，`GET /api/workspaces/storage` 与 `/api/code/workspaces/storage` 均复用该管理器与 `/audit`、`/prune` 保持一致；同时保留 `SELFFORGE_WORKSPACES_ROOT` 运行时环境变量覆写与非法 `quota_bytes` / 仓库路径 HTTP 400 拒绝 | FastAPI `TestClient` 正反对照与兼容性控制 | E5（本轮复验） |
+| SF-WS-05-A2 | `selfforge-agent test-regression --output PATH` 在 `confirmed`（exit 0）、`inconclusive`（exit 1）与 `error`（exit 2）报告下均将标准 JSON 写入 `PATH` 并保留 stdout 输出；`trace --json` 与 `trace --summary --json` 均支持结构化 JSON 输出及 `--output PATH`，同时保留既有 `--summary` / NDJSON 默认输出 | CLI `main()` 与真实 `SessionStore` / 回归报告导出回归 | E6（本轮复验） |
+| SF-WS-05-A3 | `test-regression`、`trace`、`workspaces storage` 共用同一 `_write_cli_output`：对符号链接目标、目录/FIFO 非常规文件、缺失父目录均提前 fail-closed 拒绝（非零退出且不破坏已有目标或跟随软链接写入） | 负路径（symlink/directory/missing-parent）回归断言 | E7（本轮复验） |
+| SF-WS-05-A4 | Ruff、SDD 一致性检查、`git diff --check`、专项及既有回归与全量非集成单测通过，CI 全绿 | `ruff check .` + `check_sdd.py` + `pytest` + CI | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -333,17 +348,25 @@ Owner / 状态：Antigravity / In Review
 | E2 | SF-WS-05-A2 | `tests/test_ws_cli_export_and_storage_parity.py::test_cli_test_regression_writes_output_report_across_statuses`、`tests/test_ws_cli_export_and_storage_parity.py::test_cli_trace_supports_json_and_output_while_keeping_legacy_modes` | `CLI main()` + 真实 `SessionStore` trace/metrics 及 `test-regression` exit 0/1/2 三态报告导出；兼容既有 `tests/test_session_metrics.py::test_cli_trace_summary_output` | `4805e05e2cd4d00d1086de0f7e38165fdfe164e3`；passed；CI [Run #43216637277](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43216637277) success |
 | E3 | SF-WS-05-A3 | `tests/test_ws_cli_export_and_storage_parity.py::test_cli_outputs_fail_closed_for_symlinks_directories_and_missing_parents` | `trace` / `test-regression` / `workspaces storage` 三入口共测 symlink、目录、缺失父目录及 FIFO fail-closed（含 `O_NOFOLLOW`/`lstat`/`fstat` 防护，不覆写目标文件） | `4805e05e2cd4d00d1086de0f7e38165fdfe164e3`；passed；CI [Run #43216637277](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43216637277) success |
 | E4 | SF-WS-05-A4 | `tests/test_ws_cli_export_and_storage_parity.py::test_storage_api_uses_configured_coding_workspaces_manager_consistently`、`tests/test_incoming_storage_regressions.py::test_api_preserves_incomplete_scan_and_unknown_quota`、`tests/test_session_metrics.py::test_cli_trace_summary_output` | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -q -m "not integration"` 与 GitHub Actions CI（含全套 Docker 集成） | `4805e05e2cd4d00d1086de0f7e38165fdfe164e3`；本地 `648 passed, 14 deselected`；CI [Run #43216637277](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43216637277) success |
+| E5 | SF-WS-05-A1 | `tests/test_ws_cli_export_and_storage_parity.py::test_storage_api_uses_configured_coding_workspaces_manager_consistently`、`tests/test_ws_cli_export_and_storage_parity.py::test_storage_api_preserves_env_override_compatibility` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；CLI 子进程/真实 Git/存储 API；FIFO 替换与磁盘内容对比 | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E6 | SF-WS-05-A2 | `tests/test_ws_cli_export_and_storage_parity.py::test_cli_test_regression_writes_output_report_across_statuses`、`tests/test_ws_cli_export_and_storage_parity.py::test_cli_trace_supports_json_and_output_while_keeping_legacy_modes` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；CLI 子进程/真实 Git/存储 API；FIFO 替换与磁盘内容对比 | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E7 | SF-WS-05-A3 | `tests/test_ws_cli_export_and_storage_parity.py::test_trace_export_rejects_fifo_replacement_without_blocking`、`tests/test_ws_cli_export_and_storage_parity.py::test_export_checks_descriptor_before_truncation`、`tests/test_ws_cli_export_and_storage_parity.py::test_cli_outputs_fail_closed_for_symlinks_directories_and_missing_parents` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；CLI 子进程/真实 Git/存储 API；FIFO 替换与磁盘内容对比 | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
+| E8 | SF-WS-05-A4 | `tests/test_ws_cli_export_and_storage_parity.py::test_storage_api_uses_configured_coding_workspaces_manager_consistently` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；CLI 子进程/真实 Git/存储 API；FIFO 替换与磁盘内容对比 | `f88c2b95355869834e9c4f8bb406dfc6f97baea9`；passed；完整组合 691 passed、无跳过；[准确组合 head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227)；见[审查记录](./review-pr61-63.md) |
 
 执行记录（Owner/状态以上表为准）：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`feat/sf-ws-05`；Worktree=`selfforge-sf-ws-05`；PR=[#63](https://github.com/liuzhouquan/selfforge-agent/pull/63)。先运行 TDD 红灯复现（6 failed，包括复现 `workspaces storage --output` 跟随符号链接覆盖目标文件以及 `/api/workspaces/storage` 忽略 `_CODING_WORKSPACES`），随后实现修复与导出一致性，并在源码提交 `4805e05e2cd4d00d1086de0f7e38165fdfe164e3` 通过本地全套非集成验证与 CI `Run #43216637277`；本状态提交仅修改文档。
 
+本轮记录 E5–E8 取代当前验收引用；原 E1–E4 是历史来源，不把旧计数相加。
+
+审查整合记录：Base=`19882cc1cf7d6c29309e677c1449b5154c6f8e1c`；Branch=`review/pr61-63`；PR=#63；Merge=`473f04d9f8d8b394801b86a6f9f6e9a386821274`；Source=`f88c2b95355869834e9c4f8bb406dfc6f97baea9`。
+
 ```text
-Owner / 状态：Antigravity / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：19882cc1cf7d6c29309e677c1449b5154c6f8e1c / feat/sf-ws-05 (worktree: selfforge-sf-ws-05) / 已验证源码 4805e05e2cd4d00d1086de0f7e38165fdfe164e3；本次状态提交仅文档
-已完成验收与证据 ID：SF-WS-05-A1..A4（E1、E2、E3、E4）
-明确不做或未验证项（说明原因）：不改动 benchmark/ 或 api/static/（与开放 PR #61/#62 无源码冲突）；不扩展新的工作区后端或修改 validate-regression 脱敏边界；本机未安装 Docker，真实 Docker 集成由 GitHub Actions CI 运行
-已确认可复用结论与参考路径：src/selfforge_agent/api/app.py、src/selfforge_agent/cli.py、tests/test_ws_cli_export_and_storage_parity.py；CI Run #43216637277
-仍在运行的本任务进程或 CI（无则写无）：等待当前 PR #63 docs-only 状态提交触发最终 CI；本地进程无
-下一步：在统一审核合并 PR #61 / #62 / #63 时按顺序解决 docs/SDD.md 队列条目与各自规格节的合并并核对最终 main CI。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：19882cc1cf7d6c29309e677c1449b5154c6f8e1c / review/pr61-63 (worktree: selfforge-review-pr61-63) / 已验证源码 f88c2b95355869834e9c4f8bb406dfc6f97baea9；后续对账仅文档
+已完成验收与证据 ID：SF-WS-05-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；本次文档对账归 Codex；完整组合含真 Docker 无跳过；UI 浏览器 smoke 使用 API 替身，不能冒充真实端到端模型运行
+PR / 准确 head CI / merge SHA（有则填）：PR #63 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227（组合 head；各源 PR head CI 见审查记录） / 473f04d9f8d8b394801b86a6f9f6e9a386821274
+仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 的准确结果回填 PR #63 交付描述
+下一步：后续真实模型测量需另行明确执行任务并遵守 v3 冻结策略与预算，当前未运行该测量。
 ```
 
 ## 5. 验收追踪与执行记录格式
