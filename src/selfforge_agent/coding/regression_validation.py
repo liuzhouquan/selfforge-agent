@@ -170,9 +170,17 @@ def _classify_outcome(
         return "inconclusive", "workspace_changed"
     if (
         base_result.status == "failed"
+        and base_result.exit_code == 1
         and base_result.failed > 0
+        and any(
+            failure.kind == "failure"
+            and (failure.message == "AssertionError"
+                 or failure.message.startswith(("assert ", "AssertionError:")))
+            for failure in base_result.failure_details
+        )
         and base_result.errors == 0
         and repaired_result.status == "passed"
+        and repaired_result.exit_code == 0
         and repaired_result.passed > 0
         and repaired_result.failed == 0
         and repaired_result.errors == 0
@@ -370,7 +378,7 @@ def _load_bound_docker_image(
     except OSError as exc:
         raise RegressionValidationError("Session record could not be read") from exc
     except ValueError as exc:
-        raise RegressionValidationError(f"Corrupt or unreadable session: {exc}") from exc
+        raise RegressionValidationError("Corrupt or unreadable session") from exc
 
     if env is None:
         raise RegressionValidationError("Session has no bound execution environment")
@@ -389,13 +397,13 @@ def _load_bound_docker_image(
     try:
         resolved_image = resolve_docker_image(image_id, timeout=budget)
     except ValueError as exc:
-        raise RegressionValidationError(f"Bound Docker image is unavailable: {exc}") from exc
+        raise RegressionValidationError("Bound Docker image is unavailable") from exc
     return store, record_path, resolved_image
 
 
-def _validate_base_commit(workspace: CodingWorkspace) -> None:
+def _validate_base_commit(workspace: CodingWorkspace, *, deadline: float) -> None:
     try:
-        git(workspace.repository, "cat-file", "-e", f"{workspace.base_sha}^{{commit}}")
+        git(workspace.repository, "cat-file", "-e", f"{workspace.base_sha}^{{commit}}", deadline=deadline)
     except WorktreeError as exc:
         raise RegressionValidationError(
             f"Workspace base_sha {workspace.base_sha!r} is not a valid commit in the bound repository"
@@ -406,6 +414,7 @@ def _resolve_workspace(
     workspace_manager: CodingWorkspaceManager,
     raw_repo: Path,
     session_id: str,
+    *, deadline: float,
 ) -> CodingWorkspace:
     if (
         not isinstance(session_id, str)
@@ -423,12 +432,12 @@ def _resolve_workspace(
         raise RegressionNotFoundError("Repository directory not found")
 
     try:
-        workspace = workspace_manager.get(raw_repo, session_id)
+        workspace = workspace_manager.get(raw_repo, session_id, deadline=deadline)
     except WorkspaceError as exc:
         msg = str(exc)
         if "unknown coding workspace" in msg.lower():
             raise RegressionNotFoundError(msg) from exc
-        raise RegressionValidationError(msg) from exc
+        raise RegressionValidationError("Invalid or mismatched Coding workspace") from exc
 
     if workspace.path.is_symlink() or workspace.repository.is_symlink():
         raise RegressionValidationError("Workspace or repository path must not be a symlink")
@@ -452,8 +461,8 @@ def _stage_base_snapshot(
     deadline: float,
 ) -> None:
     checkout_dir = scratch_root / "base_checkout"
-    with detached_worktree(workspace.repository, workspace.base_sha, checkout_dir) as base_wt:
-        _stage_workspace(base_wt, snapshot_dir, deadline, None)
+    with detached_worktree(workspace.repository, workspace.base_sha, checkout_dir, deadline=deadline) as base_wt:
+        _stage_workspace(base_wt, snapshot_dir, deadline - 0.25, None)
 
 
 def _run_snapshot_test(
@@ -543,14 +552,14 @@ def validate_workspace_regression(
 
     manager = workspace_manager or CodingWorkspaceManager()
     raw_repo = Path(repository)
-    workspace = _resolve_workspace(manager, raw_repo, session_id)
+    workspace = _resolve_workspace(manager, raw_repo, session_id, deadline=deadline)
 
     try:
         with manager.guard(
             workspace.path,
             message=f"Coding workspace is busy running another job for session {workspace.session_id}",
         ):
-            _validate_base_commit(workspace)
+            _validate_base_commit(workspace, deadline=deadline)
             store, record_path, bound_image = _load_bound_docker_image(
                 manager,
                 workspace,
@@ -579,7 +588,7 @@ def validate_workspace_regression(
         msg = str(exc)
         if "busy" in msg.lower():
             raise RegressionConflictError(msg) from exc
-        raise RegressionValidationError(msg) from exc
+        raise RegressionValidationError("Invalid or mismatched Coding workspace") from exc
 
 
 def _execute_isolated_validation(
@@ -615,6 +624,7 @@ def _execute_isolated_validation(
     repaired_result: TestResult | None = None
     changed = False
     timed_out = False
+    snapshot_failed = False
 
     with tempfile.TemporaryDirectory(prefix="selfforge-regression-") as tmp_dir:
         scratch = Path(tmp_dir)
@@ -657,7 +667,7 @@ def _execute_isolated_validation(
                         candidate_root,
                         candidate_rel,
                         test_sha256,
-                        deadline=None,
+                        deadline=deadline,
                     ):
                         changed = True
         except (_StageTimedOut, TimeoutError):
@@ -672,19 +682,12 @@ def _execute_isolated_validation(
         ) as exc:
             if time.monotonic() >= deadline or "timed out" in str(exc).lower():
                 timed_out = True
-            # Still check whether tampering occurred even when staging/worktree failed.
-            if not timed_out:
-                try:
-                    changed = _check_unchanged(
-                        workspace.path,
-                        before_fp,
-                        candidate_root,
-                        candidate_rel,
-                        test_sha256,
-                        deadline=None,  # allow check even near deadline
-                    )
-                except (WorkspaceSnapshotError, ValueError):
-                    changed = False
+            # Missing evidence must never reuse the successful runner statuses.
+            # Keep those summaries for diagnostics, but revoke confirmation.
+            snapshot_failed = True
+
+    if time.monotonic() >= deadline:
+        timed_out = True
 
     status, reason = _classify_outcome(
         base_result,
@@ -692,6 +695,8 @@ def _execute_isolated_validation(
         changed=changed,
         timed_out=timed_out,
     )
+    if snapshot_failed and not timed_out:
+        status, reason = "error", "snapshot_error"
     report = RegressionValidationReport(
         status=status,
         reason=reason,

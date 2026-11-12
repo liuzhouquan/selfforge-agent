@@ -813,3 +813,94 @@ def test_real_docker_regression_validation_confirmed_and_counterexample(
     assert resp.status_code == 200
     assert resp.json()["status"] == "inconclusive"
     assert resp.json()["reason"] == "both_passed"
+
+
+def test_runtime_exception_is_not_assertion_regression(tmp_path, monkeypatch):
+    repo, _, manager, workspace, _ = _setup_docker_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(reg_module, "DockerTestRunner", _LocalSnapshotDockerRunner)
+    (repo / "candidate.py").write_text(
+        "from calculator import add\n"
+        "def test_case():\n"
+        "    if add(2, 3) != 5:\n"
+        "        raise RuntimeError('old implementation crashed')\n"
+    )
+    report = reg_module.validate_workspace_regression(
+        repo, workspace.session_id, "candidate.py", workspace_manager=manager,
+    )
+    assert report.base_result.failed == 1
+    assert report.repaired_result.passed == 1
+    assert report.status == "inconclusive"
+
+
+def test_unreadable_final_fingerprint_cannot_confirm(tmp_path, monkeypatch):
+    repo, _, manager, workspace, _ = _setup_docker_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(reg_module, "DockerTestRunner", _LocalSnapshotDockerRunner)
+    (repo / "candidate.py").write_text(
+        "from calculator import add\ndef test_case():\n    assert add(2, 3) == 5\n",
+    )
+    fingerprint = reg_module.workspace_fingerprint
+    calls = 0
+
+    def unreadable_after_runs(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls >= 3:
+            raise reg_module.WorkspaceSnapshotError("unreadable workspace")
+        return fingerprint(*args, **kwargs)
+
+    monkeypatch.setattr(reg_module, "workspace_fingerprint", unreadable_after_runs)
+    report = reg_module.validate_workspace_regression(
+        repo, workspace.session_id, "candidate.py", workspace_manager=manager,
+    )
+    assert report.base_result.failed == 1
+    assert report.repaired_result.passed == 1
+    assert report.status != "confirmed"
+
+
+def test_cli_workspace_git_preflight_obeys_total_budget(tmp_path, monkeypatch, capsys):
+    import os
+    import shutil
+    import time
+
+    repo, _, _, workspace, session = _setup_docker_session(tmp_path, monkeypatch)
+    before_session = session.path.read_bytes()
+    (repo / "candidate.py").write_text("def test_case(): assert True\n")
+    real_git = shutil.which("git")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    wrapper = bindir / "git"
+    wrapper.write_text(f'#!/bin/sh\nsleep 3\nexec "{real_git}" "$@"\n')
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.setattr(sys, "argv", [
+        "selfforge-agent", "test-regression", "--repo", str(repo),
+        "--session", workspace.session_id, "--test-file", "candidate.py", "--timeout", "1",
+    ])
+    started = time.monotonic()
+    assert cli.main() == 2
+    assert time.monotonic() - started < 2.5
+    assert session.path.read_bytes() == before_session
+    capsys.readouterr()
+
+
+def test_final_fingerprint_uses_validation_deadline(tmp_path, monkeypatch):
+    repo, _, manager, workspace, _ = _setup_docker_session(tmp_path, monkeypatch)
+    (repo / "candidate.py").write_text(
+        "from calculator import add\ndef test_case(): assert add(2, 3) == 5\n",
+    )
+    monkeypatch.setattr(reg_module, "DockerTestRunner", _LocalSnapshotDockerRunner)
+    fingerprint = reg_module.workspace_fingerprint
+    deadlines = []
+
+    def inspect_deadline(*args, **kwargs):
+        deadlines.append(kwargs.get("deadline"))
+        return fingerprint(*args, **kwargs)
+
+    monkeypatch.setattr(reg_module, "workspace_fingerprint", inspect_deadline)
+    report = reg_module.validate_workspace_regression(
+        repo, workspace.session_id, "candidate.py", timeout=30, workspace_manager=manager,
+    )
+    assert report.status == "confirmed"
+    assert len(deadlines) == 3
+    assert None not in deadlines
+    assert len(set(deadlines)) == 1

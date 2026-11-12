@@ -163,18 +163,18 @@ class CodingWorkspaceManager:
         return workspace_guard(path, root=self.locks_root, message=message)
 
     @staticmethod
-    def validate_repository(repository: Path) -> Path:
+    def validate_repository(repository: Path, *, deadline: float | None = None) -> Path:
         repo = repository.expanduser().resolve()
         if not repo.is_dir():
             raise WorkspaceError("Repository directory does not exist")
         try:
-            top = Path(git(repo, "rev-parse", "--show-toplevel").strip()).resolve()
+            top = Path(git(repo, "rev-parse", "--show-toplevel", deadline=deadline).strip()).resolve()
         except WorktreeError as exc:
             raise WorkspaceError("Choose a Git repository root") from exc
         if top != repo:
             raise WorkspaceError(f"Use the Git repository root: {top}")
         try:
-            git(repo, "rev-parse", "--verify", "HEAD^{commit}")
+            git(repo, "rev-parse", "--verify", "HEAD^{commit}", deadline=deadline)
         except WorktreeError as exc:
             raise WorkspaceError("Repository needs an initial commit before creating a worktree") from exc
         return repo
@@ -200,8 +200,8 @@ class CodingWorkspaceManager:
         return canonical
 
     @staticmethod
-    def _common_git_dir(repository: Path) -> Path:
-        raw = Path(git(repository, "rev-parse", "--git-common-dir").strip())
+    def _common_git_dir(repository: Path, *, deadline: float | None = None) -> Path:
+        raw = Path(git(repository, "rev-parse", "--git-common-dir", deadline=deadline).strip())
         return (repository / raw).resolve() if not raw.is_absolute() else raw.resolve()
 
     def create(self, repository: Path, session_id: str) -> CodingWorkspace:
@@ -229,8 +229,9 @@ class CodingWorkspaceManager:
             raise
         return CodingWorkspace(repo, path, branch, base_sha, session_id)
 
-    def get(self, repository: Path, session_id: str) -> CodingWorkspace:
-        repo = self.validate_repository(repository)
+    def get(self, repository: Path, session_id: str,
+            *, deadline: float | None = None) -> CodingWorkspace:
+        repo = self.validate_repository(repository, deadline=deadline)
         path, metadata, branch = self._paths(repo, session_id)
         if not metadata.is_file():
             raise WorkspaceError("Unknown Coding workspace; use direct mode for older sessions")
@@ -246,9 +247,9 @@ class CodingWorkspaceManager:
             raise WorkspaceError("Coding workspace metadata does not match this repository")
         if not path.is_dir() or path.is_symlink():
             raise WorkspaceError("Coding worktree is missing or replaced")
-        if self._common_git_dir(path) != self._common_git_dir(repo):
+        if self._common_git_dir(path, deadline=deadline) != self._common_git_dir(repo, deadline=deadline):
             raise WorkspaceError("Coding worktree belongs to a different repository")
-        if git(path, "branch", "--show-current").strip() != branch:
+        if git(path, "branch", "--show-current", deadline=deadline).strip() != branch:
             raise WorkspaceError("Coding worktree branch changed; inspect it manually")
         return CodingWorkspace(repo, path, branch, payload["base_sha"], session_id)
 

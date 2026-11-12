@@ -13,14 +13,17 @@ class WorktreeError(RuntimeError):
     """Git could not prepare or clean a temporary worktree."""
 
 
-def git(repo: Path, *args: str) -> str:
+def git(repo: Path, *args: str, deadline: float | None = None) -> str:
+    timeout = 30.0 if deadline is None else min(30.0, deadline - monotonic())
+    if timeout <= 0:
+        raise TimeoutError("Git operation budget exhausted")
     try:
         result = subprocess.run(
             ["git", "-C", str(repo), *args],
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise WorktreeError(f"Git worktree operation failed: {exc}") from exc
@@ -89,9 +92,17 @@ def git_bounded(repo: Path, *args: str, max_bytes: int) -> tuple[str, bool]:
 
 
 @contextmanager
-def detached_worktree(repo: Path, revision: str, destination: Path) -> Iterator[Path]:
-    git(repo, "worktree", "add", "--detach", str(destination), revision)
+def detached_worktree(repo: Path, revision: str, destination: Path,
+                      *, deadline: float | None = None) -> Iterator[Path]:
+    # Reserve part of the caller's budget for removing temporary Git metadata.
+    checkout_deadline = None if deadline is None else deadline - 0.25
+    existed = destination.exists()
+    added = False
     try:
+        git(repo, "worktree", "add", "--detach", str(destination), revision,
+            deadline=checkout_deadline)
+        added = True
         yield destination
     finally:
-        git(repo, "worktree", "remove", "--force", str(destination))
+        if added or (not existed and destination.exists()):
+            git(repo, "worktree", "remove", "--force", str(destination), deadline=deadline)
