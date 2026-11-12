@@ -1,6 +1,7 @@
 """Transient budget feedback and tool loop detection for the shared Coding loop."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 READ_ONLY_TOOLS = frozenset({"read_file", "search_code"})
@@ -79,6 +80,108 @@ def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str,
     return None
 
 
+def _find_tool_content(
+    call: dict,
+    messages: list[dict],
+    msg_idx: int,
+    call_idx: int,
+    tool_responses_by_id: dict[str, str],
+) -> str:
+    call_id = call.get("id")
+    if call_id and call_id in tool_responses_by_id:
+        return tool_responses_by_id[call_id]
+    offset = 0
+    for i in range(msg_idx + 1, len(messages)):
+        m = messages[i]
+        if m.get("role") == "tool":
+            if offset == call_idx:
+                return str(m.get("content") or "")
+            offset += 1
+        elif m.get("role") in {"assistant", "user"}:
+            break
+    return ""
+
+
+def detect_edit_failure_loop(
+    messages: list[dict],
+    min_failures: int = 2,
+) -> dict[str, Any] | None:
+    """Detect repeated failed edit attempts on the same file path.
+
+    Tracks consecutive failed `edit_file` invocations per file path.
+    A path's failure count resets to 0 when:
+      1. An edit to that path succeeds.
+      2. A read_file for that path succeeds (inspection).
+      3. A new user message arrives.
+    Returns a dict with 'path' and 'count' if the most recent turn's failed edits
+    contain a path whose consecutive failure count has reached min_failures.
+    """
+    if not messages:
+        return None
+
+    tool_responses_by_id: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") == "tool":
+            cid = msg.get("tool_call_id")
+            if cid:
+                tool_responses_by_id[cid] = str(msg.get("content") or "")
+
+    failure_counts: dict[str, int] = {}
+    last_turn_failed: list[str] = []
+
+    for idx, msg in enumerate(messages):
+        role = msg.get("role")
+        if role == "user":
+            failure_counts.clear()
+            last_turn_failed = []
+            continue
+        if role != "assistant":
+            continue
+
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            last_turn_failed = []
+            continue
+
+        current_turn_failed: list[str] = []
+        for call_idx, call in enumerate(calls):
+            fn = call.get("function") or {}
+            name = fn.get("name", "")
+            raw_args = fn.get("arguments", {})
+            _, parsed_args = _canonical_args(raw_args)
+            raw_path = parsed_args.get("path")
+            if not raw_path or not isinstance(raw_path, str):
+                continue
+            norm_path = Path(raw_path).as_posix()
+
+            content = _find_tool_content(call, messages, idx, call_idx, tool_responses_by_id)
+            is_error = content.startswith(("Tool error", "Action rejected", "Error:"))
+
+            if name == "edit_file":
+                if is_error:
+                    failure_counts[norm_path] = failure_counts.get(norm_path, 0) + 1
+                    current_turn_failed.append(norm_path)
+                else:
+                    failure_counts[norm_path] = 0
+            elif name == "read_file" and not is_error:
+                failure_counts[norm_path] = 0
+
+        last_turn_failed = current_turn_failed
+
+    if not last_turn_failed:
+        return None
+
+    for path in last_turn_failed:
+        count = failure_counts.get(path, 0)
+        if count >= min_failures:
+            return {
+                "path": path,
+                "count": count,
+            }
+
+    return None
+
+
 def budget_notice(
     *,
     step: int,
@@ -86,6 +189,7 @@ def budget_notice(
     remaining_seconds: float,
     tests_passed: bool,
     tool_loop: dict | None = None,
+    edit_failure: dict | None = None,
 ) -> dict:
     """Describe actual runtime state, without adding turns or granting evidence."""
     remaining_turns = max_steps - step + 1
@@ -104,6 +208,13 @@ def budget_notice(
             f"Repeated read-only tool call detected: you have called '{tool_name}' "
             f"with identical arguments {count} times without intervening edits. "
             "Avoid duplicate lookups and proceed with required edits (edit_file) or verification (run_tests).\n"
+        )
+    if edit_failure and not (remaining_turns == 1 and tests_passed):
+        path = edit_failure.get("path", "")
+        count = edit_failure.get("count", 2)
+        content += (
+            f"Consecutive edit failures on '{path}' ({count} times). "
+            f"Use read_file to inspect the exact lines and indentation of '{path}' and review the tool error before further edits; respect permission and approval restrictions.\n"
         )
     if remaining_turns == 1:
         if tests_passed:
