@@ -75,12 +75,16 @@ is marked `integration`, requires pinned source caches and a Docker daemon/image
 and never implicitly opts into Host execution. CI explicitly fetches the two
 source revisions in its workflow before running this group.
 
-For local integration tests, provision the manifest-pinned repositories under
-`.local/benchmark/repos/{jmespath,boltons}`, or set `SELFFORGE_EVAL_SOURCE_ROOT` to
-the parent of those two caches. Each must have a named ref containing its pinned
-commit so benchmark's independent clone can obtain it. Run:
+For local integration tests, provision the manifest-pinned repositories using the
+shared preparation script (which populates `.local/benchmark/repos/{jmespath,boltons}`,
+or `--root PATH` / `$SELFFORGE_EVAL_SOURCE_ROOT`, and ensures each cache has a
+named ref reaching its pinned commit for benchmark's independent clone):
 
 ```sh
+uv run --no-sync python scripts/prepare_eval_sources.py
+# Or validate an existing cache offline without fetching or changing HEAD/files:
+uv run --no-sync python scripts/prepare_eval_sources.py --offline
+# Then run the Docker integration group:
 uv run --no-sync pytest -q -m integration
 ```
 

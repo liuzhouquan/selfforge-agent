@@ -108,7 +108,7 @@ flowchart LR
 
 | 顺序 | 任务 ID | 状态 | Owner | 前提 | 交付结果 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | [SF-DEV-01](#sf-dev-01) | Ready | 未认领 | 无 | 新 checkout 与 CI 复用同一个固定评测源准备入口 |
+| 1 | [SF-DEV-01](#sf-dev-01) | In Review | Antigravity Agent | 无 | [PR #57](https://github.com/liuzhouquan/selfforge-agent/pull/57)：新 checkout 与 CI 复用同一个固定评测源准备入口 |
 | 2 | [SF-DOC-01](#sf-doc-01) | Ready | 未认领 | 本 SDD | 有界 SDD 一致性检查，阻止失配状态与虚假验收引用 |
 | 3 | [SF-TEST-01](#sf-test-01) | Ready | 未认领 | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
 | 4 | [SF-EVAL-08](#sf-eval-08) | Waiting | 未认领 | SF-DEV-01；固定新策略 | 新 Runtime 的后续评测规格、冻结输入和无模型预检 |
@@ -127,12 +127,29 @@ flowchart LR
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-DEV-01-A1 | 空临时根显式在线准备后，两固定提交能从生成仓库独立 clone/checkout | `tests/test_eval_source_preparation.py`；本地 Git remote 替身测控制流，CI 实际固定 URL | 未验证；节点待实现 |
-| SF-DEV-01-A2 | 已有合格缓存使用 `--offline`，成功且不联网、不改变用户 HEAD/文件 | 同文件 CLI 回归 + 前后状态；替身阻断 fetch | 未验证；节点待实现 |
-| SF-DEV-01-A3 | 超时、坏源、缺提交、离线缺缓存、symlink/未知目录输入均失败，保留已有内容 | 同文件错误注入；可观察退出码与磁盘内容 | 未验证；节点待实现 |
-| SF-DEV-01-A4 | 新 checkout 按文档先准备再运行全部测试；CI 不再复制 fetch 命令 | 真实 CI + Docker 两候选控制；不需要模型密钥 | 未验证 |
+| SF-DEV-01-A1 | 空临时根显式在线准备后，两固定提交能从生成仓库独立 clone/checkout | `tests/test_eval_source_preparation.py`；本地 Git remote 替身测控制流，CI 实际固定 URL | E1（本地控制流与 CI 真实固定 URL 均通过） |
+| SF-DEV-01-A2 | 已有合格缓存使用 `--offline`，成功且不联网、不改变用户 HEAD/文件 | 同文件 CLI 回归 + 前后状态；替身阻断 fetch | E2（本地通过） |
+| SF-DEV-01-A3 | 超时、坏源、缺提交、离线缺缓存、symlink/未知目录输入均失败，保留已有内容 | 同文件错误注入；可观察退出码与磁盘内容 | E3（本地通过） |
+| SF-DEV-01-A4 | 新 checkout 按文档先准备再运行全部测试；CI 不再复制 fetch 命令 | 真实 CI + Docker 两候选控制；不需要模型密钥 | E4（本地与 CI Docker 集成均通过） |
 
-执行记录（Owner/状态以上表为准）：Base=领取时填写；Branch/PR=无。最先核对现有两条固定 SHA 和独立 clone 行为，再写失败用例；完成后保留一个共享实现与一份准备说明。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-DEV-01-A1 | `tests/test_eval_source_preparation.py::test_online_preparation_creates_cloneable_repos_and_ownership_marker`、`tests/test_eval_source_preparation.py::test_pinned_sources_match_candidate_manifests_and_policy`、`tests/test_eval_source_preparation.py::test_default_root_uses_env_var_and_cli_subprocess`、`tests/test_eval_source_preparation.py::test_online_fetch_into_existing_repo_preserves_head_and_candidate_branch`；GitHub Actions `Provision pinned multi-file candidate sources` | Host 本地 Git remote 替身 + `git clone --no-local`；GitHub `ubuntu-latest` CI 真实拉取 pinned GitHub URL；[PR #57](https://github.com/liuzhouquan/selfforge-agent/pull/57) | 源码 SHA `57117238f34c9082b5ce3b3b9e6b1931f2b0549d`；本地专项 18 passed / 非集成 573 passed, 13 deselected / Ruff passed；CI [Run #43150979908](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43150979908) 真实固定 URL 准备成功（jmespath `2812594e69d43098ef60f81f4efc404c071b0418`、boltons `d31d821d56c8f7756af9c30a864077f2e5855321`） |
+| E2 | SF-DEV-01-A2 | `tests/test_eval_source_preparation.py::test_offline_mode_succeeds_without_fetch_and_preserves_user_head_and_files` | Host 本地缓存 + git wrapper 阻断 mutating/fetch 命令 + 前后 HEAD 与文件比对；[PR #57](https://github.com/liuzhouquan/selfforge-agent/pull/57) | `57117238f34c9082b5ce3b3b9e6b1931f2b0549d`；本地与 CI [Run #43150979908](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43150979908) passed（573 passed, 13 deselected） |
+| E3 | SF-DEV-01-A3 | `tests/test_eval_source_preparation.py::test_invalid_timeout_cli_rejected`、`tests/test_eval_source_preparation.py::test_timeout_kills_slow_git_and_leaves_diagnosable_unready_state`、`tests/test_eval_source_preparation.py::test_online_bad_remote_and_missing_commit_fail_and_recover_on_retry`、`tests/test_eval_source_preparation.py::test_run_git_stdout_overflow_fails_closed`、`tests/test_eval_source_preparation.py::test_offline_rejects_missing_cache_bad_origin_and_orphan_commit`、`tests/test_eval_source_preparation.py::test_rejects_symlinks_unknown_dirs_and_nested_parent_repo_without_modification`、`tests/test_eval_source_preparation.py::test_bounded_output_and_corrupt_state_file_fail_closed` | Host CLI 子进程退出码、超时期限进程组终止、错误注入与磁盘内容保留检查；[PR #57](https://github.com/liuzhouquan/selfforge-agent/pull/57) | `57117238f34c9082b5ce3b3b9e6b1931f2b0549d`；本地与 CI [Run #43150979908](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43150979908) passed（573 passed, 13 deselected） |
+| E4 | SF-DEV-01-A4 | `tests/test_eval_source_preparation.py::test_ci_workflow_uses_shared_prepare_eval_sources_script`；`.github/workflows/ci.yml`（`Lint` / `Unit tests` / `Build sandbox image` / `Provision pinned multi-file candidate sources` / `Docker integration tests`） | 本地 Ruff + 非集成全量 + CI 真实 Docker 集成测试（`uv run --no-sync pytest -q -m integration`）；本机 WSL2 未安装 `docker`，Docker 集成由 CI 完成；[PR #57](https://github.com/liuzhouquan/selfforge-agent/pull/57) | `57117238f34c9082b5ce3b3b9e6b1931f2b0549d`；CI [Run #43150979908](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43150979908) 全绿：Lint passed、Unit tests `573 passed, 13 deselected`、Docker integration tests `13 passed, 573 deselected`（含 jmespath 与 boltons 候选控制） |
+
+执行记录（Owner/状态以上表为准）：Base=`e07153e092150ab2d1f86aa98545a676836b6e14`；Branch=`feat/sf-dev-01`；Worktree=`selfforge-sf-dev-01`；PR=[#57](https://github.com/liuzhouquan/selfforge-agent/pull/57)。先核对两项固定 SHA 与 `--no-local` clone 行为并先红后绿实现共享脚本；首次推送 `8d91cc5a848b50d9296c6494d1e3c10824f0d98f` 在 CI `Run #43150067989` 因冗余 shebang 触发 Ruff `EXE001` 失败，移除后在源码提交 `57117238f34c9082b5ce3b3b9e6b1931f2b0549d` 通过本地回归与 CI `Run #43150979908` 全套验证（仅保留一份共享实现与一份准备文档）。
+
+```text
+Owner / 状态：Antigravity Agent / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：e07153e092150ab2d1f86aa98545a676836b6e14 / feat/sf-dev-01 (worktree: selfforge-sf-dev-01) / 已验证源码提交 57117238f34c9082b5ce3b3b9e6b1931f2b0549d（本交接提交仅含 docs/SDD.md 文档差异）
+已完成验收与证据 ID：完成 E1（控制流、独立 clone 与 CI 真实固定 URL）、E2（--offline）、E3（超时/坏源/缺提交/symlink/未知目录/有界输出）与 E4（CI Provision pinned multi-file candidate sources + Docker integration tests）；源码提交 57117238f34c9082b5ce3b3b9e6b1931f2b0549d 通过本地 Ruff / 18 项专项 / 573 项非集成单测，以及 GitHub Actions Run #43150979908 全套 CI（573 非集成 + 13 Docker 集成全通过，无跳过）
+未完成 / 环境限制 / 未提交内容归属：本地 WSL2 环境未安装 docker 命令，`-m integration` 13 项测试已在 GitHub Actions ubuntu-latest 真实 Docker 环境中通过；PR #57 当前处于 In Review，未获合并授权，未合入 main。无未提交内容。
+PR / 准确 head CI / merge SHA（有则填）：PR #57 (https://github.com/liuzhouquan/selfforge-agent/pull/57) / 源码提交 57117238f34c9082b5ce3b3b9e6b1931f2b0549d CI: https://github.com/liuzhouquan/selfforge-agent/actions/runs/43150979908（本 docs-only 状态提交 push 后的准确 PR head CI 见 PR #57 Checks 及描述补充）/ 未合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：待审阅并获授权后合并 PR #57，合并后回填 merge SHA 并将状态更新为 Merged，同时评估 SF-EVAL-08 是否具备转 Ready 条件。
+```
 
 ### SF-DOC-01
 
@@ -221,17 +238,11 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest -q -m 'not integration'
 ```
 
-Docker 集成还需 daemon、镜像与固定评测源。SF-DEV-01 尚未实现前，显式执行与当前 CI 相同的准备步骤（空目标目录；已有缓存不覆盖，先核对来源和完整固定 SHA）：
+Docker 集成还需 daemon、镜像与固定评测源。按[评测准备说明](./benchmark.md#multi-file-candidate-qualification)使用共享准备入口（默认 `.local/benchmark/repos`，或 `--root` / `SELFFORGE_EVAL_SOURCE_ROOT`；已有合格缓存可传 `--offline`）：
 
 ```sh
 docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
-mkdir -p .local/benchmark/repos
-git init .local/benchmark/repos/jmespath
-git -C .local/benchmark/repos/jmespath fetch --depth=1 https://github.com/jmespath/jmespath.py.git 2812594e69d43098ef60f81f4efc404c071b0418
-git -C .local/benchmark/repos/jmespath checkout -b candidate 2812594e69d43098ef60f81f4efc404c071b0418
-git init .local/benchmark/repos/boltons
-git -C .local/benchmark/repos/boltons fetch --depth=1 https://github.com/mahmoud/boltons.git d31d821d56c8f7756af9c30a864077f2e5855321
-git -C .local/benchmark/repos/boltons checkout -b candidate d31d821d56c8f7756af9c30a864077f2e5855321
+uv run --no-sync python scripts/prepare_eval_sources.py
 SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q
 ```
 
