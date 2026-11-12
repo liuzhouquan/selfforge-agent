@@ -139,7 +139,7 @@ function refreshCodingRegressionAvailability() {
 function regressionStatusLabel(status) {
   return ({
     confirmed: "已确认（Base 失败 / 当前工作区通过）",
-    not_confirmed: "未确认（未满足复现与修复条件）",
+    inconclusive: "未确认（未满足复现与修复条件）",
     error: "执行错误",
   })[status] || status;
 }

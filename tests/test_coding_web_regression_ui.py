@@ -606,36 +606,56 @@ def test_web_ui_enforces_sandbox_worktree_timeout_and_error_guards() -> None:
 
 
 def test_web_ui_resets_regression_state_on_job_switch_and_workspace_removal() -> None:
-    scenario = """
-    setFetchHandler(async (url) => {
-      if (url.includes("/diff")) {
-        return { ok: true, status: 200, async json() { return { files: [], omitted_files: 0, base_sha: "abc123456789" }; } };
-      }
-      if (url.includes("validate-regression")) {
-        return {
+    inconclusive_json = json.dumps(
+        RegressionValidationReport(
+            status="inconclusive",
+            reason="both_passed",
+            session_id="sess-a",
+            base_sha="abc123",
+            workspace_sha256="1" * 64,
+            test_sha256="2" * 64,
+            base_result=RegressionRunSummary(
+                status="passed",
+                exit_code=0,
+                duration_seconds=0.2,
+                passed=1,
+                failed=0,
+                errors=0,
+                skipped=0,
+            ),
+            repaired_result=RegressionRunSummary(
+                status="passed",
+                exit_code=0,
+                duration_seconds=0.2,
+                passed=1,
+                failed=0,
+                errors=0,
+                skipped=0,
+            ),
+        ).model_dump()
+    )
+    scenario = f"""
+    const inconclusivePayload = {inconclusive_json};
+    setFetchHandler(async (url) => {{
+      if (url.includes("/diff")) {{
+        return {{ ok: true, status: 200, async json() {{ return {{ files: [], omitted_files: 0, base_sha: "abc123456789" }}; }} }};
+      }}
+      if (url.includes("validate-regression")) {{
+        return {{
           ok: true,
           status: 200,
-          async json() {
-            return {
-              status: "not_confirmed",
-              reason: "base_passed",
-              session_id: "sess-a",
-              base_sha: "abc123",
-              workspace_sha256: "1".repeat(64),
-              test_sha256: "2".repeat(64),
-              base_result: { status: "passed", exit_code: 0, duration_seconds: 0.2, passed: 1, failed: 0, errors: 0, skipped: 0 },
-              repaired_result: null,
-            };
-          },
-        };
-      }
-      if (url.includes("/remove")) {
-        return { ok: true, status: 200, async json() { return { status: "removed" }; } };
-      }
-      return { ok: true, status: 200, async json() { return {}; } };
-    });
+          async json() {{
+            return inconclusivePayload;
+          }},
+        }};
+      }}
+      if (url.includes("/remove")) {{
+        return {{ ok: true, status: 200, async json() {{ return {{ status: "removed" }}; }} }};
+      }}
+      return {{ ok: true, status: 200, async json() {{ return {{}}; }} }};
+    }});
 
-    renderCodingJob({
+    renderCodingJob({{
       job_id: "job-a",
       session_id: "sess-a",
       state: "unverified",
@@ -651,14 +671,15 @@ def test_web_ui_resets_regression_state_on_job_switch_and_workspace_removal() ->
       can_resume: true,
       trace: [],
       verification_passed: false,
-    });
+    }});
     $("coding-regression-test-file").value = "tests/test_a.py";
     $("coding-regression-timeout").value = "30";
-    await $("coding-regression-form").dispatchEventAsync({ type: "submit" });
+    await $("coding-regression-form").dispatchEventAsync({{ type: "submit" }});
     const shownForA = !$("coding-regression-result").hidden;
+    const inconclusiveTextForA = $("coding-regression-result").textContent;
 
     // Switching to Job B clears stale status/result from Job A
-    renderCodingJob({
+    renderCodingJob({{
       job_id: "job-b",
       session_id: "sess-b",
       state: "unverified",
@@ -674,21 +695,21 @@ def test_web_ui_resets_regression_state_on_job_switch_and_workspace_removal() ->
       can_resume: true,
       trace: [],
       verification_passed: false,
-    });
+    }});
     const clearedOnSwitch = $("coding-regression-result").hidden && $("coding-regression-status").hidden;
 
     // Removing workspace hides regression panel cleanly
-    await $("coding-remove-workspace").dispatchEventAsync({ type: "click" });
+    await $("coding-remove-workspace").dispatchEventAsync({{ type: "click" }});
     const hiddenAfterRemove = $("coding-regression").hidden;
 
-    return { shownForA, clearedOnSwitch, hiddenAfterRemove };
+    return {{ shownForA, inconclusiveTextForA, clearedOnSwitch, hiddenAfterRemove }};
     """
     outcome = _run_app_js_scenario(scenario)
-    assert outcome == {
-        "shownForA": True,
-        "clearedOnSwitch": True,
-        "hiddenAfterRemove": True,
-    }
+    assert outcome["shownForA"] is True
+    assert "未确认" in str(outcome["inconclusiveTextForA"])
+    assert "both_passed" in str(outcome["inconclusiveTextForA"])
+    assert outcome["clearedOnSwitch"] is True
+    assert outcome["hiddenAfterRemove"] is True
 
 
 def test_web_ui_revert_invalidates_stale_report_and_unrecorded_sandbox_disables_submit() -> None:
