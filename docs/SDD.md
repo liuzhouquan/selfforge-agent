@@ -108,7 +108,7 @@ flowchart LR
 
 | 顺序 | 任务 ID | 状态 | Owner | 前提 | 交付结果 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | [SF-DEV-01](#sf-dev-01) | Ready | 未认领 | 无 | 新 checkout 与 CI 复用同一个固定评测源准备入口 |
+| 1 | [SF-DEV-01](#sf-dev-01) | In Progress | Antigravity Agent | 无 | 新 checkout 与 CI 复用同一个固定评测源准备入口 |
 | 2 | [SF-DOC-01](#sf-doc-01) | Ready | 未认领 | 本 SDD | 有界 SDD 一致性检查，阻止失配状态与虚假验收引用 |
 | 3 | [SF-TEST-01](#sf-test-01) | Ready | 未认领 | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
 | 4 | [SF-EVAL-08](#sf-eval-08) | Waiting | 未认领 | SF-DEV-01；固定新策略 | 新 Runtime 的后续评测规格、冻结输入和无模型预检 |
@@ -132,7 +132,7 @@ flowchart LR
 | SF-DEV-01-A3 | 超时、坏源、缺提交、离线缺缓存、symlink/未知目录输入均失败，保留已有内容 | 同文件错误注入；可观察退出码与磁盘内容 | 未验证；节点待实现 |
 | SF-DEV-01-A4 | 新 checkout 按文档先准备再运行全部测试；CI 不再复制 fetch 命令 | 真实 CI + Docker 两候选控制；不需要模型密钥 | 未验证 |
 
-执行记录（Owner/状态以上表为准）：Base=领取时填写；Branch/PR=无。最先核对现有两条固定 SHA 和独立 clone 行为，再写失败用例；完成后保留一个共享实现与一份准备说明。
+执行记录（Owner/状态以上表为准）：Base=`e07153e092150ab2d1f86aa98545a676836b6e14`；Branch=`feat/sf-dev-01`；Worktree=`selfforge-sf-dev-01`；PR=无。最先核对现有两条固定 SHA 和独立 clone 行为，再写失败用例；完成后保留一个共享实现与一份准备说明。
 
 ### SF-DOC-01
 
@@ -221,17 +221,11 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest -q -m 'not integration'
 ```
 
-Docker 集成还需 daemon、镜像与固定评测源。SF-DEV-01 尚未实现前，显式执行与当前 CI 相同的准备步骤（空目标目录；已有缓存不覆盖，先核对来源和完整固定 SHA）：
+Docker 集成还需 daemon、镜像与固定评测源。按[评测准备说明](./benchmark.md#multi-file-candidate-qualification)使用共享准备入口（默认 `.local/benchmark/repos`，或 `--root` / `SELFFORGE_EVAL_SOURCE_ROOT`；已有合格缓存可传 `--offline`）：
 
 ```sh
 docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
-mkdir -p .local/benchmark/repos
-git init .local/benchmark/repos/jmespath
-git -C .local/benchmark/repos/jmespath fetch --depth=1 https://github.com/jmespath/jmespath.py.git 2812594e69d43098ef60f81f4efc404c071b0418
-git -C .local/benchmark/repos/jmespath checkout -b candidate 2812594e69d43098ef60f81f4efc404c071b0418
-git init .local/benchmark/repos/boltons
-git -C .local/benchmark/repos/boltons fetch --depth=1 https://github.com/mahmoud/boltons.git d31d821d56c8f7756af9c30a864077f2e5855321
-git -C .local/benchmark/repos/boltons checkout -b candidate d31d821d56c8f7756af9c30a864077f2e5855321
+uv run --no-sync python scripts/prepare_eval_sources.py
 SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q
 ```
 
