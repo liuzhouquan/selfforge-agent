@@ -52,7 +52,7 @@ v2 首轮 20 题 × 3 次真实模型测量为 53/60，历史环境来源记录�
 | Web 任务、序列化、锁、取消、UI | `api/coding_jobs.py`、`api/app.py`、`api/static/` | `test_coding_jobs_durable.py`、`test_coding_web.py`、`test_web_origin.py`、`test_session_metrics.py`；[状态与 Web 约束](./engineering-invariants.md#private-state-providers-web-jobs-and-workspaces) |
 | 工作区、Diff、提交/PR/还原 | `runtime/workspace.py`、`runtime/workspace_diff.py`、`runtime/delivery.py` | `test_workspace.py`、`test_workspace_delivery.py`、`test_delivery_safety.py`；[交付契约](./pr-delivery.md) |
 | JUnit、诊断、内容证据 | `verification/`、`runtime/fingerprint.py`、`runtime/failure_artifacts.py` | `test_coding_evidence.py`、`test_test_diagnostics.py`、`test_workspace_evidence.py`、`test_workspace_fingerprint.py`；[证据约束](./engineering-invariants.md#junit-diagnostics-and-workspace-evidence) |
-| Review、差异测试、Repair | `review/`、`coding/` | `test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py`、`test_risk_prioritization.py`、`test_causal_investigation.py`；[专项约束](./engineering-invariants.md#specialized-pr-review-testing-and-repair) |
+| Review、差异测试、Repair、回归验证 | `review/`、`coding/` | `test_repair_agent.py`、`test_docker_repair.py`、`test_test_generation.py`、`test_coding_regression_validation.py`、`test_risk_prioritization.py`、`test_causal_investigation.py`；[专项约束](./engineering-invariants.md#specialized-pr-review-testing-and-repair) |
 | 用量与可选费用 | `runtime/session.py`、`runtime/pricing.py`、`coding/agent.py` | `test_session_metrics.py`、`test_pricing.py`、`test_repair_agent.py`；[计量规则](./token-metrics.md) |
 | 独立评测与参考预检 | `runtime/benchmark.py`、`runtime/evaluation.py` | `test_benchmark.py`、`test_benchmark_isolation.py`、`test_reference_validation.py`；[评测约束](./engineering-invariants.md#independent-evaluation-and-reference-controls) |
 

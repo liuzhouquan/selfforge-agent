@@ -8,6 +8,11 @@ from pathlib import Path
 
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel, OpenAICompatibleCodingModel
+from selfforge_agent.coding.regression_validation import (
+    DEFAULT_REGRESSION_TIMEOUT,
+    RegressionValidationError,
+    validate_workspace_regression,
+)
 from selfforge_agent.coding.risk_prioritization import prioritize_risks
 from selfforge_agent.coding.test_generation import DifferentialTestGenerator, RiskTarget
 from selfforge_agent.coding.worktree import WorktreeError
@@ -290,6 +295,19 @@ def main(argv: list[str] | None = None) -> int:
                           help="Automatically prioritize risk hypotheses from the diff")
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
+    regress = subcommands.add_parser(
+        "test-regression",
+        help="Validate a regression test against a Coding workspace and its base commit",
+    )
+    regress.add_argument("--repo", type=Path, default=Path("."), help="Repository path")
+    regress.add_argument("--session", required=True, help="Bound Coding session ID")
+    regress.add_argument("--test-file", required=True, help="Bounded candidate pytest file path")
+    regress.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_REGRESSION_TIMEOUT,
+        help="Total validation timeout budget in seconds (1-180)",
+    )
     args = parser.parse_args(argv)
     if args.command == "sandbox":
         if args.action == "audit":
@@ -655,6 +673,32 @@ def main(argv: list[str] | None = None) -> int:
             args.output.write_text(rendered, encoding="utf-8")
         print(rendered, end="")
         return 0 if report["successes"] == report["runs"] else 1
+    if args.command == "test-regression":
+        raw_repo = args.repo
+        legacy_roots = (
+            (raw_repo.resolve(),)
+            if (not raw_repo.is_symlink() and raw_repo.is_dir())
+            else ()
+        )
+        try:
+            report = validate_workspace_regression(
+                raw_repo,
+                args.session,
+                args.test_file,
+                timeout=args.timeout,
+                workspace_manager=CodingWorkspaceManager(),
+                legacy_session_roots=legacy_roots,
+            )
+        except (RegressionValidationError, WorktreeError, ValueError, OSError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        rendered = report.model_dump_json(indent=2) + "\n"
+        print(rendered, end="")
+        if report.status == "confirmed":
+            return 0
+        if report.status == "inconclusive":
+            return 1
+        return 2
     if args.command == "generate-test":
         try:
             candidates = route_providers(args.provider, not args.no_fallback)
