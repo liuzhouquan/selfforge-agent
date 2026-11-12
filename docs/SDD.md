@@ -110,7 +110,7 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- |
 | 1 | [SF-DEV-01](#sf-dev-01) | Ready | 未认领 | 无 | 新 checkout 与 CI 复用同一个固定评测源准备入口 |
 | 2 | [SF-DOC-01](#sf-doc-01) | Ready | 未认领 | 本 SDD | 有界 SDD 一致性检查，阻止失配状态与虚假验收引用 |
-| 3 | [SF-TEST-01](#sf-test-01) | Ready | 未认领 | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
+| 3 | [SF-TEST-01](#sf-test-01) | In Progress | Antigravity Agent | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
 | 4 | [SF-EVAL-08](#sf-eval-08) | Waiting | 未认领 | SF-DEV-01；固定新策略 | 新 Runtime 的后续评测规格、冻结输入和无模型预检 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
@@ -168,7 +168,17 @@ flowchart LR
 | SF-TEST-01-A3 | 忙碌工作区、越界/受保护/symlink/超限候选、镜像缺失或会话不匹配被拒绝 | CLI 非零/API 4xx；发生在模型/外部测试执行前 | 未验证；节点待实现 |
 | SF-TEST-01-A4 | 两份测试互不污染；执行期间内容变化撤销确认；结束/失败后临时资源释放且用户文件不变 | 故障注入/指纹/磁盘对比；现有 Review/Repair 回归 | 未验证；节点待实现 |
 
-执行记录（Owner/状态以上表为准）：Base=领取时填写；Branch/PR=无。不在本任务增加测试自动生成模型循环、覆盖率平台或新前端。UI 接入、自动候选生成另立规格；保留现有 Web Coding 主入口。
+执行记录（Owner/状态以上表为准）：Base=`e07153e092150ab2d1f86aa98545a676836b6e14`；Branch=`feat/sf-test-01`；Worktree=`selfforge-sf-test-01`；PR=无。按 SF-TEST-01 先写失败用例，再实现共享回归验证服务并接入 CLI `test-regression` 与 API `POST /api/code/workspaces/{session_id}/validate-regression`，仅使用会话绑定镜像与 Docker staging；不在本任务增加测试自动生成模型循环、覆盖率平台或新前端。UI 接入、自动候选生成另立规格；保留现有 Web Coding 主入口。
+
+```text
+Owner / 状态：Antigravity Agent / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：e07153e092150ab2d1f86aa98545a676836b6e14 / feat/sf-test-01 (worktree: selfforge-sf-test-01) / 进行中（尚未提交源码）
+已完成验收与证据 ID：无（进行中，先写 SF-TEST-01-A1~A4 失败测试再实现）
+未完成 / 环境限制 / 未提交内容归属：待完成共享回归验证服务、CLI/API 接线与 tests/test_coding_regression_validation.py。
+PR / 准确 head CI / merge SHA（有则填）：无（尚未推送或创建 PR）
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：编写 tests/test_coding_regression_validation.py 失败用例并实现 SF-TEST-01 回归验证服务、CLI 与 API。
+```
 
 ### SF-EVAL-08
 

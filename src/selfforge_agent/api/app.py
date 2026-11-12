@@ -17,6 +17,14 @@ from selfforge_agent.api.coding_jobs import CodingJobManager
 from selfforge_agent.coding.agent import RepairAgent
 from selfforge_agent.coding.model_client import FallbackCodingModel
 from selfforge_agent.coding.models import RepairReport
+from selfforge_agent.coding.regression_validation import (
+    RegressionConflictError,
+    RegressionNotFoundError,
+    RegressionValidationError,
+    RegressionValidationReport,
+    ValidateRegressionRequest,
+    validate_workspace_regression,
+)
 from selfforge_agent.coding.risk_prioritization import PrioritizedRisk, prioritize_risks
 from selfforge_agent.coding.test_generation import (
     DifferentialTestGenerator,
@@ -677,6 +685,39 @@ def create_coding_pr(
             status_code=409 if "already running" in str(exc) else 400,
             detail=str(exc),
         ) from exc
+
+
+@app.post(
+    "/api/code/workspaces/{session_id}/validate-regression",
+    response_model=RegressionValidationReport,
+)
+def code_workspace_validate_regression(
+    session_id: str,
+    body: ValidateRegressionRequest,
+    client: Request,
+) -> RegressionValidationReport:
+    _require_local(client)
+    raw_repo = Path(body.repository)
+    legacy_roots = (
+        (_coding_session_root(raw_repo.resolve()),)
+        if (not raw_repo.is_symlink() and raw_repo.is_dir())
+        else ()
+    )
+    try:
+        return validate_workspace_regression(
+            raw_repo,
+            session_id,
+            body.test_file,
+            timeout=body.timeout,
+            workspace_manager=_CODING_WORKSPACES,
+            legacy_session_roots=legacy_roots,
+        )
+    except RegressionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RegressionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RegressionValidationError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/code/jobs", response_model=list[CodingJobResponse])
