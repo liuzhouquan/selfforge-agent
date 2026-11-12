@@ -213,8 +213,8 @@ def budget_notice(
         path = edit_failure.get("path", "")
         count = edit_failure.get("count", 2)
         content += (
-            f"Consecutive edit failures on '{path}' ({count} times): old_text did not match. "
-            f"Use read_file to inspect the exact lines and indentation of '{path}' before attempting further edits.\n"
+            f"Consecutive edit failures on '{path}' ({count} times). "
+            f"Use read_file to inspect the exact lines and indentation of '{path}' and review the tool error before further edits; respect permission and approval restrictions.\n"
         )
     if remaining_turns == 1:
         if tests_passed:

@@ -188,7 +188,7 @@ class CodingAgent:
                                    remaining_seconds=round(remaining, 3),
                                    verification_passed=tests_passed, final_only=final_only,
                                    tool_loop=loop_info["tool"] if loop_info else None,
-                                   edit_failure=edit_failure_info["path"] if edit_failure_info else None)
+                                   edit_failure_count=edit_failure_info["count"] if edit_failure_info else 0)
                 started = time.monotonic()
                 turn = self.model.complete(request_messages,
                                            [] if final_only else self.tools.schemas(),

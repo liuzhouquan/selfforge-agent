@@ -160,8 +160,8 @@ def test_budget_notice_renders_edit_failure_guidance() -> None:
         tests_passed=False,
         edit_failure={"path": "app.py", "count": 2},
     )
-    assert "Consecutive edit failures on 'app.py' (2 times): old_text did not match." in notice_with_fail["content"]
-    assert "Use read_file to inspect the exact lines and indentation of 'app.py' before attempting further edits." in notice_with_fail["content"]
+    assert "Consecutive edit failures on 'app.py' (2 times)." in notice_with_fail["content"]
+    assert "Use read_file to inspect the exact lines and indentation of 'app.py' and review the tool error before further edits; respect permission and approval restrictions." in notice_with_fail["content"]
 
 
 def test_budget_notice_suppressed_on_final_only() -> None:
@@ -260,9 +260,10 @@ def test_coding_agent_warns_on_consecutive_edit_failures_and_traces(tmp_path: Pa
     # Verify trace events recorded edit_failure correctly
     turn_budgets = [e for e in session.trace_events() if e.get("event") == "turn_budget"]
     assert len(turn_budgets) == 6
-    assert turn_budgets[0]["edit_failure"] is None
-    assert turn_budgets[1]["edit_failure"] is None
-    assert turn_budgets[2]["edit_failure"] == "app.py"
-    assert turn_budgets[3]["edit_failure"] is None
-    assert turn_budgets[4]["edit_failure"] is None
-    assert turn_budgets[5]["edit_failure"] is None
+    assert "app.py" not in json.dumps(turn_budgets)
+    assert turn_budgets[0]["edit_failure_count"] == 0
+    assert turn_budgets[1]["edit_failure_count"] == 0
+    assert turn_budgets[2]["edit_failure_count"] == 2
+    assert turn_budgets[3]["edit_failure_count"] == 0
+    assert turn_budgets[4]["edit_failure_count"] == 0
+    assert turn_budgets[5]["edit_failure_count"] == 0
