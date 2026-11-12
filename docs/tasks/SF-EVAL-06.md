@@ -1,6 +1,8 @@
 # SF-EVAL-06：增加1道真实仓库多文件修改任务的参考正负控
 
-- 状态：In Review
+> 已核对：PR #48 已合并，merge SHA `9e791cdd74920f57fa9a65347af613ba17ec51f3`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/eval-multi-file-task`
@@ -84,7 +86,7 @@
 - 补丁跨越 3 个核心源码模块（`exceptions.py`、`functions.py`、`visitor.py`）及 1 个测试文件，完全契合多文件跨模块协同修改要求。
 - 历史资产保持冻结：`suite-twenty-tasks-v2.json` 及其资产哈希未受任何影响。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：实施与全量验证已完成，PR [#48](https://github.com/liuzhouquan/selfforge-agent/pull/48) 已创建等待审查合并。
 - 当前分支：`feat/eval-multi-file-task`。主分支 `main` 保持纯净。

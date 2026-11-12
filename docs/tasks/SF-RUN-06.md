@@ -1,6 +1,8 @@
 # SF-RUN-06：上下文 Token 预算感知与高压预警引导
 
-- 状态：In Review
+> 已核对：PR #53 已合并，merge SHA `17f9d14094a707a0afe392fb86fd5aa10b2d0db1`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/runtime-token-budget-guidance`
@@ -75,7 +77,7 @@
 - 瞬态与安全不变量：高压及压缩提示仅在向模型发送请求时瞬态组装，SessionStore 持久化保存的消息绝不含瞬态提示；trace 中仅记录数值指标而不泄露文本内容。
 - 最终轮保护：final_only 轮次严格抑制上下文及工具建议，保障模型聚焦最终总结。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：实施与全量验证已完成，准备提交并创建 PR。
 - 当前分支：`feat/runtime-token-budget-guidance`。主分支 `main` 保持纯净。

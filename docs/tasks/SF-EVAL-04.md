@@ -1,6 +1,8 @@
 # SF-EVAL-04：在评测输出自动记录应用 SHA、Python/Docker 版本和生效预算/供应商配置
 
-- 状态：In Review
+> 已核对：PR #42 已合并，merge SHA `8e21c4e4b63e28a907cf948bcae7329a8936ffae`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`
 - 分支 / 所属 worktree：`feat/eval-automatic-run-provenance`
@@ -88,7 +90,7 @@
 - Git SHA 与 Docker 版本检测均具备防崩溃保护与类型规范化（小写 40 位 hex 校验）。
 - 保留所有既有评测指标与字段，不影响下游消费。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：PR 已创建（#42），CI 与评审就绪
 - 当前 HEAD：`9a9fecd`（分支提交），基于 main 基线 `602df51ccaf7e81a9eb97651a23c891516e73afc`

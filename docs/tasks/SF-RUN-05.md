@@ -1,6 +1,8 @@
 # SF-RUN-05：代码修改目标定位失败与连续重试回退指导
 
-- 状态：In Review
+> 已核对：PR #49 已合并，merge SHA `34d34681e4631a168197c6decdbe7f26b6cee292`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/runtime-edit-failure-guidance`
@@ -76,7 +78,7 @@
 3. 追踪事件无泄露：在 `turn_budget` 追踪事件中仅记录文件相对路径（如 `edit_failure="app.py"`），不记录文件内容或敏感信息。
 4. 不变量与门禁保留：不自动修改模型入参，不放宽 `old_text` 精确匹配或测试通过门禁，`final_only` 轮次下保持静默抑制。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：实施与全量验证已完成，PR [#49](https://github.com/liuzhouquan/selfforge-agent/pull/49) 已创建等待审查合并。
 - 当前分支：`feat/runtime-edit-failure-guidance`。主分支 `main` 保持纯净。

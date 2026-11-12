@@ -1,6 +1,8 @@
 # SF-WS-02：工作区孤立 Worktree 状态审计与安全批量清理
 
-- 状态：In Review
+> 已核对：PR #47 已合并，merge SHA `4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/workspace-prune-stale`
@@ -84,7 +86,7 @@
   - 使用 advisory workspace 文件锁保护并发安全。
   - 默认只清理合入 HEAD 的干净工作区，支持 `--dry-run` 与 `--include-unmerged`。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：实施与全量验证已完成，PR [#47](https://github.com/liuzhouquan/selfforge-agent/pull/47) 已创建等待审查合并。
 - 当前分支：`feat/workspace-prune-stale`。主分支 `main` 保持纯净。

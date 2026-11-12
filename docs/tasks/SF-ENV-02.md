@@ -1,6 +1,8 @@
 # SF-ENV-02：支持 Poetry 锁文件哈希识别与环境离线计划导出
 
-- 状态：In Review
+> 已核对：PR #40 已合并，merge SHA `7c836aa768c4f66a9fd2cd48d0dd4d088b27d0a1`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`7eabefc67439432001921e5dbe81aad50b2bfc18`
 - 分支 / 所属 worktree：`feat/environment-poetry-lock-support`
@@ -72,7 +74,7 @@
 - 完整保留 `uv.lock` 和 `requirements.lock` 现有兼容逻辑与优先级。
 - CLI 参数文档与提示同步更新。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：本地实现与测试完成，等待创建 PR。
 

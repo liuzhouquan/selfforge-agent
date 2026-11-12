@@ -1,6 +1,8 @@
 # SF-RUN-04：只读工具死循环检测与瞬态预算引导
 
-- 状态：In Review
+> 已核对：PR #45 已合并，merge SHA `f64a4214dc2bd94bb2438551df12c39d7eee1a22`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/runtime-tool-loop-guidance`
@@ -78,7 +80,7 @@
 
 - 待实施完成后核对。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：开始实施 TDD 测试与核心逻辑。
 

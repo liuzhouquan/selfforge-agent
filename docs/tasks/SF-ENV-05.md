@@ -1,6 +1,8 @@
 # SF-ENV-05：离线依赖 Wheelhouse 完整性审计与就绪度诊断
 
-- 状态：In Review
+> 已核对：PR #44 已合并，merge SHA `b83dc811b9e041c6c5c952e57412784ce0a35079`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`）
 - 分支 / 所属 worktree：`feat/environment-wheelhouse-audit`
@@ -81,7 +83,7 @@
 - 软链接、非法文件名、超限文件被安全拒绝或记录为 unsupported_wheels。
 - CLI `sandbox audit` 与 API `POST /api/sandbox/audit` 均已打通并包含回归测试。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：本地实现与全量测试完成，准备提交并创建 PR。
 

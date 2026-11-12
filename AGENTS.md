@@ -6,11 +6,11 @@ Current non-goals: product Multi-Agent orchestration, a general MCP platform, ex
 
 ## Start here
 
-1. Read [development guide](docs/development.md) for setup, module entry points and document authority.
-2. Read [agent workflow](docs/agent-workflow.md). Confirm checkout ownership, clean/dirty state, base SHA and open PR dependencies before editing.
-3. Use the current user task as the scope. For “continue development”, select **one** ready item from [backlog](docs/backlog.md); Roadmap entries are not an instruction to implement every planned feature.
-4. For behavior, permission or cross-module changes, fill the [task brief](docs/task-template.md) before implementation. A small documentation fix can put the same essentials in its PR description.
-5. Read the relevant sections of [engineering invariants](docs/engineering-invariants.md) and linked contracts. Do not rely on this short entry file alone when changing Runtime/Harness behavior.
+1. Read [docs/SDD.md](docs/SDD.md): the unified specification, current task queue, acceptance evidence and handoff. Start there; consult detailed contracts only for affected modules.
+2. Confirm checkout ownership, dirty state, actual origin/main SHA and open PR dependencies before editing.
+3. Use the current user task as scope. For “continue development”, take one unclaimed Ready task whose prerequisites are met from the SDD. Roadmap and historical Backlog are not active instructions.
+4. Record Owner/base/branch, acceptance IDs and evidence inside the selected SDD task section; do not create duplicate task specs. Existing docs/tasks records are historical.
+5. Read the relevant [engineering invariants](docs/engineering-invariants.md) and linked contracts before changing Runtime/Harness behavior; the SDD does not weaken them.
 
 ## Work rules
 
@@ -29,4 +29,4 @@ Current non-goals: product Multi-Agent orchestration, a general MCP platform, ex
 - Documentation-only changes: check local links, referenced code/test paths and `git diff --check`; do not rerun Python tests for prose alone. Hosted CI still runs its configured checks.
 - Record commands, actual outcomes, environment limitations and the tested SHA. Historical branch counts are not additive. Mocks do not prove live provider, Docker or GitHub execution.
 - Follow current user authorization and repository protections for push/merge. These docs neither grant remote actions nor add an extra approval layer. When integration is authorized, merge only the reviewed commit after its CI passes, preserve history, and verify the resulting main tree/status.
-- Leave the [handoff section](docs/task-template.md#handoff) with exact HEAD, completed/pending work, test evidence and the next executable step. Do not claim “done” while required task criteria remain.
+- Leave the [SDD handoff](docs/SDD.md#7-审查合并与交接) with exact HEAD, completed/pending work, test evidence and the next executable step. Do not claim “done” while required task criteria remain.

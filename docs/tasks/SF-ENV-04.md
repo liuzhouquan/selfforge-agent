@@ -1,6 +1,8 @@
 # SF-ENV-04：支持 requirements.lock / pip-compile 格式哈希识别与环境离线计划导出
 
-- 状态：In Review
+> 已核对：PR #43 已合并，merge SHA `f443acc8f9abf6b63bbc5cdbe884f6bc2ea6eba5`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`602df51ccaf7e81a9eb97651a23c891516e73afc`（`origin/main`，PR #41 合并后）
 - 分支 / 所属 worktree：`feat/environment-pip-compile-lock-support`

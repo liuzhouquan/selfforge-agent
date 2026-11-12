@@ -1,6 +1,8 @@
 # SF-RUN-03：准确记录中断、超时与异常场景下的步数归因
 
-- 状态：Ready for Review
+> 已核对：PR #39 已合并，merge SHA `071afd62dd3a4a72c7c9ebba36c613fdc9318f4e`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`7eabefc67439432001921e5dbe81aad50b2bfc18`
 - 分支：`feat/runtime-step-attribution-on-interruption`

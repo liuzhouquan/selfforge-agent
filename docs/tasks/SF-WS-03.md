@@ -1,6 +1,8 @@
 # SF-WS-03：工作区未提交改动与脏状态防覆盖防护
 
-- 状态：In Review
+> 已核对：PR #50 已合并，merge SHA `873ee43c92d0be4ec260b97bd24cfcf428863180`。以下规格/测试是历史记录；当前开发以 [SDD](../SDD.md) 为准，不重新领取本任务。
+
+- 状态：Merged（历史任务）
 - Owner：Antigravity Agent
 - 基线：`4ecd6a5d605c7f3b5b9140f00cd1a5c3f6360c7a`（`origin/main`）
 - 分支 / 所属 worktree：`feat/workspace-dirty-state-guard`
@@ -93,7 +95,7 @@
 3. 隔离模式不受干扰：`worktree` 模式作为默认策略，依然保持其分支与工作区沙盒隔离特性，原仓库脏改动不干扰新 worktree 的构建与执行。
 4. 诊断信息安全：报错与响应中仅返回受污染文件的相对路径采样，绝不泄漏代码内容或敏感凭据。
 
-## Handoff
+## 历史 Handoff（实施时记录）
 
 - 交付状态：实施与全量验证已完成，PR [#50](https://github.com/liuzhouquan/selfforge-agent/pull/50) 已创建等待审查合并。
 - 当前分支：`feat/workspace-dirty-state-guard`。主分支 `main` 保持纯净。
