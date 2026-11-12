@@ -21,9 +21,11 @@ from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
+MAX_TEST_CANDIDATE_BYTES = 8_192
+
 
 class GeneratedTest(BaseModel):
-    test_code: str = Field(min_length=20, max_length=8_192)
+    test_code: str = Field(min_length=20, max_length=MAX_TEST_CANDIDATE_BYTES)
     rationale: str = Field(min_length=1, max_length=500)
 
 
@@ -138,13 +140,22 @@ def _parse_test(arguments: str) -> GeneratedTest:
     return candidate
 
 
-def _remaining(deadline: float | None) -> float:
+def remaining_budget(
+    deadline: float | None,
+    *,
+    message: str = "Test generation time budget exhausted",
+) -> float:
+    """Return remaining monotonic seconds before *deadline*, or raise ``TimeoutError``."""
     if deadline is None:
         return float("inf")
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        raise TimeoutError("Test generation time budget exhausted")
+        raise TimeoutError(message)
     return remaining
+
+
+def _remaining(deadline: float | None) -> float:
+    return remaining_budget(deadline)
 
 
 class DifferentialTestGenerator:
