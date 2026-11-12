@@ -109,7 +109,7 @@ flowchart LR
 | 顺序 | 任务 ID | 状态 | Owner | 前提 | 交付结果 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | [SF-DEV-01](#sf-dev-01) | Ready | 未认领 | 无 | 新 checkout 与 CI 复用同一个固定评测源准备入口 |
-| 2 | [SF-DOC-01](#sf-doc-01) | In Progress | Antigravity Agent | 本 SDD | 有界 SDD 一致性检查，阻止失配状态与虚假验收引用 |
+| 2 | [SF-DOC-01](#sf-doc-01) | In Review | Antigravity Agent | 本 SDD | 有界 SDD 一致性检查，阻止失配状态与虚假验收引用（[PR #58](https://github.com/liuzhouquan/selfforge-agent/pull/58)） |
 | 3 | [SF-TEST-01](#sf-test-01) | Ready | 未认领 | 既有 Runner/worktree/指纹 | 对 Coding 修复提供独立的旧失败/新通过回归证据 |
 | 4 | [SF-EVAL-08](#sf-eval-08) | Waiting | 未认领 | SF-DEV-01；固定新策略 | 新 Runtime 的后续评测规格、冻结输入和无模型预检 |
 
@@ -144,21 +144,28 @@ flowchart LR
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-DOC-01-A1 | 当前合法 SDD 通过；重复 ID、坏状态、缺规格/验收引用均非零 | `tests/test_sdd_contract.py` 临时规格夹具，逐项反例 | 未验证；节点待实现 |
-| SF-DOC-01-A2 | 标为通过却引用不存在测试/缺验证 SHA，或 Merged 缺 PR/SHA，被拒绝 | 同文件错误夹具；不能为通过而弱化规则 | 未验证；节点待实现 |
-| SF-DOC-01-A3 | 有界读取、越界/symlink 输入失败；不运行任何文档命令 | 同文件权限/限额/副作用回归 | 未验证；节点待实现 |
-| SF-DOC-01-A4 | CI 实际运行该检查；文档明确其只检查一致性、不证明测试语义 | 实际 CI 与输出摘要 | 未验证 |
+| SF-DOC-01-A1 | 当前合法 SDD 通过；重复 ID、坏状态、缺规格/验收引用均非零 | `tests/test_sdd_contract.py` 临时规格夹具，逐项反例 | E1（本地与 CI 通过） |
+| SF-DOC-01-A2 | 标为通过却引用不存在测试/缺验证 SHA，或 Merged 缺 PR/SHA，被拒绝 | 同文件错误夹具；不能为通过而弱化规则 | E2（本地与 CI 通过） |
+| SF-DOC-01-A3 | 有界读取、越界/symlink 输入失败；不运行任何文档命令 | 同文件权限/限额/副作用回归 | E3（本地与 CI 通过） |
+| SF-DOC-01-A4 | CI 实际运行该检查；文档明确其只检查一致性、不证明测试语义 | 实际 CI 与输出摘要 | E4（本地与 CI 通过） |
 
-执行记录（Owner/状态以上表为准）：Base=`e07153e092150ab2d1f86aa98545a676836b6e14`；Branch=`feat/sf-doc-01`；Worktree=`selfforge-sf-doc-01`；PR=无。按 SF-DOC-01 实施有界 SDD 契约检查器 `scripts/check_sdd.py`，先编写失败回归再实现门禁并接入既有 CI（仅校验结构、状态与本地引用一致性，不证明测试执行或语义充分）。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-DOC-01-A1 | `tests/test_sdd_contract.py::test_current_repo_sdd_passes_and_states_consistency_only_scope`、`tests/test_sdd_contract.py::test_valid_sdd_across_statuses_tables_and_historical_snapshot_passes`、`tests/test_sdd_contract.py::test_rejects_queue_status_spec_and_link_violations`、`tests/test_sdd_contract.py::test_rejects_acceptance_id_or_table_violations`；入口 `scripts/check_sdd.py` | 本地 Linux `uv run python scripts/check_sdd.py` 与 `uv run pytest -vv tests/test_sdd_contract.py`；GitHub Actions `ubuntu-latest` `uv run --no-sync python scripts/check_sdd.py` 与 `uv run --no-sync pytest -q -m "not integration"` | 验证源码 SHA `a0739c26ca2d3fcc01dd44e9c15632b706a80235`，passed（本地 `check_sdd.py` 通过且 `tests/test_sdd_contract.py` 39 passed，全量非集成 `594 passed, 13 deselected`；CI [Run #43157245377](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43157245377) `SDD contract check` 通过、`Unit tests` `594 passed, 13 deselected`、`Docker integration tests` `13 passed, 594 deselected`） |
+| E2 | SF-DOC-01-A2 | `tests/test_sdd_contract.py::test_rejects_status_metadata_and_merge_requirements`、`tests/test_sdd_contract.py::test_rejects_fake_or_incomplete_acceptance_evidence`；入口 `scripts/check_sdd.py` | 本地 Linux `uv run pytest -vv tests/test_sdd_contract.py` 与 `uv run ruff check .`；GitHub Actions `ubuntu-latest` `uv run --no-sync ruff check .`、`uv run --no-sync python scripts/check_sdd.py`、`uv run --no-sync pytest -q -m "not integration"` | 验证源码 SHA `a0739c26ca2d3fcc01dd44e9c15632b706a80235`，passed（状态/owner/base SHA/Merged 与虚假验收反例均准确拒绝并退出码 1，`ruff check .` `All checks passed!`，`39 passed` 且 CI [Run #43157245377](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43157245377) 全绿通过） |
+| E3 | SF-DOC-01-A3 | `tests/test_sdd_contract.py::test_rejects_read_budget_exceeded_over_4mib`、`tests/test_sdd_contract.py::test_rejects_symlinks_non_regular_files_and_out_of_bounds_paths`、`tests/test_sdd_contract.py::test_does_not_execute_documented_commands_or_import_exec_network`；入口 `scripts/check_sdd.py` | 本地 Linux `uv run pytest -vv tests/test_sdd_contract.py`；GitHub Actions `ubuntu-latest` `uv run --no-sync pytest -q -m "not integration"` 与 `uv run --no-sync pytest -q -m integration` | 验证源码 SHA `a0739c26ca2d3fcc01dd44e9c15632b706a80235`，passed（4 MiB 读限额、symlink 与越界拒绝、零执行/零 exec 与网络模块导入全部 passed，CI [Run #43157245377](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43157245377) 594 单元测试 + 13 Docker 集成测试全部通过） |
+| E4 | SF-DOC-01-A4 | `tests/test_sdd_contract.py::test_ci_workflow_and_docs_declare_sdd_consistency_scope`、`tests/test_sdd_contract.py::test_current_repo_sdd_passes_and_states_consistency_only_scope`；入口 `.github/workflows/ci.yml` 与 `docs/development.md` | GitHub Actions `ubuntu-latest` 实际工作流 `.github/workflows/ci.yml`（步骤 `SDD contract check`: `uv run --no-sync python scripts/check_sdd.py`）与本地 `uv run pytest -vv tests/test_sdd_contract.py` | 验证源码 SHA `a0739c26ca2d3fcc01dd44e9c15632b706a80235`，passed（[Run #43157245377](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43157245377) 实测输出 `OK: verified 4 SDD task(s) and 15 acceptance item(s)` 且明确仅校结构、状态与本地引用一致性，不证明测试执行或语义充分） |
+
+执行记录（Owner/状态以上表为准）：Base=`e07153e092150ab2d1f86aa98545a676836b6e14`；Branch=`feat/sf-doc-01`；Worktree=`selfforge-sf-doc-01`；PR=[#58](https://github.com/liuzhouquan/selfforge-agent/pull/58)。源码、测试与 CI 门禁提交 `a0739c26ca2d3fcc01dd44e9c15632b706a80235` 已通过本地检查与 GitHub Actions [Run #43157245377](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43157245377)（`Lint`、`SDD contract check`、`Unit tests` 594 passed / 13 deselected、`Docker integration tests` 13 passed / 594 deselected）。
 
 ```text
-Owner / 状态：Antigravity Agent / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：e07153e092150ab2d1f86aa98545a676836b6e14 / feat/sf-doc-01 (worktree: selfforge-sf-doc-01) / 进行中（尚未提交源码）
-已完成验收与证据 ID：无（进行中，先写失败测试与有界 SDD 检查器）
-未完成 / 环境限制 / 未提交内容归属：待完成 scripts/check_sdd.py、tests/test_sdd_contract.py 与 CI 接入。
-PR / 准确 head CI / merge SHA（有则填）：无（尚未推送或创建 PR）
+Owner / 状态：Antigravity Agent / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：e07153e092150ab2d1f86aa98545a676836b6e14 / feat/sf-doc-01 (worktree: selfforge-sf-doc-01) / 已验证源码提交 a0739c26ca2d3fcc01dd44e9c15632b706a80235；本交接更新作为 docs-only 终版 HEAD 提交（见 PR #58 最新 HEAD 与对应 CI）
+已完成验收与证据 ID：SF-DOC-01-A1 (E1), SF-DOC-01-A2 (E2), SF-DOC-01-A3 (E3), SF-DOC-01-A4 (E4) — 在验证源码提交 a0739c26ca2d3fcc01dd44e9c15632b706a80235 上全部通过。
+未完成 / 环境限制 / 未提交内容归属：等待用户统一审阅后授权合并 PR #58（合入 main 后再置为 Merged）。本地环境无 Docker，13 个 integration 集成测试已在 GitHub Actions Ubuntu CI 运行通过。
+PR / 准确 head CI / merge SHA（有则填）：PR #58 (https://github.com/liuzhouquan/selfforge-agent/pull/58) / 源码提交 a0739c26ca2d3fcc01dd44e9c15632b706a80235 对应 Run #43157245377 (https://github.com/liuzhouquan/selfforge-agent/actions/runs/43157245377) 全绿通过（Lint All checks passed!; SDD contract check 通过; Unit tests 594 passed, 13 deselected; Docker integration tests 13 passed, 594 deselected）；docs-only 终版 HEAD 见 PR #58 最新 head CI / 无（尚未合并）
 仍在运行的本任务进程或 CI（无则写无）：无
-下一步：编写 tests/test_sdd_contract.py 失败用例并实现 scripts/check_sdd.py。
+下一步：待统一审阅并获授权后依次合并 PR #57 与 PR #58，合并前解决 SDD/CI 上下文并验证 main CI；如需继续开发与二者无先后依赖的任务，下一可领取分支为 SF-TEST-01。
 ```
 
 ### SF-TEST-01
