@@ -5,7 +5,7 @@
 
 ## Standards
 
-规范轴发现 5 项，均已修复并添加反例：
+规范轴发现 6 项，均已修复并添加反例：
 
 - #57 的 `git checkout` 可执行 smudge filter，违反只准备固定 Git 对象的边界；改为 `update-ref` / `symbolic-ref`，不检出源码。
 - #57 在普通文件检查前阻塞打开 FIFO 状态文件，绕过总预算；改用 `O_NONBLOCK` 后检查文件类型。
@@ -13,18 +13,22 @@
 - #59 把 pytest 的任意失败算作断言失败；现在要求实际断言诊断以及旧 exit 1 / 新 exit 0。
 - #59 的 Git/workspace 操作和最终指纹没有共用总预算；传递剩余 deadline，base staging 预留 0.25 秒给临时 worktree 清理，不增加执行预算。
 
+- 最终异常响应检查补充：#59 API 原样回显底层 OSError/ValueError，可泄漏私有路径；保留已分类的安全输入错误，其他错误改为固定消息。
+
 最严重项为 #57 的外部过滤器执行与 #59 的错误确认；没有把一般命名或抽象偏好列为阻断问题。
 
 ## Spec
 
-规格轴发现 4 项，均已修复：
+规格轴发现 5 项，均已修复：
 
 - #59 最终指纹扫描异常时曾重试并置 `changed=False`，可把旧失败/新通过继续标为 confirmed。现在任何快照扫描失败均返回 error/snapshot_error，保留测试摘要但撤销确认。
 - #59 非断言运行异常误确认，与规范轴重复。
 - #59 总预算缺口，与规范轴重复。
 - #58 虚假 pytest 节点误放行，与规范轴重复。
 
-最严重项为无法验证最终指纹时仍确认成功。两轴合计涉及 **6 个独立缺陷**；没有扩大产品范围。
+- 最终异常响应检查补充：私有错误正文进入 JSON，违反 SF-TEST-01 的脱敏契约，与规范轴重复。
+
+最严重项为无法验证最终指纹时仍确认成功。两轴合计涉及 **7 个独立缺陷**；没有扩大产品范围。
 
 ## 复现与验证
 
@@ -48,3 +52,7 @@
 | [#59](https://github.com/liuzhouquan/selfforge-agent/pull/59) | `9bc111cb07cb3b6b6dd8e44a7483c49e34960220` | [43189888813](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43189888813)：639 单元 + 14 Docker，通过 | `b3ad75dfdfedefcd3218f790ae26f04b086b9fc1` |
 
 不同版本的测试数量不相加。最终 main CI 结果在 PR #59 的交付描述中记录，避免为记录本次文档提交 SHA 而递归改文档。此后状态对账只改文档，源代码以组合验证版本为准。
+
+## API 脱敏补充
+
+最终边界复核又实际复现 OSError/ValueError 中的私有正文原样出现在 API JSON。修复源码 `3612563fb8876917670c45ee238128454d4c5ae1` 保留固定的输入错误分类，仅将底层未分类异常替换为 `Regression validation failed`。`tests/test_coding_regression_validation.py::test_api_sanitizes_unclassified_validation_errors` 在旧实现 2 failed、修复后 2 passed；Ruff 与空白检查通过。此前 653 项完整组合结果属于上述 `9bc111c`，不能冒充本补充的完整验证；本补充的准确 head CI、完整组合与最终 main CI 统一记录到 [PR #59 交付描述](https://github.com/liuzhouquan/selfforge-agent/pull/59)。该补充仍属于同一审查任务，不新增产品能力。
