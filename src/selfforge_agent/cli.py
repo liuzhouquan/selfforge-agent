@@ -170,12 +170,13 @@ def _validate_cli_output_target(path: Path) -> Path:
 def _write_cli_output(path: Path, content: str) -> None:
     """Write CLI export content safely without following symlinks or special files."""
     target = _validate_cli_output_target(path)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(target, flags, 0o644)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError(f"Output path is not a regular file: {path}")
+        os.ftruncate(fd, 0)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = -1
             handle.write(content)

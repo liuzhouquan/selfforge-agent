@@ -262,3 +262,45 @@ def test_cli_outputs_fail_closed_for_symlinks_directories_and_missing_parents(
 
     assert target_real.read_text(encoding="utf-8") == "KEEP_ME"
     capsys.readouterr()
+
+
+def test_trace_export_rejects_fifo_replacement_without_blocking(tmp_path: Path) -> None:
+    import stat
+    import sys
+
+    repo = _init_repo(tmp_path)
+    output = tmp_path / 'output.json'
+    output.write_text('keep')
+    script = r'''
+import os, sys
+from pathlib import Path
+from selfforge_agent import cli
+real_open = os.open
+target = Path(sys.argv[2])
+def replace_before_open(path, flags, *args, **kwargs):
+    if Path(path) == target:
+        target.unlink()
+        os.mkfifo(target)
+    return real_open(path, flags, *args, **kwargs)
+os.open = replace_before_open
+cli.main(['trace', 'raceexport', '--repo', sys.argv[1], '--json', '--output', str(target)])
+'''
+    result = subprocess.run(
+        [sys.executable, '-c', script, str(repo), str(output)],
+        capture_output=True, text=True, timeout=3, check=False,
+    )
+    assert result.returncode == 2
+    assert stat.S_ISFIFO(output.lstat().st_mode)
+
+
+def test_export_checks_descriptor_before_truncation(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from selfforge_agent import cli
+
+    output = tmp_path / 'preserved.json'
+    output.write_text('keep existing content')
+    monkeypatch.setattr(cli.os, 'fstat', lambda _fd: SimpleNamespace(st_mode=0))
+    with pytest.raises(ValueError, match='regular file'):
+        cli._write_cli_output(output, '{}')
+    assert output.read_text() == 'keep existing content'
