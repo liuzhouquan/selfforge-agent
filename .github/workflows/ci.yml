@@ -36,13 +36,26 @@ jobs:
       - name: Unit tests
         run: uv run --no-sync pytest -q -m "not integration"
 
-      - name: Build sandbox image
-        run: docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
+      - name: Build sandbox and locked dependency images
+        run: |
+          docker build -t selfforge-agent-sandbox:latest -f docker/Dockerfile .
+          mkdir -p .local/wheelhouse/itsdangerous
+          uv tool run --from pip pip download \
+            --index-url https://pypi.org/simple \
+            --only-binary=:all: \
+            --require-hashes \
+            --dest .local/wheelhouse/itsdangerous \
+            -r docker/profiles/itsdangerous.lock
+          uv run --no-sync selfforge-agent sandbox build \
+            --requirements docker/profiles/itsdangerous.lock \
+            --wheelhouse .local/wheelhouse/itsdangerous \
+            --base-image selfforge-agent-sandbox:latest \
+            --tag selfforge-itsdangerous:locked > .local/itsdangerous-image.json
 
-      - name: Provision pinned multi-file candidate sources
-        run: uv run --no-sync python scripts/prepare_eval_sources.py
+      - name: Provision pinned evaluation sources
+        run: uv run --no-sync python scripts/prepare_eval_sources.py --profile v3
 
       - name: Docker integration tests
         env:
           SELFFORGE_EVAL_IMAGE: selfforge-agent-sandbox:latest
-        run: uv run --no-sync pytest -q -m integration
+        run: uv run --no-sync pytest -q -s -m integration
