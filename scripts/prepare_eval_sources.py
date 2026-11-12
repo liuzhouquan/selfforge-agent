@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Provision pinned evaluation source repositories without executing repository code."""
 
 from __future__ import annotations
