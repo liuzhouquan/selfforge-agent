@@ -14,6 +14,7 @@ let codingJobRunning = false;
 let codingPollTimer = null;
 let codingDiffJobId = null;
 let codingRegressionRunning = false;
+let codingRegressionGeneration = 0;
 let codingRegressionJobId = null;
 
 function providerLabel(name) {
@@ -93,6 +94,7 @@ function refreshCodingAvailability() {
 }
 
 function resetCodingRegressionState(statusMessage = "") {
+  codingRegressionGeneration += 1;
   codingRegressionRunning = false;
   $("coding-regression-result").hidden = true;
   $("coding-regression-result").replaceChildren();
@@ -342,6 +344,8 @@ $("coding-form").addEventListener("submit", async (event) => {
   }
   const host = $("coding-sandbox").value === "host";
   codingJobRunning = true;
+  resetCodingRegressionState();
+  refreshCodingRegressionAvailability();
   refreshCodingAvailability();
   try {
     const job = await postJson("/api/code/jobs", {
@@ -364,6 +368,7 @@ $("coding-form").addEventListener("submit", async (event) => {
     showCodingError(error.message);
     codingJobRunning = false;
     refreshCodingAvailability();
+    refreshCodingRegressionAvailability();
   }
 });
 
@@ -431,10 +436,15 @@ $("coding-revert-workspace").addEventListener("click", async () => {
   const btn = $("coding-revert-workspace");
   btn.disabled = true;
   btn.textContent = "正在还原…";
+  resetCodingRegressionState();
+  refreshCodingRegressionAvailability();
+  const mutationJobId = activeCodingJob;
+  const mutationSession = currentCodingSession;
   try {
     const res = await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/revert`, {
       repository: currentCodingRepo,
     });
+    if (mutationJobId !== activeCodingJob || mutationSession !== currentCodingSession) return;
     resetCodingRegressionState("工作区已还原，之前的回归验证结果已失效；如有需要请重新运行。");
     refreshCodingRegressionAvailability();
     loadCodingDiff();
@@ -450,10 +460,15 @@ $("coding-revert-workspace").addEventListener("click", async () => {
 $("coding-remove-workspace").addEventListener("click", async () => {
   if (!currentCodingSession || !currentCodingRepo || !currentCodingBranch) return;
   showCodingError("");
+  resetCodingRegressionState();
+  refreshCodingRegressionAvailability();
+  const mutationJobId = activeCodingJob;
+  const mutationSession = currentCodingSession;
   try {
     await postJson(`/api/code/workspaces/${encodeURIComponent(currentCodingSession)}/remove`, {
       repository: currentCodingRepo,
     });
+    if (mutationJobId !== activeCodingJob || mutationSession !== currentCodingSession) return;
     $("coding-workspace-info").textContent += " · 工作区已清理，分支仍保留";
     $("coding-remove-workspace").hidden = true;
     $("coding-resume-current").hidden = true;
@@ -491,6 +506,9 @@ $("coding-regression-form").addEventListener("submit", async (event) => {
   }
   const requestJobId = activeCodingJob;
   const requestSession = currentCodingSession;
+  const requestGeneration = ++codingRegressionGeneration;
+  const isCurrentRequest = () => requestGeneration === codingRegressionGeneration &&
+    requestJobId === activeCodingJob && requestSession === currentCodingSession;
   codingRegressionRunning = true;
   $("coding-regression-result").hidden = true;
   statusEl.textContent = "正在隔离运行 Base 与当前工作区对照验证…";
@@ -501,17 +519,17 @@ $("coding-regression-form").addEventListener("submit", async (event) => {
       `/api/code/workspaces/${encodeURIComponent(requestSession)}/validate-regression`,
       { repository: currentCodingRepo, test_file: testFile, timeout },
     );
-    if (requestJobId !== activeCodingJob || requestSession !== currentCodingSession) return;
+    if (!isCurrentRequest()) return;
     renderCodingRegressionReport(report);
     statusEl.textContent = `独立回归验证完成：${regressionStatusLabel(report.status)}（不改变 Coding 测试验证标记）。`;
     statusEl.hidden = false;
   } catch (error) {
-    if (requestJobId !== activeCodingJob || requestSession !== currentCodingSession) return;
+    if (!isCurrentRequest()) return;
     $("coding-regression-result").hidden = true;
     statusEl.textContent = `回归验证失败：${error.message}`;
     statusEl.hidden = false;
   } finally {
-    if (requestJobId === activeCodingJob && requestSession === currentCodingSession) {
+    if (isCurrentRequest()) {
       codingRegressionRunning = false;
       refreshCodingRegressionAvailability();
     }

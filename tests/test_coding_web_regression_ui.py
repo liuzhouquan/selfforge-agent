@@ -887,3 +887,45 @@ def test_web_ui_roundtrips_fastapi_validate_regression_endpoint(
     assert "未运行" in str(outcome["resultText"])
     assert "999988887777" in str(outcome["resultText"])
 
+
+
+@pytest.mark.parametrize('invalidate', ['switch_back', 'revert', 'remove', 'start_job'])
+@pytest.mark.parametrize('reject', [False, True])
+def test_regression_responses_cannot_survive_invalidation(invalidate: str, reject: bool) -> None:
+    scenario = r'''
+    const job = (id) => ({job_id:id, session_id:id, repository:'/tmp/repo',
+      workspace_path:'/tmp/wt', branch:'selfforge/'+id, base_sha:'abc123',
+      sandbox:'docker', state:'unverified', answer:'Done', steps:1, tools_used:1,
+      trace:[], can_resume:true, verification_passed:false});
+    let finish;
+    setFetchHandler(async (url) => {
+      if (url.includes('validate-regression')) return new Promise(resolve => { finish=resolve; });
+      if (url.includes('/revert')) return {ok:true, json:async()=>({reverted_files:[]})};
+      if (url === '/api/code/jobs') return {ok:false, json:async()=>({detail:'job rejected'})};
+      return {ok:true, json:async()=>({files:[], omitted_files:0})};
+    });
+    renderCodingJob(job('a'));
+    $('coding-regression-test-file').value='tests/test_fix.py';
+    $('coding-regression-timeout').value='30';
+    const pending=$('coding-regression-form').dispatchEventAsync({type:'submit'});
+    await flushMicrotasks();
+    const action=__ACTION__;
+    if(action === 'switch_back') {renderCodingJob(job('b'));renderCodingJob(job('a'));}
+    if(action === 'revert') await $('coding-revert-workspace').dispatchEventAsync({type:'click'});
+    if(action === 'remove') await $('coding-remove-workspace').dispatchEventAsync({type:'click'});
+    if(action === 'start_job') {
+      $('coding-task-text').value='new change';
+      await $('coding-form').dispatchEventAsync({type:'submit'});
+    }
+    const before=$('coding-regression-status').textContent;
+    finish({ok:!__REJECT__, json:async()=> __REJECT__ ? {detail:'STALE_ERROR'} : ({
+      status:'confirmed', reason:'base_failed_repaired_passed', session_id:'a', base_sha:'abc123',
+      workspace_sha256:'a'.repeat(64), test_sha256:'b'.repeat(64), base_result:null,repaired_result:null})});
+    await pending;
+    return {hidden:$('coding-regression-result').hidden,
+      statusUnchanged:before === $('coding-regression-status').textContent};
+    '''
+    scenario = scenario.replace('__ACTION__', json.dumps(invalidate)).replace('__REJECT__', json.dumps(reject))
+    outcome = _run_app_js_scenario(scenario)
+    assert outcome['hidden'] is True
+    assert outcome['statusUnchanged'] is True
