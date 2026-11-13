@@ -118,7 +118,7 @@ flowchart LR
 | 8 | [SF-EVAL-09](#sf-eval-09) | Merged | Codex（审查整合） | SF-EVAL-08 / SF-WS-05（Merged） | [PR #65](https://github.com/liuzhouquan/selfforge-agent/pull/65)：CLI `eval-suite` / `eval-validate` 接入 `--policy` 冻结策略强校验、预算门禁与安全导出（`_write_cli_output`） |
 | 9 | [SF-ENV-07](#sf-env-07) | Merged | Codex（审查整合） | SF-WS-05 / SF-ENV-06（Merged） | [PR #66](https://github.com/liuzhouquan/selfforge-agent/pull/66)：CLI `sandbox` 诊断与规划命令补齐结构化安全导出（`--json` / `--output`）与 `export-lock` 安全写盘 |
 | 10 | [SF-TEST-03](#sf-test-03) | Merged | Codex（审查整合） | SF-TEST-02 / SF-WS-05（Merged） | [PR #67](https://github.com/liuzhouquan/selfforge-agent/pull/67)：SessionStore 补齐回归验证记录追溯与 GET /api/code/workspaces/{session_id}/regression 只读接口，并在 PR 交付中绑定回归验证证据 |
-| 11 | [SF-CLI-01](#sf-cli-01) | In Progress | Antigravity | SF-WS-05 / SF-ENV-07（Merged） | CLI review / repair / generate-test 补齐安全落盘防符链穿透与结构化 --json 导出对齐 |
+| 11 | [SF-CLI-01](#sf-cli-01) | In Review | Antigravity | SF-WS-05 / SF-ENV-07（Merged） | [PR #69](https://github.com/liuzhouquan/selfforge-agent/pull/69)：CLI `review` / `repair` / `generate-test` 安全落盘防符链穿透与结构化 `--json` 导出对齐 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -548,21 +548,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #67 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-CLI-01-A1 | `selfforge-agent review --json`、`repair --json` 与 `generate-test --json` 输出纯结构化 JSON，不混入人类交互文本；不带 `--json` 保持原有标准输出与退出码语义 | CLI 子进程与命令参数正反对照测试 | 未验证（开发中） |
-| SF-CLI-01-A2 | `review --output`、`repair --output`、`repair --patch-output`、`generate-test --output` 与 `generate-test --test-output` 统一复用 `_validate_cli_output_target` 与 `_write_cli_output` 安全写入常规文件 | CLI 导出文件内容与完整序列化断言 | 未验证（开发中） |
-| SF-CLI-01-A3 | 针对符号链接目标、目录、FIFO 等非常规文件以及缺失父目录的目标路径均提前 fail-closed 报错并以非零码退出，不破坏、覆写已有目标或跟随符号链接 | 负路径（symlink/directory/fifo/missing-parent）安全隔离测试 | 未验证（开发中） |
-| SF-CLI-01-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证（开发中） |
+| SF-CLI-01-A1 | `selfforge-agent review --json`、`repair --json` 与 `generate-test --json` 输出纯结构化 JSON，不混入人类交互文本；不带 `--json` 保持原有标准输出与退出码语义 | CLI 子进程与命令参数正反对照测试 | E1 |
+| SF-CLI-01-A2 | `review --output`、`repair --output`、`repair --patch-output`、`generate-test --output` 与 `generate-test --test-output` 统一复用 `_validate_cli_output_target` 与 `_write_cli_output` 安全写入常规文件 | CLI 导出文件内容与完整序列化断言 | E2 |
+| SF-CLI-01-A3 | 针对符号链接目标、目录、FIFO 等非常规文件以及缺失父目录的目标路径均提前 fail-closed 报错并以非零码退出，不破坏、覆写已有目标或跟随符号链接 | 负路径（symlink/directory/fifo/missing-parent）安全隔离测试 | E3 |
+| SF-CLI-01-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-cli-01`；Worktree=`selfforge-sf-cli-01`。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CLI-01-A1 | `tests/test_cli_review_repair_export.py::test_cli_review_json_flag_and_safe_output`、`tests/test_cli_review_repair_export.py::test_cli_repair_rejects_symlinks_and_supports_json_export`、`tests/test_cli_review_repair_export.py::test_cli_generate_test_rejects_symlinks_and_supports_json_export` | CLI review、repair 与 generate-test 独立子进程与 `--json` 命令行参数；验证无 flag 时人类可读终端文本、带 `--json` 输出纯结构化 JSON；[PR #69](https://github.com/liuzhouquan/selfforge-agent/pull/69) | 源码 SHA `b8fd21f2bb872fa82d77494a8bc983b63cc682c3`；passed；CI [Run #43386721038](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43386721038) success |
+| E2 | SF-CLI-01-A2 | `tests/test_cli_review_repair_export.py::test_cli_review_json_flag_and_safe_output`、`tests/test_cli_review_repair_export.py::test_cli_repair_rejects_symlinks_and_supports_json_export`、`tests/test_cli_review_repair_export.py::test_cli_generate_test_rejects_symlinks_and_supports_json_export` | 统一迁移 `review --output`、`repair --output`、`repair --patch-output`、`generate-test --output`、`generate-test --test-output` 至 `_write_cli_output` 安全落盘；断言落盘文件完整内容与模型 dump 一致；[PR #69](https://github.com/liuzhouquan/selfforge-agent/pull/69) | 源码 SHA `b8fd21f2bb872fa82d77494a8bc983b63cc682c3`；passed；CI [Run #43386721038](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43386721038) success |
+| E3 | SF-CLI-01-A3 | `tests/test_cli_review_repair_export.py::test_cli_review_rejects_symlinks_directories_and_missing_parents`、`tests/test_cli_review_repair_export.py::test_cli_repair_rejects_symlinks_and_supports_json_export`、`tests/test_cli_review_repair_export.py::test_cli_generate_test_rejects_symlinks_and_supports_json_export` | 针对预先存在的符号链接、目录目标、以及缺失父目录路径，提前于模型调用与重度执行前执行 `_validate_cli_output_target` fail-closed 拦截，断言退出码为 2 且原目标文件未被修改破坏；[PR #69](https://github.com/liuzhouquan/selfforge-agent/pull/69) | 源码 SHA `b8fd21f2bb872fa82d77494a8bc983b63cc682c3`；passed；CI [Run #43386721038](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43386721038) success |
+| E4 | SF-CLI-01-A4 | `tests/test_cli_review_repair_export.py::test_cli_review_json_flag_and_safe_output` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -q -m "not integration"`（730 passed）及 GitHub Actions CI（包含 Docker 集成测试） | 源码 SHA `b8fd21f2bb872fa82d77494a8bc983b63cc682c3`；passed；CI [Run #43386721038](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43386721038) success |
+
+执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-cli-01`；Worktree=`selfforge-sf-cli-01`；PR=[#69](https://github.com/liuzhouquan/selfforge-agent/pull/69)。实现 review、repair 与 generate-test 子命令安全落盘防符链穿透与 `--json` 结构化导出对齐（源码提交 `b8fd21f2bb872fa82d77494a8bc983b63cc682c3`，[R1 CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43386721038) 全绿）；本状态提交更新文档，最终 head `H` CI 待回填。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-cli-01 (worktree: selfforge-sf-cli-01) / 开发中
-已完成验收与证据 ID：无（开发中）
-未完成 / 环境限制 / 未提交内容归属：SF-CLI-01-A1..A4（开发中）
-PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-cli-01 (worktree: selfforge-sf-cli-01) / 已验证源码 b8fd21f2bb872fa82d77494a8bc983b63cc682c3
+已完成验收与证据 ID：SF-CLI-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无
+PR / 准确 head CI / merge SHA（有则填）：PR #69 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43386721038 / 待合并
 仍在运行的本任务进程或 CI（有则填）：无
-下一步：编写 SF-CLI-01 失败复现测试并在 cli.py 中实现安全落盘与 --json 结构化导出
+下一步：等待审阅整合或继续并行认领独立任务
 ```
 
 ## 5. 验收追踪与执行记录格式
