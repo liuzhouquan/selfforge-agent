@@ -114,6 +114,7 @@ flowchart LR
 | 4 | [SF-EVAL-08](#sf-eval-08) | Merged | Codex（审查整合） | SF-DEV-01；策略已冻结 | [PR #61](https://github.com/liuzhouquan/selfforge-agent/pull/61)：新 Runtime 22 题 v3 评测规格、冻结输入与无模型 Docker 预检 |
 | 5 | [SF-TEST-02](#sf-test-02) | Merged | Codex（审查整合） | SF-TEST-01（Merged） | [PR #62](https://github.com/liuzhouquan/selfforge-agent/pull/62)：Web Coding 工作台接入独立回归验证面板、状态门槛与结构化证据展示 |
 | 6 | [SF-WS-05](#sf-ws-05) | Merged | Codex（审查整合） | SF-WS-04 / SF-TEST-01（Merged） | [PR #63](https://github.com/liuzhouquan/selfforge-agent/pull/63)：修复 `/api/workspaces/storage` 管理器复用不一致并补齐 CLI `trace` / `test-regression` 安全结构化导出 |
+| 7 | [SF-EVAL-09](#sf-eval-09) | In Progress | Antigravity | SF-EVAL-08 / SF-WS-05（Merged） | CLI `eval-suite` / `eval-validate` 接入 `--policy` 冻结策略强校验、预算门禁与安全导出（`_write_cli_output`） |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -367,6 +368,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #63 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227（组合 head；各源 PR head CI 见审查记录） / 473f04d9f8d8b394801b86a6f9f6e9a386821274
 仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 的准确结果回填 PR #63 交付描述
 下一步：后续真实模型测量需另行明确执行任务并遵守 v3 冻结策略与预算，当前未运行该测量。
+```
+
+### SF-EVAL-09
+
+**目标：** 为 CLI `eval-suite` 与 `eval-validate` 接入 `--policy PATH` 参数（与 `--manifest` 互斥），在预检与评测启动前调用 `verify_eval_policy_bundle` 执行 fail-closed 强校验，并严格约束 CLI 参数不得与策略冲突（包括 `provider`、`model`、`base_url`、`fallback`、`repeats`、`max_steps`、`time_budget`、`test_timeout`、`sandbox`）；在报告中注入策略与资产 Provenance 元数据；并将 `eval-suite`、`eval-validate`、`eval-diff` 的 `--output` 写入统一接入 `_write_cli_output` 安全校验（防御符号链接、目录、FIFO 特殊文件与缺失父目录）。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/cli.py`（参数定义与 `eval-suite`、`eval-validate`、`eval-diff` 处理逻辑）、`src/selfforge_agent/runtime/eval_policy.py`（如增加策略 CLI 校验与元数据注入 helper）及专项测试 `tests/test_eval_policy_cli.py`；不执行付费模型调用（纯离线 / mock / 本地 Docker 预检），不改动 Web 工作台或通用 Coding 循环。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-EVAL-09-A1 | `selfforge-agent eval-validate --policy PATH`：调用 `verify_eval_policy_bundle`，若策略损坏/哈希篡改/资产缺失则 fail-closed 退出且不启动执行；有效策略自动提取 manifest 与 image profile 运行 `validate_suite`，输出报告中包含 `policy_path`、`policy_sha256`、`suite_id`、`manifest_sha256` 与 `assets_inventory_sha256` | CLI 子进程与真实 policy bundle 测试（正反例） | 未验证（开发中） |
+| SF-EVAL-09-A2 | `selfforge-agent eval-suite --policy PATH`：自动对齐策略环境（`sandbox="docker"`）、预算（`repeats`、`max_steps`、`time_budget`、`test_timeout`）及供应商配置；若传入冲突参数（如 `--sandbox host`、越界 `--repeats`、冲突 `--provider` 等）则在构造模型前 fail-closed 拦截并给出明确原因；报告中包含完整策略 provenance | CLI 参数门禁单元测试与错误路径断言 | 未验证（开发中） |
+| SF-EVAL-09-A3 | `eval-suite`、`eval-validate`、`eval-diff` 的 `--output PATH` 统一复用 `_write_cli_output`：对符号链接目标、目录/FIFO 非常规文件、缺失父目录均提前 fail-closed 拒绝且不破坏既有文件；常规合法目标正常导出 UTF-8 JSON / 文本 | 三入口 symlink/FIFO/directory fail-closed 测试 | 未验证（开发中） |
+| SF-EVAL-09-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试通过，CI 全绿 | 本地验证命令矩阵 + CI | 未验证（开发中） |
+
+执行记录（Owner/状态以上表为准）：Base=`60a1b386cda8f811be1edb5b7baf9e433a894c58`；Branch=`feat/sf-eval-09`；Worktree=`selfforge-sf-eval-09`。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：60a1b386cda8f811be1edb5b7baf9e433a894c58 / feat/sf-eval-09 (worktree: selfforge-sf-eval-09) / 开发中
+已完成验收与证据 ID：无（开发中）
+未完成 / 环境限制 / 未提交内容归属：SF-EVAL-09-A1..A4（开发中）
+PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+仍在运行的本任务进程或 CI（有则填）：无
+下一步：编写 SF-EVAL-09 失败复用测试并在源码分支实现 eval-suite/eval-validate 策略门禁与安全导出
 ```
 
 ## 5. 验收追踪与执行记录格式
