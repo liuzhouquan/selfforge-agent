@@ -1,14 +1,21 @@
 """Append-only local sessions and metadata-only execution traces."""
 
 import fcntl
+import io
 import json
+import math
 import os
 import re
+import stat
 from collections import deque
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
+
+MAX_REGRESSION_BYTES = 4 * 1024 * 1024
+MAX_REGRESSION_LINE_BYTES = 16 * 1024
+MAX_REGRESSION_EVENTS = 10000
 
 
 class SessionStore:
@@ -131,36 +138,109 @@ class SessionStore:
                             and re.fullmatch(r"[0-9a-f]{64}", candidate) else None)
         return snapshot
 
+    def _regression_journal(self, limit: int | None = None) -> tuple[list[dict], dict | None]:
+        """Read bounded, committed and sanitized history; uncertainty revokes latest evidence."""
+        if limit is not None and (type(limit) is not int or limit <= 0):
+            raise ValueError("Limit must be a positive integer")
+        path = self.path.with_name(f"{self.session_id}.regression.jsonl")
+        fd = None
+        try:
+            if any(part.is_symlink() for part in (path, *path.parents)):
+                return [], None
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_REGRESSION_BYTES:
+                return [], None
+            chunks = []
+            total = 0
+            while total <= MAX_REGRESSION_BYTES:
+                chunk = os.read(fd, min(65536, MAX_REGRESSION_BYTES + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            after = os.stat(path, follow_symlinks=False)
+            if (total > MAX_REGRESSION_BYTES or not stat.S_ISREG(after.st_mode)
+                    or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
+                return [], None
+        except OSError:
+            return [], None
+        finally:
+            if fd is not None:
+                os.close(fd)
+        records: deque[dict] = deque(maxlen=min(limit or MAX_REGRESSION_EVENTS, MAX_REGRESSION_EVENTS))
+        latest = None
+        for index, line in enumerate(io.BytesIO(b"".join(chunks))):
+            if index >= MAX_REGRESSION_EVENTS:
+                return [], None
+            if not line.endswith(b"\n") or len(line) > MAX_REGRESSION_LINE_BYTES:
+                return list(records), None
+            try:
+                latest = self._sanitize_regression(json.loads(line))
+            except (ValueError, TypeError, UnicodeError, RecursionError):
+                latest = None
+            if latest is not None:
+                records.append(latest)
+        return list(records), latest
+
+    def _sanitize_regression(self, event: object) -> dict | None:
+        # Imported lazily because the validation service itself uses SessionStore.
+        from selfforge_agent.coding.regression_validation import RegressionValidationReport
+
+        if not isinstance(event, dict):
+            return None
+        report = RegressionValidationReport.model_validate(event, strict=True)
+        if (report.session_id != self.session_id
+                or not re.fullmatch(r"[0-9a-f]{40}", report.base_sha)
+                or not re.fullmatch(r"[0-9a-f]{64}", report.test_sha256)
+                or not (re.fullmatch(r"[0-9a-f]{64}", report.workspace_sha256)
+                        or (report.status == "error" and report.workspace_sha256 == ""))):
+            return None
+        for summary in (report.base_result, report.repaired_result):
+            if summary is not None and (
+                min(summary.passed, summary.failed, summary.errors, summary.skipped) < 0
+                or not math.isfinite(summary.duration_seconds) or summary.duration_seconds < 0
+            ):
+                return None
+        if report.status == "confirmed":
+            if report.reason != "base_failed_repaired_passed":
+                return None
+            # Legacy metadata lacks summaries. Preserve its explicit historical status;
+            # new records must retain the complete pair, never invent missing counts.
+            if (report.base_result is None) != (report.repaired_result is None):
+                return None
+            if report.base_result is None:
+                if event.get("base_status") != "failed" or event.get("repaired_status") != "passed":
+                    return None
+            else:
+                base, repaired = report.base_result, report.repaired_result
+                if (base.status != "failed" or base.exit_code != 1 or base.failed <= 0 or base.errors
+                        or repaired.status != "passed" or repaired.exit_code != 0
+                        or repaired.passed <= 0 or repaired.failed or repaired.errors or repaired.skipped):
+                    return None
+        result = report.model_dump()
+        for name in ("at", "timestamp"):
+            if isinstance(event.get(name), str):
+                try:
+                    result[name] = datetime.fromisoformat(event[name]).isoformat()
+                except ValueError:
+                    pass
+        return result
+
     def regression_records(self, limit: int | None = None) -> list[dict]:
-        if limit is not None and limit <= 0:
-            raise ValueError("Limit must be positive")
-        reg_path = self.path.with_name(f"{self.session_id}.regression.jsonl")
-        if not reg_path.is_file():
-            return []
-        records: deque[dict] = deque(maxlen=limit)
-        for event in self._complete_events(reg_path):
-            records.append(event)
-        return list(records)
+        return self._regression_journal(limit)[0]
 
     def latest_regression_record(self) -> dict | None:
-        records = self.regression_records(limit=1)
-        return records[0] if records else None
+        return self._regression_journal(limit=1)[1]
 
-    def confirmed_regression_snapshot(self) -> str | None:
-        reg_path = self.path.with_name(f"{self.session_id}.regression.jsonl")
-        if not reg_path.is_file():
+    def confirmed_regression_snapshot(self, *, base_sha: str | None = None) -> str | None:
+        record = self.latest_regression_record()
+        if (record is None or record["status"] != "confirmed"
+                or (base_sha is not None and record["base_sha"] != base_sha)):
             return None
-        snapshot = None
-        for event in self._complete_events(reg_path):
-            candidate = event.get("workspace_sha256")
-            snapshot = (
-                candidate
-                if event.get("status") == "confirmed"
-                and isinstance(candidate, str)
-                and re.fullmatch(r"[0-9a-f]{64}", candidate)
-                else None
-            )
-        return snapshot
+        return record["workspace_sha256"]
 
     def trace(self, event: str, **fields: object) -> None:
         self._append(self.trace_path, {"event": event, **fields})

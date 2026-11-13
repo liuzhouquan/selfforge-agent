@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from threading import Event
 from typing import Any, Literal
@@ -79,7 +80,7 @@ from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
-from selfforge_agent.runtime.workspace import CodingWorkspaceManager
+from selfforge_agent.runtime.workspace import CodingWorkspaceManager, WorkspaceError
 from selfforge_agent.runtime.workspace_diff import DiffLimitError, workspace_diff
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
@@ -740,19 +741,20 @@ def code_workspace_get_regression(
     client: Request,
 ) -> RegressionValidationReport:
     _require_local(client)
-    raw_repo = Path(repository)
-    if not session_id or not session_id.isalnum():
+    if not re.fullmatch(r"[A-Za-z0-9]{1,64}", session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID")
-    repo = raw_repo.expanduser().resolve()
-    if not repo.is_dir() or not (repo / ".git").exists():
-        raise HTTPException(status_code=400, detail="Invalid repository root")
-    session_root = _CODING_WORKSPACES.session_root(
-        repo,
-        session_id,
-        legacy_roots=(_coding_session_root(repo), repo),
-    )
-    store = SessionStore(session_root, session_id)
-    latest = store.latest_regression_record()
+    try:
+        repo = _CODING_WORKSPACES.validate_repository(Path(repository))
+        session_root = _CODING_WORKSPACES.session_root(
+            repo, session_id, legacy_roots=(_coding_session_root(repo), repo),
+        )
+        directory = session_root / ".selfforge" / "sessions"
+        if not directory.is_dir():
+            raise HTTPException(status_code=404, detail="No regression validation record")
+        store = SessionStore(session_root, session_id)
+        latest = store.latest_regression_record()
+    except (ValueError, OSError, WorkspaceError):
+        raise HTTPException(status_code=400, detail="Invalid repository or regression storage") from None
     if latest is None:
         raise HTTPException(
             status_code=404,

@@ -803,6 +803,14 @@ def test_real_docker_regression_validation_confirmed_and_counterexample(
     assert payload["base_result"]["failed"] == 1
     assert payload["repaired_result"]["passed"] == 1
 
+    # The durable GET must return the same sanitized report, including real Docker summaries.
+    restored = TestClient(api_module.app).get(
+        f"/api/code/workspaces/{workspace.session_id}/regression",
+        params={"repository": str(repo)},
+    )
+    assert restored.status_code == 200
+    assert restored.json() == payload
+
     # Negative check via API in real Docker containers.
     (repo / "test_tautology.py").write_text("def test_tautology():\n    assert 1 == 1\n", encoding="utf-8")
     client = TestClient(api_module.app)

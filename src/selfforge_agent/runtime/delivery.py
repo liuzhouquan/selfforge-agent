@@ -234,7 +234,8 @@ def _verified_commit(workspace: CodingWorkspace, session: SessionStore | None,
 
 def _verified_regression(workspace: CodingWorkspace, session: SessionStore | None,
                          commit_sha: str) -> bool:
-    saved = session.confirmed_regression_snapshot() if session is not None else None
+    saved = (session.confirmed_regression_snapshot(base_sha=workspace.base_sha)
+             if session is not None and session.session_id == workspace.session_id else None)
     if saved is None:
         return False
     try:

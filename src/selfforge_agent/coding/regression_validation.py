@@ -516,13 +516,8 @@ def _record_validation_metadata(
     report: RegressionValidationReport,
 ) -> None:
     payload = {
+        **report.model_dump(),
         "timestamp": datetime.now(UTC).isoformat(),
-        "status": report.status,
-        "reason": report.reason,
-        "session_id": report.session_id,
-        "base_sha": report.base_sha,
-        "workspace_sha256": report.workspace_sha256,
-        "test_sha256": report.test_sha256,
         "base_status": report.base_result.status if report.base_result else None,
         "repaired_status": report.repaired_result.status if report.repaired_result else None,
     }

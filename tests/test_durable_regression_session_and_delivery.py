@@ -33,7 +33,7 @@ def test_session_store_regression_records_and_snapshot(tmp_path: Path) -> None:
             "session_id": session.session_id,
             "base_sha": "0" * 40,
             "workspace_sha256": "a" * 64,
-            "test_sha256": "t1" * 32,
+            "test_sha256": "1" * 64,
         },
     )
 
@@ -49,10 +49,11 @@ def test_session_store_regression_records_and_snapshot(tmp_path: Path) -> None:
         {
             "status": "confirmed",
             "reason": "base_failed_repaired_passed",
+            "base_status": "failed", "repaired_status": "passed",
             "session_id": session.session_id,
             "base_sha": "0" * 40,
             "workspace_sha256": "b" * 64,
-            "test_sha256": "t2" * 32,
+            "test_sha256": "2" * 64,
         },
     )
 
@@ -69,23 +70,31 @@ def test_session_store_regression_records_and_snapshot(tmp_path: Path) -> None:
     SessionStore._append(
         reg_path,
         {
-            "status": "rejected",
-            "reason": "both_failed",
+            "status": "error",
+            "reason": "snapshot_error",
             "session_id": session.session_id,
             "base_sha": "0" * 40,
             "workspace_sha256": "c" * 64,
-            "test_sha256": "t3" * 32,
+            "test_sha256": "3" * 64,
         },
     )
     assert len(session.regression_records()) == 3
-    assert session.latest_regression_record()["status"] == "rejected"
+    assert session.latest_regression_record()["status"] == "error"
     assert session.confirmed_regression_snapshot() is None
 
 
-def test_api_get_workspace_regression_report(tmp_path: Path) -> None:
+def test_api_get_workspace_regression_report(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / ".git").mkdir()
+    from selfforge_agent.runtime.workspace import CodingWorkspaceManager
+
+    git(repo, "init", "-q")
+    git(repo, "config", "user.name", "Fixture")
+    git(repo, "config", "user.email", "fixture@example.invalid")
+    (repo / "app.py").write_text("VALUE = 1\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "base")
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES", CodingWorkspaceManager(tmp_path / "worktrees"))
 
     client = TestClient(api_module.app)
 
@@ -106,12 +115,11 @@ def test_api_get_workspace_regression_report(tmp_path: Path) -> None:
         {
             "status": "confirmed",
             "reason": "base_failed_repaired_passed",
+            "base_status": "failed", "repaired_status": "passed",
             "session_id": session.session_id,
             "base_sha": "1" * 40,
             "workspace_sha256": "c" * 64,
             "test_sha256": "d" * 64,
-            "base_status": "failed",
-            "repaired_status": "passed",
         },
     )
 
@@ -185,6 +193,7 @@ def test_create_pull_request_annotates_regression_evidence(tmp_path: Path) -> No
         {
             "status": "confirmed",
             "reason": "base_failed_repaired_passed",
+            "base_status": "failed", "repaired_status": "passed",
             "session_id": session.session_id,
             "base_sha": base_sha,
             "workspace_sha256": current_fp,
