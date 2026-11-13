@@ -39,6 +39,11 @@ from selfforge_agent.runtime.environment import (
     export_hash_locked_requirements,
     plan_environment_preparation,
 )
+from selfforge_agent.runtime.eval_policy import (
+    enforce_policy_cli_args,
+    make_policy_provenance,
+    verify_eval_policy_bundle,
+)
 from selfforge_agent.runtime.evaluation import OfflineFixtureModel, evaluate
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.images import build_dependency_image
@@ -258,27 +263,31 @@ def main(argv: list[str] | None = None) -> int:
     evaluation.add_argument("--max-steps", type=int, default=10)
     evaluation.add_argument("--time-budget", type=float, default=180)
     suite = subcommands.add_parser("eval-suite", help="Repeat pinned Git tasks with unseen tests")
-    suite.add_argument("--manifest", type=Path, required=True)
-    suite.add_argument("--repeats", type=int, default=1)
-    suite.add_argument("--provider", choices=provider_choices, default="auto")
+    suite_source = suite.add_mutually_exclusive_group(required=True)
+    suite_source.add_argument("--manifest", type=Path, help="Path to evaluation suite manifest JSON")
+    suite_source.add_argument("--policy", type=Path, help="Path to frozen evaluation policy JSON bundle")
+    suite.add_argument("--repeats", type=int, default=None)
+    suite.add_argument("--provider", choices=provider_choices, default=None)
     suite.add_argument("--no-fallback", action="store_true")
     suite.add_argument("--model")
     suite.add_argument("--base-url")
-    suite.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    suite.add_argument("--sandbox", choices=["docker", "host"], default=None)
     suite.add_argument("--trust-local", action="store_true", help="Required for host execution")
     suite.add_argument("--image", default="selfforge-agent-sandbox:latest")
-    suite.add_argument("--max-steps", type=int, default=12)
-    suite.add_argument("--time-budget", type=float, default=300)
-    suite.add_argument("--test-timeout", type=float, default=60)
+    suite.add_argument("--max-steps", type=int, default=None)
+    suite.add_argument("--time-budget", type=float, default=None)
+    suite.add_argument("--test-timeout", type=float, default=None)
     suite.add_argument("--output", type=Path, help="Write aggregate JSON report")
     suite.add_argument("--failure-artifacts", type=Path,
                        help="Opt in to private local test-failure snapshots outside evaluated repos")
     validation = subcommands.add_parser("eval-validate", help="Validate task reference fixes without a model")
-    validation.add_argument("--manifest", type=Path, required=True)
-    validation.add_argument("--sandbox", choices=["docker", "host"], default="docker")
+    val_source = validation.add_mutually_exclusive_group(required=True)
+    val_source.add_argument("--manifest", type=Path, help="Path to evaluation suite manifest JSON")
+    val_source.add_argument("--policy", type=Path, help="Path to frozen evaluation policy JSON bundle")
+    validation.add_argument("--sandbox", choices=["docker", "host"], default=None)
     validation.add_argument("--trust-local", action="store_true")
-    validation.add_argument("--image", default="selfforge-agent-sandbox:latest")
-    validation.add_argument("--test-timeout", type=float, default=60)
+    validation.add_argument("--image", default=None)
+    validation.add_argument("--test-timeout", type=float, default=None)
     validation.add_argument("--output", type=Path)
     eval_diff = subcommands.add_parser("eval-diff", help="Compare two benchmark evaluation reports and report regressions")
     eval_diff.add_argument("before", type=Path, help="Path to baseline evaluation summary JSON")
@@ -450,18 +459,49 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0
     if args.command == "eval-validate":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+        bundle = None
+        if getattr(args, "policy", None):
+            try:
+                bundle = verify_eval_policy_bundle(args.policy)
+                enforce_policy_cli_args(bundle, args)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            manifest_path = bundle.manifest_path
+            sandbox = bundle.policy.environment.sandbox if args.sandbox is None else args.sandbox
+            image = args.image or "selfforge-agent-sandbox:latest"
+            test_timeout = bundle.policy.budgets.test_timeout_seconds if args.test_timeout is None else args.test_timeout
+        else:
+            manifest_path = args.manifest
+            sandbox = "docker" if args.sandbox is None else args.sandbox
+            image = args.image or "selfforge-agent-sandbox:latest"
+            test_timeout = 60.0 if args.test_timeout is None else args.test_timeout
         try:
-            report = validate_suite(args.manifest, sandbox=args.sandbox,
-                                    trusted_host=args.trust_local, image=args.image,
-                                    test_timeout=args.test_timeout)
+            report = validate_suite(manifest_path, sandbox=sandbox,
+                                    trusted_host=args.trust_local, image=image,
+                                    test_timeout=test_timeout)
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
+        if bundle is not None:
+            report["policy"] = make_policy_provenance(bundle)
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.output:
-            args.output.write_text(rendered, encoding="utf-8")
+            try:
+                _write_cli_output(args.output, rendered)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         print(rendered, end="")
         return 0
     if args.command == "eval-diff":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         if args.output and any(args.output.resolve() == p.resolve() or (args.output.exists() and p.exists() and args.output.samefile(p)) for p in (args.before, args.after)):
             parser.error("Diff output must not overwrite an input report")
         if not args.before.is_file():
@@ -479,7 +519,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             rendered = format_eval_diff(diff, format=args.format)
         if args.output:
-            args.output.write_text(rendered, encoding="utf-8")
+            try:
+                _write_cli_output(args.output, rendered)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         else:
             print(rendered, end="")
         if args.fail_on_regression:
@@ -715,29 +758,81 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["successes"] == report["tasks"] else 1
     if args.command == "eval-suite":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+        bundle = None
+        if getattr(args, "policy", None):
+            try:
+                bundle = verify_eval_policy_bundle(args.policy)
+                enforce_policy_cli_args(bundle, args)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+            manifest_path = bundle.manifest_path
+            repeats = bundle.policy.budgets.repeats if args.repeats is None else args.repeats
+            provider_name = bundle.policy.provider_policy.provider if args.provider is None else args.provider
+            sandbox = bundle.policy.environment.sandbox if args.sandbox is None else args.sandbox
+            max_steps = bundle.policy.budgets.max_steps if args.max_steps is None else args.max_steps
+            time_budget = bundle.policy.budgets.time_budget_seconds if args.time_budget is None else args.time_budget
+            test_timeout = bundle.policy.budgets.test_timeout_seconds if args.test_timeout is None else args.test_timeout
+            no_fallback = True if not bundle.policy.provider_policy.fallback else args.no_fallback
+            model = bundle.policy.provider_policy.model if args.model is None else args.model
+            base_url = bundle.policy.provider_policy.base_url if args.base_url is None else args.base_url
+        else:
+            manifest_path = args.manifest
+            repeats = 1 if args.repeats is None else args.repeats
+            provider_name = "auto" if args.provider is None else args.provider
+            sandbox = "docker" if args.sandbox is None else args.sandbox
+            max_steps = 12 if args.max_steps is None else args.max_steps
+            time_budget = 300.0 if args.time_budget is None else args.time_budget
+            test_timeout = 60.0 if args.test_timeout is None else args.test_timeout
+            no_fallback = args.no_fallback
+            model = args.model
+            base_url = args.base_url
         try:
-            if args.model or args.base_url:
-                if not args.model or not args.base_url:
+            if model or base_url:
+                if not model or not base_url:
                     parser.error("Custom model requires both --model and --base-url")
                 providers = [ProviderConfig(
-                    name="custom", label="Custom", model=args.model, base_url=args.base_url,
+                    name="custom", label="Custom", model=model, base_url=base_url,
                     key=os.environ.get("SELFFORGE_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
                     status_url="",
                 )]
             else:
-                providers = route_providers(args.provider, not args.no_fallback)
+                providers = route_providers(provider_name, not no_fallback)
+            if bundle is not None and providers:
+                target_model = bundle.policy.provider_policy.model
+                target_base_url = bundle.policy.provider_policy.base_url
+                providers = [
+                    ProviderConfig(
+                        name=p.name,
+                        label=p.label,
+                        key=p.key,
+                        model=target_model,
+                        base_url=target_base_url,
+                        status_url=p.status_url,
+                    )
+                    for p in providers
+                ]
             report = evaluate_suite(
-                args.manifest, lambda _case: OpenAIChatAdapter(providers),
-                repeats=args.repeats, sandbox=args.sandbox, trusted_host=args.trust_local,
-                image=args.image, max_steps=args.max_steps, time_budget=args.time_budget,
-                test_timeout=args.test_timeout, failure_artifacts=args.failure_artifacts,
+                manifest_path, lambda _case: OpenAIChatAdapter(providers),
+                repeats=repeats, sandbox=sandbox, trusted_host=args.trust_local,
+                image=args.image, max_steps=max_steps, time_budget=time_budget,
+                test_timeout=test_timeout, failure_artifacts=args.failure_artifacts,
                 providers=providers,
             )
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
+        if bundle is not None:
+            report["policy"] = make_policy_provenance(bundle)
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.output:
-            args.output.write_text(rendered, encoding="utf-8")
+            try:
+                _write_cli_output(args.output, rendered)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         print(rendered, end="")
         return 0 if report["successes"] == report["runs"] else 1
     if args.command == "test-regression":

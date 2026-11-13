@@ -319,6 +319,9 @@ class VerifiedEvalPolicyBundle:
     assets: dict[str, str]
     manifest_sha256: str
     assets_inventory_sha256: str
+    manifest_path: Path
+    policy_path: Path
+    policy_sha256: str
 
 
 def _project_root_for(policy_dir: Path) -> Path:
@@ -332,6 +335,7 @@ def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
     """Load and verify a frozen evaluation policy, manifest, assets, and historical hashes."""
     # Check the spelling supplied by the caller before resolve erases symlink ancestors.
     policy_bytes = _read_regular_bytes(policy_path)
+    policy_sha256 = hashlib.sha256(policy_bytes).hexdigest()
     resolved_policy = policy_path.resolve()
     policy_dir = resolved_policy.parent
     project_root = _project_root_for(policy_dir)
@@ -472,4 +476,67 @@ def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
         assets=assets,
         manifest_sha256=actual_manifest_sha256,
         assets_inventory_sha256=actual_assets_sha256,
+        manifest_path=manifest_path,
+        policy_path=resolved_policy,
+        policy_sha256=policy_sha256,
     )
+
+
+def make_policy_provenance(bundle: VerifiedEvalPolicyBundle) -> dict[str, Any]:
+    """Extract standard provenance metadata from a verified policy bundle."""
+    return {
+        "policy_path": str(bundle.policy_path),
+        "policy_sha256": bundle.policy_sha256,
+        "policy_version": bundle.policy.policy_version,
+        "suite_id": bundle.policy.suite_id,
+        "manifest_sha256": bundle.manifest_sha256,
+        "assets_inventory_sha256": bundle.assets_inventory_sha256,
+    }
+
+
+def enforce_policy_cli_args(bundle: VerifiedEvalPolicyBundle, args: Any) -> None:
+    """Enforce that CLI flags and parameters do not conflict with the verified policy."""
+    pol = bundle.policy
+    if getattr(args, "sandbox", None) is not None and args.sandbox != pol.environment.sandbox:
+        raise ValueError(
+            f"CLI sandbox '{args.sandbox}' conflicts with policy sandbox '{pol.environment.sandbox}'"
+        )
+    if getattr(args, "image", None) is not None:
+        allowed_images = {_normalize_image_ref(spec.reference) for spec in pol.environment.images.values()}
+        if _normalize_image_ref(args.image) not in allowed_images:
+            raise ValueError(
+                f"CLI image '{args.image}' is not declared in evaluation policy ({sorted(allowed_images)})"
+            )
+    if getattr(args, "repeats", None) is not None and args.repeats != pol.budgets.repeats:
+        raise ValueError(
+            f"CLI repeats {args.repeats} conflicts with policy requirement {pol.budgets.repeats}"
+        )
+    if getattr(args, "max_steps", None) is not None and args.max_steps != pol.budgets.max_steps:
+        raise ValueError(
+            f"CLI max-steps {args.max_steps} conflicts with policy requirement {pol.budgets.max_steps}"
+        )
+    if getattr(args, "time_budget", None) is not None and not math.isclose(
+        float(args.time_budget), float(pol.budgets.time_budget_seconds), abs_tol=1e-3
+    ):
+        raise ValueError(
+            f"CLI time-budget {args.time_budget} conflicts with policy requirement {pol.budgets.time_budget_seconds}"
+        )
+    if getattr(args, "test_timeout", None) is not None and not math.isclose(
+        float(args.test_timeout), float(pol.budgets.test_timeout_seconds), abs_tol=1e-3
+    ):
+        raise ValueError(
+            f"CLI test-timeout {args.test_timeout} conflicts with policy requirement {pol.budgets.test_timeout_seconds}"
+        )
+    prov_policy = pol.provider_policy
+    if getattr(args, "provider", None) is not None and args.provider != prov_policy.provider:
+        raise ValueError(
+            f"CLI provider '{args.provider}' conflicts with policy requirement '{prov_policy.provider}'"
+        )
+    if getattr(args, "model", None) is not None and args.model != prov_policy.model:
+        raise ValueError(
+            f"CLI model '{args.model}' conflicts with policy requirement '{prov_policy.model}'"
+        )
+    if getattr(args, "base_url", None) is not None and args.base_url.rstrip("/") != prov_policy.base_url.rstrip("/"):
+        raise ValueError(
+            f"CLI base-url '{args.base_url}' conflicts with policy requirement '{prov_policy.base_url}'"
+        )
