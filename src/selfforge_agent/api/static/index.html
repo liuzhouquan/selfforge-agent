@@ -59,6 +59,50 @@
             <select id="coding-recent"><option value="">输入仓库路径后读取历史任务</option></select>
             <button id="coding-history-refresh" type="button">读取历史</button>
           </div>
+          <details id="coding-governance" class="coding-job coding-governance">
+            <summary class="coding-governance-summary">
+              <strong>工作区治理与 Sandbox 诊断</strong>
+              <small id="coding-governance-repo-hint">输入仓库路径后可执行 worktree 审计、配额检查、安全清理与依赖新鲜度诊断</small>
+            </summary>
+            <div id="coding-ws-governance" class="coding-governance-section">
+              <div class="coding-diff-head">
+                <strong>工作区审计、存储与安全清理</strong>
+                <small>仅针对 selfForge 管理的 worktree；锁定或含未提交改动的工作区会自动跳过</small>
+              </div>
+              <div class="coding-options" style="margin-top:10px;">
+                <label for="coding-ws-head-ref">基线引用 (head_ref)<input id="coding-ws-head-ref" type="text" placeholder="默认 HEAD" autocomplete="off" /></label>
+                <label for="coding-ws-quota">存储配额（可选字节，非负整数）<input id="coding-ws-quota" type="text" placeholder="例如 104857600（留空不设配额）" autocomplete="off" /></label>
+              </div>
+              <div class="coding-governance-actions">
+                <button id="coding-ws-audit-btn" type="button" disabled>快速审计 worktree</button>
+                <button id="coding-ws-storage-btn" type="button" disabled>存储与配额检查</button>
+                <button id="coding-ws-prune-dry-btn" type="button" disabled>预演清理 (Dry Run)</button>
+              </div>
+              <div class="coding-governance-prune-guards">
+                <label class="provider-fallback"><input id="coding-ws-prune-merged" type="checkbox" checked /> 仅清理已合并分支（merged_only）</label>
+                <label class="trust-label"><input id="coding-ws-prune-confirm" type="checkbox" /> 我已核对审计结果，确认清理符合条件的工作区（自动跳过锁定/脏区）</label>
+                <button id="coding-ws-prune-exec-btn" type="button" disabled>确认执行清理</button>
+              </div>
+              <div id="coding-ws-status" class="model-state" hidden></div>
+              <div id="coding-ws-prune-result" class="coding-regression-result" hidden></div>
+              <div id="coding-ws-result" class="coding-regression-result" hidden></div>
+            </div>
+            <div id="coding-freshness-panel" class="coding-diff">
+              <div class="coding-diff-head">
+                <strong>依赖新鲜度诊断（Sandbox 只读）</strong>
+                <small>只读检查声明依赖与 lockfile 一致性及更新时间，不触发自动安装</small>
+              </div>
+              <div class="coding-options" style="margin-top:10px;">
+                <label for="coding-freshness-lock">Lockfile 绝对路径（留空自动发现）<input id="coding-freshness-lock" type="text" placeholder="留空自动识别 uv.lock / requirements.lock 等" autocomplete="off" /></label>
+                <label for="coding-freshness-req">Requirements 绝对路径（可选）<input id="coding-freshness-req" type="text" placeholder="留空按 Lockfile 检查；可填绝对路径" autocomplete="off" /></label>
+              </div>
+              <div class="coding-governance-actions">
+                <button id="coding-freshness-btn" type="button" disabled>检查依赖新鲜度</button>
+              </div>
+              <div id="coding-freshness-status" class="model-state" hidden></div>
+              <div id="coding-freshness-result" class="coding-regression-result" hidden></div>
+            </div>
+          </details>
           <div id="coding-error" class="alert coding-error" hidden role="alert"></div>
           <div id="coding-job" class="coding-job" hidden>
             <div class="coding-job-head"><strong id="coding-state">等待开始</strong><div><button id="coding-resume-current" type="button" hidden>续跑此会话</button> <button id="coding-revert-workspace" type="button" hidden>还原工作区改动</button> <button id="coding-remove-workspace" type="button" hidden>清理已提交的工作区</button> <button id="coding-cancel" type="button" hidden>取消任务</button></div></div>

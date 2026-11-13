@@ -16,6 +16,11 @@ let codingDiffJobId = null;
 let codingRegressionRunning = false;
 let codingRegressionGeneration = 0;
 let codingRegressionJobId = null;
+let codingGovernanceBoundRepo = "";
+let codingWsGovGeneration = 0;
+let codingWsGovRunning = false;
+let codingFreshnessGeneration = 0;
+let codingFreshnessRunning = false;
 
 function providerLabel(name) {
   const labels = {
@@ -60,15 +65,28 @@ function setLoading(loading) {
   button.textContent = loading ? "正在拉取 PR…" : "导入并审查 →";
 }
 
+async function parseJsonResponse(response) {
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_err) {
+    if (!response.ok) throw new Error(`请求失败 (${response.status})`);
+    throw new Error("响应不是有效的 JSON。");
+  }
+  if (!response.ok) throw new Error((data && data.detail) || `请求失败 (${response.status})`);
+  return data;
+}
+
+async function getJson(path) {
+  return parseJsonResponse(await fetch(path));
+}
+
 async function postJson(path, payload) {
-  const response = await fetch(path, {
+  return parseJsonResponse(await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || `请求失败 (${response.status})`);
-  return data;
+  }));
 }
 
 function showCodingError(message) {
@@ -421,6 +439,7 @@ $("coding-resume-current").addEventListener("click", () => {
   if (!currentCodingSession) return;
   $("coding-resume").value = currentCodingSession;
   $("coding-repo").value = currentCodingRepo;
+  syncCodingGovernanceRepo();
   $("coding-workspace").value = currentCodingBranch ? "worktree" : "direct";
   $("coding-sandbox").value = currentCodingSandbox;
   $("coding-image").value = "";
@@ -606,7 +625,361 @@ $("coding-pr-form").addEventListener("submit", async (event) => {
   }
 });
 
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "未知";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB (${bytes} B)`;
+  return `${(bytes / 1048576).toFixed(2)} MB (${bytes} B)`;
+}
+
+function parseOptionalQuotaBytes(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return { ok: true, value: null };
+  if (!/^\d+$/.test(trimmed)) {
+    return { ok: false, error: "配额字节数必须是非负整数（例如 0 或 104857600）。" };
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed)) {
+    return { ok: false, error: "配额字节数超出安全整数范围。" };
+  }
+  return { ok: true, value: parsed };
+}
+
+function refreshCodingGovernanceAvailability() {
+  const repo = $("coding-repo").value.trim();
+  const hasRepo = Boolean(repo);
+  $("coding-ws-audit-btn").disabled = !hasRepo || codingWsGovRunning;
+  $("coding-ws-storage-btn").disabled = !hasRepo || codingWsGovRunning;
+  $("coding-ws-prune-dry-btn").disabled = !hasRepo || codingWsGovRunning;
+  $("coding-ws-prune-exec-btn").disabled = !hasRepo || codingWsGovRunning || !$("coding-ws-prune-confirm").checked;
+  $("coding-freshness-btn").disabled = !hasRepo || codingFreshnessRunning;
+  $("coding-governance-repo-hint").textContent = hasRepo
+    ? `当前仓库：${repo}`
+    : "输入仓库路径后可执行 worktree 审计、配额检查、安全清理与依赖新鲜度诊断";
+}
+
+function resetCodingGovernanceState() {
+  codingWsGovGeneration += 1;
+  codingWsGovRunning = false;
+  codingFreshnessGeneration += 1;
+  codingFreshnessRunning = false;
+  $("coding-ws-prune-confirm").checked = false;
+  $("coding-ws-status").textContent = "";
+  $("coding-ws-status").hidden = true;
+  $("coding-ws-result").replaceChildren();
+  $("coding-ws-result").hidden = true;
+  $("coding-ws-prune-result").replaceChildren();
+  $("coding-ws-prune-result").hidden = true;
+  $("coding-freshness-status").textContent = "";
+  $("coding-freshness-status").hidden = true;
+  $("coding-freshness-result").replaceChildren();
+  $("coding-freshness-result").hidden = true;
+}
+
+function syncCodingGovernanceRepo() {
+  const repo = $("coding-repo").value.trim();
+  if (repo !== codingGovernanceBoundRepo) {
+    codingGovernanceBoundRepo = repo;
+    resetCodingGovernanceState();
+  }
+  refreshCodingGovernanceAvailability();
+}
+
+function workspaceFlagLabels(item) {
+  return [
+    item.is_locked ? "locked（锁定）" : "unlocked",
+    item.is_dirty ? "dirty（含未提交改动）" : "clean",
+    item.is_merged ? "merged（已合并）" : "unmerged（未合并）",
+    item.prunable ? "prunable（可清理）" : "retained（保留）",
+  ].join(" · ");
+}
+
+function renderWorkspaceAuditItems(items) {
+  const container = $("coding-ws-result");
+  if (!items.length) {
+    container.replaceChildren(element("p", "", "该仓库当前没有托管中的 Coding worktree。"));
+    container.hidden = false;
+    return;
+  }
+  const summary = element("div", "coding-regression-summary");
+  summary.append(
+    element("span", "coding-regression-badge", `审计 ${items.length} 个 worktree`),
+    element("span", "", `可清理 ${items.filter((i) => i.prunable).length} · 锁定 ${items.filter((i) => i.is_locked).length} · 脏区 ${items.filter((i) => i.is_dirty).length}`),
+  );
+  const list = element("div", "coding-governance-list");
+  for (const item of items) {
+    const card = element("div", "coding-regression-card");
+    card.append(
+      element("strong", "", `会话 ${item.session_id} · ${item.branch}`),
+      element("p", "", `状态：${workspaceFlagLabels(item)}`),
+      element("p", "coding-regression-hashes", `基线 ${(item.base_sha || "").slice(0, 12)} · 路径 ${item.path}`),
+    );
+    list.append(card);
+  }
+  container.replaceChildren(summary, list);
+  container.hidden = false;
+}
+
+function renderWorkspaceStorageReport(report) {
+  const container = $("coding-ws-result");
+  const quotaLabel = report.quota_bytes === null || report.quota_bytes === undefined
+    ? "未设配额"
+    : report.quota_exceeded === true
+      ? "已超出配额"
+      : report.quota_exceeded === null
+        ? "配额状态未知（扫描未完整）"
+        : "未超出配额";
+  const badgeText = report.complete
+    ? `${report.workspace_count} 个工作区 · ${quotaLabel}`
+    : `${report.workspace_count} 个工作区 · 扫描未完整（${quotaLabel}）`;
+  const summary = element("div", "coding-regression-summary");
+  summary.append(
+    element("span", "coding-regression-badge", badgeText),
+    element("span", "", `总占用 ${formatBytes(report.total_bytes)} · 缓存 ${formatBytes(report.total_cache_bytes)} · 可回收 ${formatBytes(report.reclaimable_bytes)}`),
+  );
+  const children = [summary];
+  if (!report.complete) {
+    children.push(element("p", "coding-regression-hashes", "告警：目录扫描未完整（Incomplete scan），当前字节数为下界估计，配额判定按未知处理。"));
+  }
+  if (report.measurement_scope) {
+    children.push(element("p", "coding-regression-hashes", `统计口径：${report.measurement_scope}`));
+  }
+  for (const rec of report.recommendations || []) {
+    children.push(element("p", "", `建议：${rec}`));
+  }
+  const list = element("div", "coding-governance-list");
+  for (const item of report.workspaces || []) {
+    const card = element("div", "coding-regression-card");
+    card.append(
+      element("strong", "", `会话 ${item.session_id} · ${item.branch}`),
+      element("p", "", `大小 ${formatBytes(item.total_bytes)}（缓存 ${formatBytes(item.cache_bytes)} · ${item.file_count} 文件）· 可回收 ${formatBytes(item.reclaimable_bytes)}`),
+      element("p", "", `状态：${workspaceFlagLabels(item)}${item.complete === false ? " · 扫描未完整" : ""}`),
+    );
+    if (item.scan_error) {
+      card.append(element("p", "coding-regression-hashes", `扫描异常：${item.scan_error}`));
+    }
+    list.append(card);
+  }
+  children.push(list);
+  container.replaceChildren(...children);
+  container.hidden = false;
+}
+
+function renderWorkspacePruneResult(result, dryRun) {
+  const container = $("coding-ws-prune-result");
+  const modeLabel = dryRun ? "预演清理结果 (Dry Run)" : "清理执行结果";
+  const formatGroup = (title, items) => `${title} (${(items || []).length}): ${(items && items.length) ? items.join(", ") : "无"}`;
+  const card = element("div", "coding-regression-card");
+  card.append(
+    element("strong", "", modeLabel),
+    element("p", "", formatGroup(dryRun ? "预计清理" : "已清理", result.pruned)),
+    element("p", "", formatGroup("已跳过（锁定）", result.skipped_locked)),
+    element("p", "", formatGroup("已跳过（脏区）", result.skipped_dirty)),
+    element("p", "", formatGroup("已跳过（未合并）", result.skipped_unmerged)),
+  );
+  container.replaceChildren(card);
+  container.hidden = false;
+}
+
+function freshnessStatusLabel(status) {
+  const labels = {
+    fresh: "一致 (fresh)",
+    no_declarations: "无依赖声明 (no_declarations)",
+    missing_dependencies: "存在未锁定依赖 (missing_dependencies)",
+    incompatible_versions: "锁定版本与声明不兼容 (incompatible_versions)",
+    stale_mtime: "声明文件较 lockfile 更新 (stale_mtime)",
+  };
+  return labels[status] || status;
+}
+
+function renderFreshnessReport(report) {
+  const container = $("coding-freshness-result");
+  const summary = element("div", "coding-regression-summary");
+  summary.append(
+    element("span", "coding-regression-badge", freshnessStatusLabel(report.status)),
+    element("span", "", `${report.fresh ? "lockfile 与声明一致" : "检测到不一致或过时"} · 声明 ${report.declared_count} 项 / 锁定 ${report.locked_count} 项`),
+  );
+  const children = [
+    summary,
+    element("p", "", "说明：此结果仅作只读环境诊断，不代表目标容器已可安装，不会触发自动安装。"),
+    element("p", "coding-regression-hashes", `Lockfile: ${report.lock_file || "无"} · 声明文件: ${report.declaration_file || "无"}${report.is_stale_by_mtime ? " · mtime 过期" : ""}`),
+  ];
+  if ((report.missing_packages || []).length) {
+    const card = element("div", "coding-regression-card");
+    card.append(element("strong", "", `缺失锁定包 (${report.missing_packages.length})`));
+    for (const pkg of report.missing_packages) {
+      card.append(element("p", "", `${pkg.name}${pkg.specifier || ""}（来源 ${pkg.source_file}）`));
+    }
+    children.push(card);
+  }
+  if ((report.incompatible_packages || []).length) {
+    const card = element("div", "coding-regression-card");
+    card.append(element("strong", "", `版本冲突包 (${report.incompatible_packages.length})`));
+    for (const pkg of report.incompatible_packages) {
+      card.append(element("p", "", `${pkg.name}：锁定 ${pkg.locked_version} 不满足声明 ${pkg.declared_specifier}（来源 ${pkg.source_file}）`));
+    }
+    children.push(card);
+  }
+  for (const warning of report.warnings || []) {
+    children.push(element("p", "coding-regression-hashes", `提示：${warning}`));
+  }
+  container.replaceChildren(...children);
+  container.hidden = false;
+}
+
+async function runWorkspaceGovernanceAction(mode) {
+  const repo = $("coding-repo").value.trim();
+  const statusEl = $("coding-ws-status");
+  if (!repo) {
+    statusEl.textContent = "请先输入 Git 仓库绝对路径。";
+    statusEl.hidden = false;
+    return;
+  }
+  if (codingWsGovRunning) return;
+  const quotaCheck = mode === "storage"
+    ? parseOptionalQuotaBytes($("coding-ws-quota").value)
+    : { ok: true, value: null };
+  if (!quotaCheck.ok) {
+    $("coding-ws-result").hidden = true;
+    statusEl.textContent = quotaCheck.error;
+    statusEl.hidden = false;
+    return;
+  }
+  const dryRun = mode === "prune-dry";
+  const executePrune = mode === "prune-exec";
+  if (executePrune && !$("coding-ws-prune-confirm").checked) {
+    statusEl.textContent = "请先勾选清理确认复选框。";
+    statusEl.hidden = false;
+    return;
+  }
+  const requestGeneration = ++codingWsGovGeneration;
+  const isCurrent = () => requestGeneration === codingWsGovGeneration &&
+    $("coding-repo").value.trim() === repo;
+  const headRef = $("coding-ws-head-ref").value.trim() || "HEAD";
+  const mergedOnly = $("coding-ws-prune-merged").checked;
+  codingWsGovRunning = true;
+  refreshCodingGovernanceAvailability();
+  statusEl.textContent = executePrune
+    ? "正在按安全锁执行工作区清理…"
+    : dryRun
+      ? "正在预演工作区清理…"
+      : mode === "storage"
+        ? "正在扫描工作区磁盘占用与配额…"
+        : "正在审计工作区 Git 状态…";
+  statusEl.hidden = false;
+  try {
+    if (mode === "audit") {
+      const params = new URLSearchParams({ repository: repo, head_ref: headRef });
+      const items = await getJson(`/api/code/workspaces/audit?${params}`);
+      if (!isCurrent()) return;
+      renderWorkspaceAuditItems(items);
+      statusEl.textContent = `已完成 ${items.length} 个工作区的快速审计。`;
+    } else if (mode === "storage") {
+      const params = new URLSearchParams({ repository: repo, head_ref: headRef });
+      if (quotaCheck.value !== null) params.set("quota_bytes", String(quotaCheck.value));
+      const report = await getJson(`/api/code/workspaces/storage?${params}`);
+      if (!isCurrent()) return;
+      renderWorkspaceStorageReport(report);
+      statusEl.textContent = report.complete ? "存储与配额扫描完成。" : "存储扫描已完成（部分目录未完整扫描）。";
+    } else {
+      const pruneReport = await postJson("/api/code/workspaces/prune", {
+        repository: repo,
+        dry_run: dryRun,
+        merged_only: mergedOnly,
+        head_ref: headRef,
+      });
+      if (!isCurrent()) return;
+      renderWorkspacePruneResult(pruneReport, dryRun);
+      if (executePrune) {
+        $("coding-ws-prune-confirm").checked = false;
+        if (currentCodingRepo === repo && currentCodingSession && Array.isArray(pruneReport.pruned) &&
+            pruneReport.pruned.includes(currentCodingSession)) {
+          currentCodingBranch = "";
+          $("coding-workspace-info").textContent += " · 工作区已被清理";
+          $("coding-remove-workspace").hidden = true;
+          $("coding-resume-current").hidden = true;
+          $("coding-delivery").hidden = true;
+          resetCodingRegressionState("当前会话工作区已被清理，之前的回归验证结果已失效。");
+          refreshCodingRegressionAvailability();
+        }
+        try {
+          const storageParams = new URLSearchParams({ repository: repo, head_ref: headRef });
+          const refreshed = await getJson(`/api/code/workspaces/storage?${storageParams}`);
+          if (!isCurrent()) return;
+          renderWorkspaceStorageReport(refreshed);
+          statusEl.textContent = `清理完成：移除 ${(pruneReport.pruned || []).length} 个工作区，并已刷新存储统计。`;
+        } catch (refreshError) {
+          if (!isCurrent()) return;
+          $("coding-ws-result").hidden = true;
+          statusEl.textContent = `清理已执行（移除 ${(pruneReport.pruned || []).length} 个工作区），但刷新存储失败：${refreshError.message}`;
+        }
+      } else {
+        statusEl.textContent = `预演完成：预计可清理 ${(pruneReport.pruned || []).length} 个工作区（未删除文件）。`;
+      }
+    }
+    statusEl.hidden = false;
+  } catch (error) {
+    if (!isCurrent()) return;
+    if (mode === "audit" || mode === "storage") $("coding-ws-result").hidden = true;
+    else $("coding-ws-prune-result").hidden = true;
+    statusEl.textContent = `工作区治理操作失败：${error.message}`;
+    statusEl.hidden = false;
+  } finally {
+    if (isCurrent()) {
+      codingWsGovRunning = false;
+      refreshCodingGovernanceAvailability();
+    }
+  }
+}
+
+async function runFreshnessCheck() {
+  const repo = $("coding-repo").value.trim();
+  const statusEl = $("coding-freshness-status");
+  if (!repo) {
+    statusEl.textContent = "请先输入 Git 仓库绝对路径。";
+    statusEl.hidden = false;
+    return;
+  }
+  if (codingFreshnessRunning) return;
+  const requestGeneration = ++codingFreshnessGeneration;
+  const isCurrent = () => requestGeneration === codingFreshnessGeneration &&
+    $("coding-repo").value.trim() === repo;
+  codingFreshnessRunning = true;
+  refreshCodingGovernanceAvailability();
+  statusEl.textContent = "正在只读检查依赖声明与 lockfile 新鲜度…";
+  statusEl.hidden = false;
+  try {
+    const report = await postJson("/api/sandbox/freshness", {
+      repository: repo,
+      lock_file: $("coding-freshness-lock").value.trim() || null,
+      requirements_file: $("coding-freshness-req").value.trim() || null,
+    });
+    if (!isCurrent()) return;
+    renderFreshnessReport(report);
+    statusEl.textContent = `依赖新鲜度检查完成：${freshnessStatusLabel(report.status)}。`;
+    statusEl.hidden = false;
+  } catch (error) {
+    if (!isCurrent()) return;
+    $("coding-freshness-result").hidden = true;
+    statusEl.textContent = `依赖新鲜度检查失败：${error.message}`;
+    statusEl.hidden = false;
+  } finally {
+    if (isCurrent()) {
+      codingFreshnessRunning = false;
+      refreshCodingGovernanceAvailability();
+    }
+  }
+}
+
+$("coding-ws-audit-btn").addEventListener("click", () => runWorkspaceGovernanceAction("audit"));
+$("coding-ws-storage-btn").addEventListener("click", () => runWorkspaceGovernanceAction("storage"));
+$("coding-ws-prune-dry-btn").addEventListener("click", () => runWorkspaceGovernanceAction("prune-dry"));
+$("coding-ws-prune-exec-btn").addEventListener("click", () => runWorkspaceGovernanceAction("prune-exec"));
+$("coding-ws-prune-confirm").addEventListener("change", refreshCodingGovernanceAvailability);
+$("coding-freshness-btn").addEventListener("click", runFreshnessCheck);
+
 async function loadRepoEnvironment() {
+  syncCodingGovernanceRepo();
   const repo = $("coding-repo").value.trim();
   const infoEl = $("coding-env-info");
   if (!repo) {
@@ -637,6 +1010,7 @@ async function loadRepoEnvironment() {
   }
 }
 
+$("coding-repo").addEventListener("input", syncCodingGovernanceRepo);
 $("coding-repo").addEventListener("change", loadRepoEnvironment);
 $("coding-repo").addEventListener("blur", loadRepoEnvironment);
 $("coding-workspace").addEventListener("change", refreshCodingAvailability);
@@ -648,6 +1022,7 @@ if (savedCodingRepo) {
   $("coding-repo").value = savedCodingRepo;
   loadRepoEnvironment();
 }
+syncCodingGovernanceRepo();
 const savedCodingJob = localStorage.getItem("selfforge-coding-job") ||
   sessionStorage.getItem("selfforge-coding-job");
 if (savedCodingJob) pollCodingJob(savedCodingJob);
