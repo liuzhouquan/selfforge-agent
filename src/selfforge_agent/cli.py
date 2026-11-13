@@ -202,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     sandbox.add_argument("--tag")
     sandbox.add_argument("--base-image", default="selfforge-agent-sandbox:latest")
     sandbox.add_argument("--timeout", type=float, default=300)
-    sandbox.add_argument("--output", type=Path, help="Output path for export-lock")
+    sandbox.add_argument("--output", type=Path, help="Output path for export-lock, audit, freshness, plan, or detect")
+    sandbox.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     code = subcommands.add_parser("code", help="Run a general autonomous coding task")
     code.add_argument("--repo", type=Path, default=Path.cwd())
     code.add_argument("--task", help="Natural-language development task")
@@ -359,6 +360,11 @@ def main(argv: list[str] | None = None) -> int:
     regress.add_argument("--output", type=Path, help="Optional path to write JSON report")
     args = parser.parse_args(argv)
     if args.command == "sandbox":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         if args.action == "audit":
             if not args.wheelhouse:
                 parser.error("sandbox audit requires --wheelhouse")
@@ -374,7 +380,10 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(str(exc))
             rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
             if args.output:
-                args.output.write_text(rendered, encoding="utf-8")
+                try:
+                    _write_cli_output(args.output, rendered)
+                except (ValueError, OSError) as exc:
+                    parser.error(str(exc))
                 print(f"Wheelhouse audit report written to {args.output}")
             else:
                 print(rendered, end="")
@@ -390,7 +399,10 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(str(exc))
             rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
             if args.output:
-                args.output.write_text(rendered, encoding="utf-8")
+                try:
+                    _write_cli_output(args.output, rendered)
+                except (ValueError, OSError) as exc:
+                    parser.error(str(exc))
                 print(f"Dependency freshness report written to {args.output}")
             else:
                 if report["fresh"]:
@@ -406,19 +418,28 @@ def main(argv: list[str] | None = None) -> int:
                 env = detect_repository_environment(args.repo)
             except (ValueError, OSError) as exc:
                 parser.error(str(exc))
-            print(f"Repository: {env['repository']}")
-            print(f"Layout: {env['layout']}")
-            print(f"Test framework: {env['test_framework']} ({', '.join(env['test_paths']) or 'none found'})")
-            print(f"Dependency files: {', '.join(env['dependency_files']) or 'none'}")
-            print(f"Lock files: {', '.join(env['lock_files']) or 'none'} (hash-locked: {env['has_hash_lock']})")
-            if env.get("python_requires"):
-                print(f"Python required: {env['python_requires']}")
-            if env.get("suggested_image"):
-                print(f"Suggested profile image: {env['suggested_image']}")
-            if env.get("warnings"):
-                print("Warnings:")
-                for w in env["warnings"]:
-                    print(f"  - {w}")
+            rendered = json.dumps(env, ensure_ascii=False, indent=2) + "\n"
+            if args.output:
+                try:
+                    _write_cli_output(args.output, rendered)
+                except (ValueError, OSError) as exc:
+                    parser.error(str(exc))
+            if getattr(args, "json", False):
+                print(rendered, end="")
+            elif not args.output:
+                print(f"Repository: {env['repository']}")
+                print(f"Layout: {env['layout']}")
+                print(f"Test framework: {env['test_framework']} ({', '.join(env['test_paths']) or 'none found'})")
+                print(f"Dependency files: {', '.join(env['dependency_files']) or 'none'}")
+                print(f"Lock files: {', '.join(env['lock_files']) or 'none'} (hash-locked: {env['has_hash_lock']})")
+                if env.get("python_requires"):
+                    print(f"Python required: {env['python_requires']}")
+                if env.get("suggested_image"):
+                    print(f"Suggested profile image: {env['suggested_image']}")
+                if env.get("warnings"):
+                    print("Warnings:")
+                    for w in env["warnings"]:
+                        print(f"  - {w}")
             return 0
         if args.action == "export-lock":
             if not args.lock:
@@ -445,7 +466,10 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(str(exc))
             rendered = json.dumps(plan, ensure_ascii=False, indent=2) + "\n"
             if args.output:
-                args.output.write_text(rendered, encoding="utf-8")
+                try:
+                    _write_cli_output(args.output, rendered)
+                except (ValueError, OSError) as exc:
+                    parser.error(str(exc))
                 print(f"Environment preparation plan written to {args.output}")
             else:
                 print(rendered, end="")
