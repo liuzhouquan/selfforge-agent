@@ -855,3 +855,22 @@ def test_web_ui_governance_and_freshness_roundtrip_real_fastapi_repo(
     assert($("coding-freshness-result").textContent.includes("requests"), "freshness renders missing requests dep");
     """
     _run_app_js_scenario(scenario)
+
+
+def test_prune_only_invalidates_active_session_in_same_repository() -> None:
+    _run_app_js_scenario(r'''
+    renderCodingJob({job_id:'job-a',session_id:'sameid',repository:'/repo/a',
+      workspace_path:'/wt/a',branch:'selfforge/sameid',base_sha:'a'.repeat(40),
+      sandbox:'docker',state:'unverified',answer:'done',steps:1,tools_used:1,
+      trace:[],can_resume:true,verification_passed:false});
+    $('coding-repo').value='/repo/b';
+    await $('coding-repo').dispatchEventAsync({type:'input'});
+    setFetchHandler(async url=>({ok:true,status:200,json:async()=>String(url).includes('/prune')?
+      {pruned:['sameid'],skipped_locked:[],skipped_dirty:[],skipped_unmerged:[]}:
+      {complete:true,workspace_count:0,total_bytes:0,total_cache_bytes:0,reclaimable_bytes:0,
+       quota_bytes:null,quota_exceeded:null,workspaces:[],recommendations:[]}}));
+    $('coding-ws-prune-confirm').checked=true;
+    await $('coding-ws-prune-exec-btn').clickAsync();
+    assert(currentCodingBranch === 'selfforge/sameid','prune of repo B must preserve active repo A');
+    assert(!$('coding-delivery').hidden,'repo A delivery must remain visible');
+    ''')

@@ -892,7 +892,7 @@ async function runWorkspaceGovernanceAction(mode) {
       renderWorkspacePruneResult(pruneReport, dryRun);
       if (executePrune) {
         $("coding-ws-prune-confirm").checked = false;
-        if (currentCodingSession && Array.isArray(pruneReport.pruned) &&
+        if (currentCodingRepo === repo && currentCodingSession && Array.isArray(pruneReport.pruned) &&
             pruneReport.pruned.includes(currentCodingSession)) {
           currentCodingBranch = "";
           $("coding-workspace-info").textContent += " · 工作区已被清理";
