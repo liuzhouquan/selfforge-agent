@@ -619,31 +619,80 @@ def main(argv: list[str] | None = None) -> int:
         print(rendered, end="")
         return 0
     if args.command == "workspaces":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         manager = CodingWorkspaceManager()
         try:
             if args.action == "list":
                 if args.session_id:
                     parser.error("workspaces list does not take a session ID")
-                for workspace in manager.list(args.repo):
-                    print(f"{workspace.session_id}  {workspace.branch}  {workspace.path}")
+                workspaces = manager.list(args.repo)
+                rendered_json = json.dumps(
+                    [
+                        {
+                            "session_id": ws.session_id,
+                            "branch": ws.branch,
+                            "path": str(ws.path),
+                            "base_sha": ws.base_sha,
+                            "repository": str(ws.repository),
+                        }
+                        for ws in workspaces
+                    ],
+                    ensure_ascii=False,
+                    indent=2,
+                ) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
+                if getattr(args, "json", False):
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Workspaces list written to {args.output}")
+                else:
+                    for workspace in workspaces:
+                        print(f"{workspace.session_id}  {workspace.branch}  {workspace.path}")
             elif args.action == "remove":
                 if not args.session_id:
                     parser.error("workspaces remove requires a session ID")
                 workspace = manager.get(args.repo, args.session_id)
                 with manager.guard(workspace.path, message=f"Cannot remove: workspace {workspace.path} is currently locked"):
                     workspace = manager.remove(args.repo, args.session_id)
-                print(f"Removed worktree {workspace.path}; branch {workspace.branch} remains")
+                res_data = {
+                    "session_id": workspace.session_id,
+                    "branch": workspace.branch,
+                    "path": str(workspace.path),
+                    "removed": True,
+                }
+                rendered_json = json.dumps(res_data, ensure_ascii=False, indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
+                if getattr(args, "json", False):
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Workspace remove report written to {args.output}")
+                else:
+                    print(f"Removed worktree {workspace.path}; branch {workspace.branch} remains")
             elif args.action == "diff":
                 if not args.session_id:
                     parser.error("workspaces diff requires a session ID")
                 workspace = manager.get(args.repo, args.session_id)
                 data = workspace_diff(workspace)
-                if not data["files"]:
-                    print("No visible changes in workspace.")
-                for f in data["files"]:
-                    print(f"=== {f['status']}: {f['path']} ===")
-                    if f.get("patch"):
-                        print(f["patch"])
+                rendered_json = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
+                if getattr(args, "json", False):
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Workspace diff written to {args.output}")
+                else:
+                    if not data["files"]:
+                        print("No visible changes in workspace.")
+                    for f in data["files"]:
+                        print(f"=== {f['status']}: {f['path']} ===")
+                        if f.get("patch"):
+                            print(f["patch"])
             elif args.action == "commit":
                 if not args.session_id:
                     parser.error("workspaces commit requires a session ID")
@@ -657,9 +706,17 @@ def main(argv: list[str] | None = None) -> int:
                         author_name=args.author_name,
                         author_email=args.author_email,
                     )
-                print(f"Committed {res.commit_sha[:12]} on {res.branch}: {res.message}")
-                for path in res.files_committed:
-                    print(f"  {path}")
+                rendered_json = res.model_dump_json(indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
+                if getattr(args, "json", False):
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Commit report written to {args.output}")
+                else:
+                    print(f"Committed {res.commit_sha[:12]} on {res.branch}: {res.message}")
+                    for path in res.files_committed:
+                        print(f"  {path}")
             elif args.action == "pr":
                 if not args.session_id:
                     parser.error("workspaces pr requires a session ID")
@@ -678,9 +735,17 @@ def main(argv: list[str] | None = None) -> int:
                         draft=args.draft,
                         session_store=session,
                     )
-                print(f"Created Pull Request: {pr_res.pr_url}")
-                if pr_res.pr_number:
-                    print(f"PR #{pr_res.pr_number} on {pr_res.branch} ({pr_res.commit_sha[:12]})")
+                rendered_json = pr_res.model_dump_json(indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
+                if getattr(args, "json", False):
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Pull request report written to {args.output}")
+                else:
+                    print(f"Created Pull Request: {pr_res.pr_url}")
+                    if pr_res.pr_number:
+                        print(f"PR #{pr_res.pr_number} on {pr_res.branch} ({pr_res.commit_sha[:12]})")
             elif args.action == "revert":
                 if not args.session_id:
                     parser.error("workspaces revert requires a session ID")
@@ -689,18 +754,31 @@ def main(argv: list[str] | None = None) -> int:
                 session = SessionStore(session_root, args.session_id) if session_root.is_dir() else None
                 with manager.guard(workspace.path, message=f"Cannot revert: workspace {workspace.path} is currently locked"):
                     result = revert_workspace(workspace, session)
-                if result.reverted_files:
-                    print(f"Reverted {len(result.reverted_files)} files in workspace {workspace.path}:")
-                    for f in result.reverted_files:
-                        print(f"  - {f}")
+                rendered_json = result.model_dump_json(indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
+                if getattr(args, "json", False):
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Revert report written to {args.output}")
                 else:
-                    print(f"Workspace {workspace.path} is clean; nothing to revert.")
+                    if result.reverted_files:
+                        print(f"Reverted {len(result.reverted_files)} files in workspace {workspace.path}:")
+                        for f in result.reverted_files:
+                            print(f"  - {f}")
+                    else:
+                        print(f"Workspace {workspace.path} is clean; nothing to revert.")
             elif args.action == "audit":
                 if args.session_id:
                     parser.error("workspaces audit does not take a session ID")
                 items = manager.audit(args.repo)
+                rendered_json = json.dumps(items, ensure_ascii=False, indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
                 if getattr(args, "json", False):
-                    print(json.dumps(items, indent=2))
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Workspace audit report written to {args.output}")
                 else:
                     if not items:
                         print("No worktrees found.")
@@ -722,8 +800,13 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run = getattr(args, "dry_run", False)
                 merged_only = not getattr(args, "include_unmerged", False)
                 result = manager.prune(args.repo, dry_run=dry_run, merged_only=merged_only)
+                rendered_json = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
                 if getattr(args, "json", False):
-                    print(json.dumps(result, indent=2))
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Workspace prune report written to {args.output}")
                 else:
                     prefix = "[dry-run] " if dry_run else ""
                     if result["pruned"]:
@@ -740,13 +823,13 @@ def main(argv: list[str] | None = None) -> int:
                 if args.session_id:
                     parser.error("workspaces storage does not take a session ID")
                 report = manager.audit_storage(args.repo, quota_bytes=args.quota_bytes)
-                if getattr(args, "json", False) or getattr(args, "output", None):
-                    rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
-                    if args.output:
-                        _write_cli_output(args.output, rendered)
-                        print(f"Workspace storage audit report written to {args.output}")
-                    else:
-                        print(rendered, end="")
+                rendered_json = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+                if getattr(args, "output", None):
+                    _write_cli_output(args.output, rendered_json)
+                if getattr(args, "json", False):
+                    print(rendered_json, end="")
+                elif getattr(args, "output", None):
+                    print(f"Workspace storage audit report written to {args.output}")
                 else:
                     print(f"Workspace Storage Audit ({report['repository']}):")
                     print(f"  Active Workspaces: {report['workspace_count']}")

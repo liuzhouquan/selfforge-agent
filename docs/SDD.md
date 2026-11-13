@@ -118,6 +118,7 @@ flowchart LR
 | 8 | [SF-EVAL-09](#sf-eval-09) | Merged | Codex（审查整合） | SF-EVAL-08 / SF-WS-05（Merged） | [PR #65](https://github.com/liuzhouquan/selfforge-agent/pull/65)：CLI `eval-suite` / `eval-validate` 接入 `--policy` 冻结策略强校验、预算门禁与安全导出（`_write_cli_output`） |
 | 9 | [SF-ENV-07](#sf-env-07) | Merged | Codex（审查整合） | SF-WS-05 / SF-ENV-06（Merged） | [PR #66](https://github.com/liuzhouquan/selfforge-agent/pull/66)：CLI `sandbox` 诊断与规划命令补齐结构化安全导出（`--json` / `--output`）与 `export-lock` 安全写盘 |
 | 10 | [SF-TEST-03](#sf-test-03) | Merged | Codex（审查整合） | SF-TEST-02 / SF-WS-05（Merged） | [PR #67](https://github.com/liuzhouquan/selfforge-agent/pull/67)：SessionStore 补齐回归验证记录追溯与 GET /api/code/workspaces/{session_id}/regression 只读接口，并在 PR 交付中绑定回归验证证据 |
+| 11 | [SF-WS-07](#sf-ws-07) | In Progress | Antigravity | SF-WS-05 / SF-WS-06（Merged） | CLI workspaces 全动作（list/diff/commit/pr/revert/remove/audit/prune/storage）结构化 --json 与安全 --output 导出对齐 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -537,6 +538,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #67 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43372329570（组合 head；各源 PR 见审查记录） / 59a03b8a91aaa18f1648ee9b761ab894fb845a09
 仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 准确结论回填 PR #67 交付描述
 下一步：后续真实模型测量需另行明确执行任务并遵守已冻结策略与预算，当前未运行该测量。
+```
+
+### SF-WS-07
+
+**目标：** 在 `selfforge-agent workspaces` CLI 中对齐全部 9 个动作（`list`、`diff`、`commit`、`pr`、`revert`、`remove`、`audit`、`prune`、`storage`）的结构化 `--json` 与安全 `--output` 导出能力。当指定 `--json` 时，标准输出纯合法 JSON 且无终端人类可读提示干扰（即使同时指定 `--output`）；当指定 `--output` 时，统一经 `_validate_cli_output_target` 提前进行 fail-closed 防符链穿透校验，并通过 `_write_cli_output` 安全落盘；不带 `--json` 保持原有标准输出格式与退出码语义；修复 `workspaces storage --json --output` 下标准输出被写入提示文本污染的问题。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/cli.py`（`workspaces` 处理段）及专项测试 `tests/test_workspaces_cli_export.py`；不改动 `CodingWorkspaceManager` 底层文件系统与 Git 核心逻辑。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-WS-07-A1 | `workspaces list --json`、`diff --json`、`commit --json`、`pr --json`、`revert --json`、`remove --json`、`audit --json`、`prune --json` 与 `storage --json` 均能输出纯合法 JSON 且无终端人类文本干扰；不带 `--json` 保持原有终端可读输出与退出码 | CLI 命令行参数与 stdout 正反对照测试 | 未验证（开发中） |
+| SF-WS-07-A2 | `workspaces` 全部 9 个 action 支持 `--output` 导出，统一使用 `_write_cli_output` 安全写入常规文件，写盘内容与 `--json` 数据一致 | CLI 导出文件内容与完整序列化断言 | 未验证（开发中） |
+| SF-WS-07-A3 | 当传入符号链接、目录、FIFO 等非法路径或缺失父目录时，`workspaces` 提前经 `_validate_cli_output_target` 进行 fail-closed 拦截并以退出码 2 退出，不破坏原有文件，不执行后续写操作；同时修复 `workspaces storage --json --output` 下标准输出被提示文本污染的缺陷 | 负路径（symlink/directory/fifo/missing-parent）安全隔离测试 | 未验证（开发中） |
+| SF-WS-07-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证（开发中） |
+
+执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-ws-07`；Worktree=`selfforge-sf-ws-07`。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-ws-07 (worktree: selfforge-sf-ws-07) / 开发中
+已完成验收与证据 ID：无（开发中）
+未完成 / 环境限制 / 未提交内容归属：SF-WS-07-A1..A4（开发中）
+PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+仍在运行的本任务进程或 CI（有则填）：无
+下一步：编写 SF-WS-07 失败复现测试并在 cli.py 中实现 workspaces 全动作安全导出与 --json 对齐
 ```
 
 ## 5. 验收追踪与执行记录格式
