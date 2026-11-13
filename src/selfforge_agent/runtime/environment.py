@@ -2,8 +2,10 @@
 
 import hashlib
 import math
+import os
 import re
 import shlex
+import stat
 import time
 import tomllib
 from pathlib import Path
@@ -163,6 +165,32 @@ def bind_environment(executor: Executor | None, session: SessionStore, *,
         session.record_environment({"version": 1, "sandbox": sandbox, "image_id": image_id})
 
 
+def _safe_write_text(path: Path, content: str) -> None:
+    target = path.expanduser()
+    if target.is_symlink():
+        raise ValueError(f"Refusing to write to symlink output path: {path}")
+    parent = target.parent
+    if not parent.is_dir():
+        raise ValueError(f"Output parent directory does not exist: {parent}")
+    if os.path.lexists(target):
+        info = os.lstat(target)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"Output path is not a regular file: {path}")
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(target, flags, 0o644)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"Output path is not a regular file: {path}")
+        os.ftruncate(fd, 0)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(content)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = None) -> str:
     """Extract hash-locked requirement lines (name==version --hash=sha256:...) from uv.lock, poetry.lock, Pipfile.lock, or requirements.lock."""
     if not lock_path.is_file():
@@ -183,7 +211,7 @@ def export_hash_locked_requirements(lock_path: Path, output_path: Path | None = 
     else:
         result = export_toml_requirements(content)
     if output_path is not None:
-        output_path.write_text(result, encoding="utf-8")
+        _safe_write_text(output_path, result)
     return result
 
 
