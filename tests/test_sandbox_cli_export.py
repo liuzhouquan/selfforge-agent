@@ -175,3 +175,23 @@ def test_export_hash_locked_requirements_rejects_symlink_and_special_files(
         export_hash_locked_requirements(lock_file, fifo_out)
 
     assert victim.read_text(encoding="utf-8") == "DO_NOT_TOUCH"
+
+
+@pytest.mark.parametrize('action', ['freshness', 'check', 'plan', 'audit', 'export-lock'])
+@pytest.mark.parametrize('with_output', [False, True])
+def test_sandbox_json_flag_always_produces_json_stdout(tmp_path, capsys, action, with_output):
+    repo = _setup_sample_repo(tmp_path)
+    args = ['sandbox', action, '--repo', str(repo), '--json']
+    if action == 'audit':
+        wheels = tmp_path / 'wheels'
+        wheels.mkdir()
+        args += ['--wheelhouse', str(wheels)]
+    if action == 'export-lock':
+        args += ['--lock', str(repo / 'requirements.lock')]
+    if with_output:
+        args += ['--output', str(tmp_path / 'result')]
+    assert main(args) in (0, 1)
+    result = json.loads(capsys.readouterr().out)
+    assert isinstance(result, dict)
+    if action == 'export-lock':
+        assert 'click==8.1.7' in result['requirements']

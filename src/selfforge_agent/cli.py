@@ -384,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
                     _write_cli_output(args.output, rendered)
                 except (ValueError, OSError) as exc:
                     parser.error(str(exc))
+            if args.output and not args.json:
                 print(f"Wheelhouse audit report written to {args.output}")
             else:
                 print(rendered, end="")
@@ -403,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
                     _write_cli_output(args.output, rendered)
                 except (ValueError, OSError) as exc:
                     parser.error(str(exc))
+            if args.json:
+                print(rendered, end="")
+            elif args.output:
                 print(f"Dependency freshness report written to {args.output}")
             else:
                 if report["fresh"]:
@@ -448,7 +452,9 @@ def main(argv: list[str] | None = None) -> int:
                 content = export_hash_locked_requirements(args.lock, args.output)
             except (ValueError, OSError) as exc:
                 parser.error(str(exc))
-            if args.output:
+            if args.json:
+                print(json.dumps({"requirements": content}, ensure_ascii=False, indent=2))
+            elif args.output:
                 print(f"Exported hash-locked requirements to {args.output}")
             else:
                 print(content, end="")
@@ -470,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
                     _write_cli_output(args.output, rendered)
                 except (ValueError, OSError) as exc:
                     parser.error(str(exc))
+            if args.output and not args.json:
                 print(f"Environment preparation plan written to {args.output}")
             else:
                 print(rendered, end="")
