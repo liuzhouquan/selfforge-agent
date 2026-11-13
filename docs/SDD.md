@@ -118,7 +118,7 @@ flowchart LR
 | 8 | [SF-EVAL-09](#sf-eval-09) | Merged | Codex（审查整合） | SF-EVAL-08 / SF-WS-05（Merged） | [PR #65](https://github.com/liuzhouquan/selfforge-agent/pull/65)：CLI `eval-suite` / `eval-validate` 接入 `--policy` 冻结策略强校验、预算门禁与安全导出（`_write_cli_output`） |
 | 9 | [SF-ENV-07](#sf-env-07) | Merged | Codex（审查整合） | SF-WS-05 / SF-ENV-06（Merged） | [PR #66](https://github.com/liuzhouquan/selfforge-agent/pull/66)：CLI `sandbox` 诊断与规划命令补齐结构化安全导出（`--json` / `--output`）与 `export-lock` 安全写盘 |
 | 10 | [SF-TEST-03](#sf-test-03) | Merged | Codex（审查整合） | SF-TEST-02 / SF-WS-05（Merged） | [PR #67](https://github.com/liuzhouquan/selfforge-agent/pull/67)：SessionStore 补齐回归验证记录追溯与 GET /api/code/workspaces/{session_id}/regression 只读接口，并在 PR 交付中绑定回归验证证据 |
-| 11 | [SF-RUN-07](#sf-run-07) | In Progress | Antigravity | 无 | ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
+| 11 | [SF-RUN-07](#sf-run-07) | In Review | Antigravity | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -548,21 +548,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #67 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-RUN-07-A1 | `read_file` 拒绝读取非普通文件（FIFO、目录、套接字等），遇到 FIFO 时不发生阻塞并显式报错 `File does not exist or is not a regular file`；遇到不存在的文件同样受控报错；正常普通文件全量与分段读取不受影响 | `tests/test_runtime_tool_safety.py` 单元与负路径隔离测试 | 未验证（开发中） |
-| SF-RUN-07-A2 | `search_code` 在扫描字节总和达到或超过 `MAX_SEARCH_BYTES` (8MB) 时即刻终止遍历，并在返回文本尾部追加截断通知 `[search limit reached: byte budget exceeded]`；文件遍历计数达到 `2000` 时同样终止并追加通知 `[search limit reached: file count limit exceeded]`；文件遇到 `OSError`（如无权限读取）时安全跳过而不导致整个搜索崩溃；非法空 pattern 或空 glob 显式抛出受控错误 | `tests/test_runtime_tool_safety.py` 搜索预算门禁与容错测试 | 未验证（开发中） |
-| SF-RUN-07-A3 | `edit_file` 对已存在的非普通文件（FIFO、目录）显式抛出 `Target exists and is not a regular file`；对目标路径本身为断开符号链接或父级含符号链接的情况严格拒绝并报错；`run_tests` 拒绝目标路径为非普通文件且非目录的特殊文件（如 FIFO） | `tests/test_runtime_tool_safety.py` 特殊文件与符号链接拦截测试 | 未验证（开发中） |
-| SF-RUN-07-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证（开发中） |
+| SF-RUN-07-A1 | `read_file` 拒绝读取非普通文件（FIFO、目录、套接字等），遇到 FIFO 时不发生阻塞并显式报错 `File does not exist or is not a regular file`；遇到不存在的文件同样受控报错；正常普通文件全量与分段读取不受影响 | `tests/test_runtime_tool_safety.py` 单元与负路径隔离测试 | E1 |
+| SF-RUN-07-A2 | `search_code` 在扫描字节总和达到或超过 `MAX_SEARCH_BYTES` (8MB) 时即刻终止遍历，并在返回文本尾部追加截断通知 `[search limit reached: byte budget exceeded]`；文件遍历计数达到 `2000` 时同样终止并追加通知 `[search limit reached: file count limit exceeded]`；文件遇到 `OSError`（如无权限读取）时安全跳过而不导致整个搜索崩溃；非法空 pattern 或空 glob 显式抛出受控错误 | `tests/test_runtime_tool_safety.py` 搜索预算门禁与容错测试 | E2 |
+| SF-RUN-07-A3 | `edit_file` 对已存在的非普通文件（FIFO、目录）显式抛出 `Target exists and is not a regular file`；对目标路径本身为断开符号链接或父级含符号链接的情况严格拒绝并报错；`run_tests` 拒绝目标路径为非普通文件且非目录的特殊文件（如 FIFO） | `tests/test_runtime_tool_safety.py` 特殊文件与符号链接拦截测试 | E3 |
+| SF-RUN-07-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-run-07`；Worktree=`selfforge-sf-run-07`。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-RUN-07-A1 | `tests/test_runtime_tool_safety.py::test_read_file_rejects_fifo_and_directory_without_blocking` | ToolRegistry `read_file` 针对 FIFO、目录及不存在文件实施 fail-closed 非普通文件防御，验证不挂起阻塞并返回受控错误；[PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71) | 源码 SHA `29811dce176570015c36f57206643308c92ed36f`；passed；CI [Run #43419734875](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43419734875) success |
+| E2 | SF-RUN-07-A2 | `tests/test_runtime_tool_safety.py::test_search_code_enforces_byte_budget_and_truncation_notice`、`tests/test_runtime_tool_safety.py::test_search_code_handles_oserror_and_invalid_globs` | ToolRegistry `search_code` 执行 8 MB `MAX_SEARCH_BYTES` 预算中断，结果追加截断通知；测试单文件 `OSError` 容错跳过与非法 glob 校验；[PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71) | 源码 SHA `29811dce176570015c36f57206643308c92ed36f`；passed；CI [Run #43419734875](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43419734875) success |
+| E3 | SF-RUN-07-A3 | `tests/test_runtime_tool_safety.py::test_edit_file_rejects_fifo_directory_and_broken_symlink`、`tests/test_runtime_tool_safety.py::test_run_tests_rejects_fifo_target` | ToolRegistry `edit_file` 对已存在的非普通文件（FIFO、目录）及断开符号链接拦截；`run_tests` 对非法特殊文件类型拦截；[PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71) | 源码 SHA `29811dce176570015c36f57206643308c92ed36f`；passed；CI [Run #43419734875](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43419734875) success |
+| E4 | SF-RUN-07-A4 | `tests/test_runtime_tool_safety.py::test_read_file_rejects_fifo_and_directory_without_blocking` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -v tests/test_runtime*.py`（92 passed）及 GitHub Actions CI（包含 Docker 集成测试）；[PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71) | 源码 SHA `29811dce176570015c36f57206643308c92ed36f`；passed；CI [Run #43419734875](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43419734875) success |
+
+执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-run-07`；Worktree=`selfforge-sf-run-07`；PR=[#71](https://github.com/liuzhouquan/selfforge-agent/pull/71)。在 `ToolRegistry` 中实现搜索预算中断与截断通知、文件读取非普通文件防御与编辑/测试边界防御（源码提交 `29811dce176570015c36f57206643308c92ed36f`，[R1 CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43419734875) 全绿）；本状态提交更新文档，最终 head `H` CI 待回填。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-run-07 (worktree: selfforge-sf-run-07) / 开发中
-已完成验收与证据 ID：无（开发中）
-未完成 / 环境限制 / 未提交内容归属：SF-RUN-07-A1..A4（开发中）
-PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-run-07 (worktree: selfforge-sf-run-07) / 已验证源码 29811dce176570015c36f57206643308c92ed36f
+已完成验收与证据 ID：SF-RUN-07-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无
+PR / 准确 head CI / merge SHA（有则填）：PR #71 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43419734875 / 待合并
 仍在运行的本任务进程或 CI（有则填）：无
-下一步：运行本地全量测试门禁并提交源码提交 S
+下一步：等待审阅整合或继续并行认领独立任务
 ```
 
 ## 5. 验收追踪与执行记录格式
