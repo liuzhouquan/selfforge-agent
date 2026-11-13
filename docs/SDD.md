@@ -118,6 +118,7 @@ flowchart LR
 | 8 | [SF-EVAL-09](#sf-eval-09) | Merged | Codex（审查整合） | SF-EVAL-08 / SF-WS-05（Merged） | [PR #65](https://github.com/liuzhouquan/selfforge-agent/pull/65)：CLI `eval-suite` / `eval-validate` 接入 `--policy` 冻结策略强校验、预算门禁与安全导出（`_write_cli_output`） |
 | 9 | [SF-ENV-07](#sf-env-07) | Merged | Codex（审查整合） | SF-WS-05 / SF-ENV-06（Merged） | [PR #66](https://github.com/liuzhouquan/selfforge-agent/pull/66)：CLI `sandbox` 诊断与规划命令补齐结构化安全导出（`--json` / `--output`）与 `export-lock` 安全写盘 |
 | 10 | [SF-TEST-03](#sf-test-03) | Merged | Codex（审查整合） | SF-TEST-02 / SF-WS-05（Merged） | [PR #67](https://github.com/liuzhouquan/selfforge-agent/pull/67)：SessionStore 补齐回归验证记录追溯与 GET /api/code/workspaces/{session_id}/regression 只读接口，并在 PR 交付中绑定回归验证证据 |
+| 11 | [SF-WS-08](#sf-ws-08) | In Progress | Antigravity | 无 | WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -537,6 +538,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #67 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43372329570（组合 head；各源 PR 见审查记录） / 59a03b8a91aaa18f1648ee9b761ab894fb845a09
 仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 准确结论回填 PR #67 交付描述
 下一步：后续真实模型测量需另行明确执行任务并遵守已冻结策略与预算，当前未运行该测量。
+```
+
+### SF-WS-08
+
+**目标：** 在 `workspace_diff` 与 `delivery` 中贯彻 fail-closed 与无特权安全隔离原则。在 `workspace_diff` 中，对未跟踪文件（untracked）遍历其所有父级目录，若任何一级为符号链接或解析后脱离工作区/指向受保护路径，则安全省略（标记 `[Untracked non-text, symlink, or large file omitted]`），防止通过外部符号链接目录泄露工作区外部敏感数据；对未跟踪文件读取时捕获 `(UnicodeError, OSError)`（包括 `PermissionError`），输出 `[Untracked unreadable file omitted]` 而非崩溃。在 `delivery.py` 的 `commit_workspace` 中过滤未跟踪的非普通文件（FIFO、设备、套接字等）以及指向工作区外的符号链接；在 `revert_workspace` 中，清理未跟踪项时确保断开的符号链接和目录符号链接能够通过 `target.unlink(missing_ok=True)` 彻底清理，防止残留。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/runtime/workspace_diff.py`、`src/selfforge_agent/runtime/delivery.py` 及专项测试 `tests/test_workspace_diff_safety.py`；不改动 `CodingWorkspace` 核心会话生命周期或 Git 命令层。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-WS-08-A1 | `workspace_diff` 遇到处于符号链接目录下的未跟踪文件，或解析后脱离工作区/命中受保护路径的未跟踪文件，输出 `[Untracked non-text, symlink, or large file omitted]`；不泄露目标文件内容，不发生未受控异常 | `tests/test_workspace_diff_safety.py` 符号链接与边界测试 | 未验证（开发中） |
+| SF-WS-08-A2 | `workspace_diff` 读取未跟踪文件时若遇到不可读权限（`PermissionError`）或其他 `OSError`，安全降级输出 `[Untracked unreadable file omitted]`；遇到非 UTF-8 编码文件输出 `[Untracked non-UTF-8 file omitted]`；普通正常未跟踪文件输出标准 unified diff | `tests/test_workspace_diff_safety.py` 不可读文件与编码容错测试 | 未验证（开发中） |
+| SF-WS-08-A3 | `commit_workspace` 过滤未跟踪的特殊设备/FIFO/套接字及指向工作区外的符号链接，不将其纳入暂存区或提交中；`revert_workspace` 能够彻底移除未跟踪的断链符号链接及指向外部目录的符号链接 | `tests/test_workspace_diff_safety.py` delivery 提交与清理隔离测试 | 未验证（开发中） |
+| SF-WS-08-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证（开发中） |
+
+执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-ws-08`；Worktree=`selfforge-sf-ws-08`。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-ws-08 (worktree: selfforge-sf-ws-08) / 开发中
+已完成验收与证据 ID：无（开发中）
+未完成 / 环境限制 / 未提交内容归属：SF-WS-08-A1..A4（开发中）
+PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+仍在运行的本任务进程或 CI（有则填）：无
+下一步：运行本地全量测试门禁并提交源码提交 S
 ```
 
 ## 5. 验收追踪与执行记录格式

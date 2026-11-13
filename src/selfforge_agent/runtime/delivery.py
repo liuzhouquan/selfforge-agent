@@ -69,7 +69,22 @@ def commit_workspace(
 
     tracked = _paths(workspace, "diff", "--no-renames", "--name-only", "-z", "HEAD")
     untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
-    visible_changes = [path for path in set(tracked + untracked) if _visible(path)]
+
+    def _safe_commit_path(p: str) -> bool:
+        if not _visible(p):
+            return False
+        candidate = workspace.path / p
+        if candidate.exists() and not (candidate.is_file() or candidate.is_symlink() or candidate.is_dir()):
+            return False
+        if candidate.is_symlink():
+            try:
+                if not candidate.resolve().is_relative_to(workspace.path):
+                    return False
+            except OSError:
+                return False
+        return True
+
+    visible_changes = [path for path in set(tracked + untracked) if _safe_commit_path(path)]
 
     cached_before = _paths(workspace, "diff", "--cached", "--no-renames", "--name-only", "-z")
     if any(not _visible(path) for path in cached_before):
@@ -154,7 +169,7 @@ def revert_workspace(
             try:
                 if not target.parent.resolve(strict=True).is_relative_to(workspace.path):
                     continue
-                if target.is_symlink() or target.is_file():
+                if target.is_symlink() or not target.is_dir():
                     # Unlink the entry, never the target of an untracked symlink.
                     target.unlink(missing_ok=True)
                     reverted.append(rel)
