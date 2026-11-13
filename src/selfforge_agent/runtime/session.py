@@ -131,6 +131,37 @@ class SessionStore:
                             and re.fullmatch(r"[0-9a-f]{64}", candidate) else None)
         return snapshot
 
+    def regression_records(self, limit: int | None = None) -> list[dict]:
+        if limit is not None and limit <= 0:
+            raise ValueError("Limit must be positive")
+        reg_path = self.path.with_name(f"{self.session_id}.regression.jsonl")
+        if not reg_path.is_file():
+            return []
+        records: deque[dict] = deque(maxlen=limit)
+        for event in self._complete_events(reg_path):
+            records.append(event)
+        return list(records)
+
+    def latest_regression_record(self) -> dict | None:
+        records = self.regression_records(limit=1)
+        return records[0] if records else None
+
+    def confirmed_regression_snapshot(self) -> str | None:
+        reg_path = self.path.with_name(f"{self.session_id}.regression.jsonl")
+        if not reg_path.is_file():
+            return None
+        snapshot = None
+        for event in self._complete_events(reg_path):
+            candidate = event.get("workspace_sha256")
+            snapshot = (
+                candidate
+                if event.get("status") == "confirmed"
+                and isinstance(candidate, str)
+                and re.fullmatch(r"[0-9a-f]{64}", candidate)
+                else None
+            )
+        return snapshot
+
     def trace(self, event: str, **fields: object) -> None:
         self._append(self.trace_path, {"event": event, **fields})
 

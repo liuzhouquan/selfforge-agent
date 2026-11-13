@@ -114,6 +114,7 @@ flowchart LR
 | 4 | [SF-EVAL-08](#sf-eval-08) | Merged | Codex（审查整合） | SF-DEV-01；策略已冻结 | [PR #61](https://github.com/liuzhouquan/selfforge-agent/pull/61)：新 Runtime 22 题 v3 评测规格、冻结输入与无模型 Docker 预检 |
 | 5 | [SF-TEST-02](#sf-test-02) | Merged | Codex（审查整合） | SF-TEST-01（Merged） | [PR #62](https://github.com/liuzhouquan/selfforge-agent/pull/62)：Web Coding 工作台接入独立回归验证面板、状态门槛与结构化证据展示 |
 | 6 | [SF-WS-05](#sf-ws-05) | Merged | Codex（审查整合） | SF-WS-04 / SF-TEST-01（Merged） | [PR #63](https://github.com/liuzhouquan/selfforge-agent/pull/63)：修复 `/api/workspaces/storage` 管理器复用不一致并补齐 CLI `trace` / `test-regression` 安全结构化导出 |
+| 7 | [SF-TEST-03](#sf-test-03) | In Progress | Antigravity | SF-TEST-02 / SF-WS-05（Merged） | SessionStore 补齐回归验证记录追溯与 GET /api/code/workspaces/{session_id}/regression 只读接口，并在 PR 交付中绑定回归验证证据 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -367,6 +368,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #63 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227（组合 head；各源 PR head CI 见审查记录） / 473f04d9f8d8b394801b86a6f9f6e9a386821274
 仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 的准确结果回填 PR #63 交付描述
 下一步：后续真实模型测量需另行明确执行任务并遵守 v3 冻结策略与预算，当前未运行该测量。
+```
+
+### SF-TEST-03
+
+**目标：** 在 `SessionStore` 中补齐针对 `{session_id}.regression.jsonl` 的持久化只读追溯能力（`regression_records`、`latest_regression_record`、`confirmed_regression_snapshot`）；在 Web API 中新增只读查询端点 `GET /api/code/workspaces/{session_id}/regression`，使已完成的回归验证无需重复消耗 Docker 预算即可幂等恢复与追溯；并在 `create_pull_request` 中自动绑定与当前提交指纹匹配的独立回归验证客观证据。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/runtime/session.py`（SessionStore 回归记录查询）、`src/selfforge_agent/api/app.py`（GET 回归端点与模型定义）、`src/selfforge_agent/runtime/delivery.py`（PR 交付证据绑定）及专项测试 `tests/test_durable_regression_session_and_delivery.py`；不改动通用 Coding 主循环，不引入外部模型调用。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-TEST-03-A1 | `SessionStore` 持久化追溯：支持解析有界 `{session_id}.regression.jsonl` 事件流，提供 `regression_records(limit)`、`latest_regression_record()` 与 `confirmed_regression_snapshot()`；损坏行/未提交尾部安全容错，严格过滤非法指纹 | SessionStore 单元测试与事件流故障注入测试 | 未验证（开发中） |
+| SF-TEST-03-A2 | `GET /api/code/workspaces/{session_id}/regression`：仅允许本机调用；存在有效验证记录时返回最近一次 `RegressionValidationReport` 结构体；无记录返回 404；非法仓库或无效会话 ID 返回 400 | FastAPI `TestClient` 正反对照与参数边界测试 | 未验证（开发中） |
+| SF-TEST-03-A3 | `create_pull_request` 交付证据绑定：当会话具备与当前推送到远端的 `commit_sha` 指纹相匹配的已确认回归验证时，在 PR 描述中注入 `**Regression Validation**: Confirmed (old commit failed, repaired worktree passed)`；指纹不匹配或非 confirmed 状态时不虚增证实证据 | PR 交付证据链单元与真实 Git worktree 断言 | 未验证（开发中） |
+| SF-TEST-03-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试通过，CI 全绿 | 本地验证命令矩阵 + CI | 未验证（开发中） |
+
+执行记录（Owner/状态以上表为准）：Base=`60a1b386cda8f811be1edb5b7baf9e433a894c58`；Branch=`feat/sf-test-03`；Worktree=`selfforge-sf-test-03`。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：60a1b386cda8f811be1edb5b7baf9e433a894c58 / feat/sf-test-03 (worktree: selfforge-sf-test-03) / 开发中
+已完成验收与证据 ID：无（开发中）
+未完成 / 环境限制 / 未提交内容归属：SF-TEST-03-A1..A4（开发中）
+PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+仍在运行的本任务进程或 CI（有则填）：无
+下一步：编写 SF-TEST-03 失败复现测试并在源码分支实现 SessionStore 回归追溯、GET API 与 PR 证据绑定
 ```
 
 ## 5. 验收追踪与执行记录格式

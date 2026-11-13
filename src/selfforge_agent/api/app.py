@@ -730,6 +730,42 @@ def code_workspace_validate_regression(
         raise HTTPException(status_code=400, detail="Regression validation failed") from exc
 
 
+@app.get(
+    "/api/code/workspaces/{session_id}/regression",
+    response_model=RegressionValidationReport,
+)
+def code_workspace_get_regression(
+    session_id: str,
+    repository: str,
+    client: Request,
+) -> RegressionValidationReport:
+    _require_local(client)
+    raw_repo = Path(repository)
+    if not session_id or not session_id.isalnum():
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    repo = raw_repo.expanduser().resolve()
+    if not repo.is_dir() or not (repo / ".git").exists():
+        raise HTTPException(status_code=400, detail="Invalid repository root")
+    session_root = _CODING_WORKSPACES.session_root(
+        repo,
+        session_id,
+        legacy_roots=(_coding_session_root(repo), repo),
+    )
+    store = SessionStore(session_root, session_id)
+    latest = store.latest_regression_record()
+    if latest is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No regression validation record found for workspace {session_id}",
+        )
+    try:
+        return RegressionValidationReport.model_validate(latest)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=500, detail="Corrupted regression validation record"
+        ) from exc
+
+
 @app.get("/api/code/jobs", response_model=list[CodingJobResponse])
 def coding_jobs(repository: str, client: Request) -> list[dict]:
     _require_local(client)
