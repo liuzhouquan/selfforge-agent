@@ -114,6 +114,7 @@ flowchart LR
 | 4 | [SF-EVAL-08](#sf-eval-08) | Merged | Codex（审查整合） | SF-DEV-01；策略已冻结 | [PR #61](https://github.com/liuzhouquan/selfforge-agent/pull/61)：新 Runtime 22 题 v3 评测规格、冻结输入与无模型 Docker 预检 |
 | 5 | [SF-TEST-02](#sf-test-02) | Merged | Codex（审查整合） | SF-TEST-01（Merged） | [PR #62](https://github.com/liuzhouquan/selfforge-agent/pull/62)：Web Coding 工作台接入独立回归验证面板、状态门槛与结构化证据展示 |
 | 6 | [SF-WS-05](#sf-ws-05) | Merged | Codex（审查整合） | SF-WS-04 / SF-TEST-01（Merged） | [PR #63](https://github.com/liuzhouquan/selfforge-agent/pull/63)：修复 `/api/workspaces/storage` 管理器复用不一致并补齐 CLI `trace` / `test-regression` 安全结构化导出 |
+| 7 | [SF-ENV-07](#sf-env-07) | In Progress | Antigravity | SF-WS-05 / SF-ENV-06（Merged） | CLI `sandbox` 诊断与规划命令补齐结构化安全导出（`--json` / `--output`）与 `export-lock` 安全写盘 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -367,6 +368,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #63 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43231456227（组合 head；各源 PR head CI 见审查记录） / 473f04d9f8d8b394801b86a6f9f6e9a386821274
 仍在运行的本任务进程或 CI（无则写无）：本地进程无；最终 main CI 的准确结果回填 PR #63 交付描述
 下一步：后续真实模型测量需另行明确执行任务并遵守 v3 冻结策略与预算，当前未运行该测量。
+```
+
+### SF-ENV-07
+
+**目标：** 为 CLI `sandbox` 子命令（`detect`、`plan`、`audit`、`freshness` / `check`、`export-lock`）统一接入结构化输出（`--json`）与安全落盘校验（`_write_cli_output` 与 `_validate_cli_output_target`），修复 `audit`、`freshness`、`plan`、`export-lock` 原有无防护覆盖符号链接目标、FIFO 挂起与向非普通文件/非存在父目录写入的漏洞，并为 `sandbox detect` 与 `sandbox plan` 补齐 `--json` 与 `--output` 结构化导出能力。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/cli.py`（`sandbox` 参数配置与子命令执行逻辑）、`src/selfforge_agent/runtime/environment.py`（`export_hash_locked_requirements` 结合目标安全校验）及专项测试 `tests/test_sandbox_cli_export.py`；保持既有默认终端文本输出 100% 向后兼容；不执行任意代码或网络安装，不引入新外部依赖。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-ENV-07-A1 | `selfforge-agent sandbox detect`：默认保持既有易读文本输出；当传入 `--json` 时以结构化 JSON 格式输出 `detect_repository_environment` 完整字典（含 `layout`、`test_framework`、`test_paths`、`dependency_files`、`lock_files`、`has_hash_lock` 等）；当传入 `--output PATH` 时通过 `_write_cli_output` 安全写入指定路径 | CLI `main()` 子命令与真实/虚拟 Git 仓库断言 | 未验证（开发中） |
+| SF-ENV-07-A2 | `selfforge-agent sandbox plan`：支持 `--json` 输出结构化依赖准备计划，当传入 `--output PATH` 时复用 `_write_cli_output` 安全落盘，且未指定 `--output` 时通过 stdout 输出，保证终端与自动化管道兼容 | CLI 结构化计划导出单元与格式对照测试 | 未验证（开发中） |
+| SF-ENV-07-A3 | `sandbox audit`、`sandbox freshness`（及 `sandbox check`）、`sandbox export-lock` 接入安全导出：对符号链接目标、目录、FIFO 特殊文件、缺失父目录均提前 fail-closed 拒绝（退出码 2 且不覆写/损坏目标），常规合法路径正常写入 UTF-8 文件且权限受控 | 负路径（symlink/directory/FIFO/missing-parent）注入测试与安全写盘校验 | 未验证（开发中） |
+| SF-ENV-07-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试通过，CI 全绿 | 本地验证命令矩阵 + CI | 未验证（开发中） |
+
+执行记录（Owner/状态以上表为准）：Base=`60a1b386cda8f811be1edb5b7baf9e433a894c58`；Branch=`feat/sf-env-07`；Worktree=`selfforge-sf-env-07`。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：60a1b386cda8f811be1edb5b7baf9e433a894c58 / feat/sf-env-07 (worktree: selfforge-sf-env-07) / 开发中
+已完成验收与证据 ID：无（开发中）
+未完成 / 环境限制 / 未提交内容归属：SF-ENV-07-A1..A4（开发中）
+PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+仍在运行的本任务进程或 CI（有则填）：无
+下一步：编写 SF-ENV-07 失败复现测试并在源码分支实现 sandbox 安全导出与 --json 支持
 ```
 
 ## 5. 验收追踪与执行记录格式
