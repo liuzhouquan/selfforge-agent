@@ -413,6 +413,63 @@ button {
   color:#4f6858;
   overflow-wrap:anywhere
 }
+.coding-governance-summary {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  cursor:pointer;
+  font-size:13px;
+  color:#213e30
+}
+.coding-governance-summary small,.coding-governance-section .coding-diff-head small {
+  font-size:11px;
+  color:#667e6d
+}
+.coding-governance-section {
+  border-top:1px solid #dfeadf;
+  margin-top:14px;
+  padding-top:14px
+}
+.coding-governance-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:10px
+}
+.coding-governance-actions button,.coding-governance-prune-guards button {
+  border:1px solid #c8dccb;
+  border-radius:8px;
+  background:#f5faf5;
+  color:#245d3e;
+  padding:8px 12px;
+  font-size:12px;
+  font-weight:700
+}
+.coding-governance-actions button:disabled,.coding-governance-prune-guards button:disabled {
+  opacity:.5;
+  cursor:not-allowed
+}
+.coding-governance-prune-guards {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:12px;
+  margin-top:10px;
+  font-size:12px;
+  color:#334f3f
+}
+.coding-governance-prune-guards button {
+  border-color:#9e3c3c;
+  background:#fff5f5;
+  color:#8a2727
+}
+.coding-governance-list {
+  display:grid;
+  gap:8px;
+  margin-top:8px
+}
 .coding-workflow [hidden] {
   display:none
 }
