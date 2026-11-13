@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from threading import Event
 from typing import Any, Literal
@@ -79,7 +80,7 @@ from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
-from selfforge_agent.runtime.workspace import CodingWorkspaceManager
+from selfforge_agent.runtime.workspace import CodingWorkspaceManager, WorkspaceError
 from selfforge_agent.runtime.workspace_diff import DiffLimitError, workspace_diff
 from selfforge_agent.service import ReviewService
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
@@ -728,6 +729,43 @@ def code_workspace_validate_regression(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail="Regression validation failed") from exc
+
+
+@app.get(
+    "/api/code/workspaces/{session_id}/regression",
+    response_model=RegressionValidationReport,
+)
+def code_workspace_get_regression(
+    session_id: str,
+    repository: str,
+    client: Request,
+) -> RegressionValidationReport:
+    _require_local(client)
+    if not re.fullmatch(r"[A-Za-z0-9]{1,64}", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    try:
+        repo = _CODING_WORKSPACES.validate_repository(Path(repository))
+        session_root = _CODING_WORKSPACES.session_root(
+            repo, session_id, legacy_roots=(_coding_session_root(repo), repo),
+        )
+        directory = session_root / ".selfforge" / "sessions"
+        if not directory.is_dir():
+            raise HTTPException(status_code=404, detail="No regression validation record")
+        store = SessionStore(session_root, session_id)
+        latest = store.latest_regression_record()
+    except (ValueError, OSError, WorkspaceError):
+        raise HTTPException(status_code=400, detail="Invalid repository or regression storage") from None
+    if latest is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No regression validation record found for workspace {session_id}",
+        )
+    try:
+        return RegressionValidationReport.model_validate(latest)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=500, detail="Corrupted regression validation record"
+        ) from exc
 
 
 @app.get("/api/code/jobs", response_model=list[CodingJobResponse])

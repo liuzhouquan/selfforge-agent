@@ -232,6 +232,23 @@ def _verified_commit(workspace: CodingWorkspace, session: SessionStore | None,
         return False
 
 
+def _verified_regression(workspace: CodingWorkspace, session: SessionStore | None,
+                         commit_sha: str) -> bool:
+    saved = (session.confirmed_regression_snapshot(base_sha=workspace.base_sha)
+             if session is not None and session.session_id == workspace.session_id else None)
+    if saved is None:
+        return False
+    try:
+        changed = _paths(workspace, "diff", "--name-only", "-z", commit_sha)
+        changed += _paths(workspace, "ls-files", "--others", "--directory", "-z")
+        if any(not any(workspace_entry_excluded(part) for part in Path(path).parts)
+               for path in changed):
+            return False
+        return workspace_fingerprint(workspace.path) == saved
+    except (DeliveryError, WorkspaceSnapshotError, OSError, TimeoutError):
+        return False
+
+
 def create_pull_request(
     workspace: CodingWorkspace,
     title: str,
@@ -287,9 +304,15 @@ def create_pull_request(
     pr_body = body.strip()
     if session_store:
         passed = _verified_commit(workspace, session_store, commit_sha)
+        reg_passed = _verified_regression(workspace, session_store, commit_sha)
+        reg_note = (
+            "\n**Regression Validation**: Confirmed (old commit failed, repaired worktree passed)"
+            if reg_passed else ""
+        )
         evidence_note = (
             f"\n\n---\n**Verification for commit `{commit_sha}`**: "
-            f"{'Verified (tests passed with workspace content match)' if passed else 'Unverified'}\n"
+            f"{'Verified (tests passed with workspace content match)' if passed else 'Unverified'}"
+            f"{reg_note}\n"
             f"**Session ID**: `{workspace.session_id}`"
         )
         pr_body = (pr_body + evidence_note).strip()
