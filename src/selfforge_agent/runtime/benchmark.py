@@ -143,7 +143,8 @@ def _safe_relative(value: str) -> str:
     return path.as_posix()
 
 
-def load_suite(manifest: Path, *, _contents: bytes | None = None
+def load_suite(manifest: Path, *, _contents: bytes | None = None,
+               _assets: dict[str, bytes] | None = None
                ) -> tuple[BenchmarkSuite, list[PreparedCase]]:
     manifest = manifest.expanduser().resolve()
     suite = BenchmarkSuite.model_validate_json(
@@ -175,15 +176,18 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None
             _safe_relative(changed)
         if len(set(case.allowed_changes)) != len(case.allowed_changes):
             raise ValueError(f"Case {case.id} repeats an allowed change path")
-        holdout_bytes = holdout.read_bytes()
+        holdout_bytes = holdout.read_bytes() if _assets is None else _assets[case.holdout_test]
         reference_bytes = None
         if case.reference_patch is not None:
             reference = (manifest.parent / case.reference_patch).resolve()
             if (not reference.is_file() or reference.suffix not in {".patch", ".diff"}
                     or reference.is_relative_to(repository)):
                 raise ValueError(f"Case {case.id} needs a reference patch outside the repository")
-            with reference.open("rb") as handle:
-                reference_bytes = handle.read(MAX_REFERENCE_BYTES + 1)
+            if _assets is None:
+                with reference.open("rb") as handle:
+                    reference_bytes = handle.read(MAX_REFERENCE_BYTES + 1)
+            else:
+                reference_bytes = _assets[case.reference_patch]
             if not reference_bytes or len(reference_bytes) > MAX_REFERENCE_BYTES:
                 raise ValueError(f"Case {case.id} reference patch must contain 1-262144 bytes")
         prepared.append(PreparedCase(case, repository, holdout_bytes,
@@ -457,15 +461,16 @@ def _reference_check(case: PreparedCase, *, sandbox: Literal["docker", "host"],
 
 
 def _preflight(manifest: Path, *, sandbox: Literal["docker", "host"], trusted_host: bool,
-               image: str, test_timeout: float, require_references: bool = False
+               image: str, test_timeout: float, require_references: bool = False,
+               manifest_contents: bytes | None = None, asset_contents: dict[str, bytes] | None = None
                ) -> tuple[bytes, BenchmarkSuite, list[PreparedCase], dict, dict]:
     if sandbox not in {"docker", "host"} or test_timeout <= 0:
         raise ValueError("Invalid benchmark sandbox or test timeout")
     if sandbox == "host" and not trusted_host:
         raise ValueError("Host benchmark execution requires explicit trust")
     manifest = manifest.expanduser().resolve()
-    manifest_bytes = manifest.read_bytes()
-    suite, cases = load_suite(manifest, _contents=manifest_bytes)
+    manifest_bytes = manifest.read_bytes() if manifest_contents is None else manifest_contents
+    suite, cases = load_suite(manifest, _contents=manifest_bytes, _assets=asset_contents)
     if require_references and any(case.reference_bytes is None for case in cases):
         raise ValueError("Task validation requires a reference_patch for every case")
     images = {}
@@ -490,11 +495,13 @@ def _preflight(manifest: Path, *, sandbox: Literal["docker", "host"], trusted_ho
 
 def validate_suite(manifest: Path, *, sandbox: Literal["docker", "host"] = "docker",
                    trusted_host: bool = False, image: str = "selfforge-agent-sandbox:latest",
-                   test_timeout: float = 60) -> dict:
+                   test_timeout: float = 60, manifest_contents: bytes | None = None,
+                   asset_contents: dict[str, bytes] | None = None) -> dict:
     """Check task solvability without constructing or calling a model."""
     contents, suite, _, images, baselines = _preflight(
         manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
-        test_timeout=test_timeout, require_references=True)
+        test_timeout=test_timeout, require_references=True,
+        manifest_contents=manifest_contents, asset_contents=asset_contents)
     return {"version": 1, "status": "validated", "cases": len(suite.cases),
             "manifest_sha256": hashlib.sha256(contents).hexdigest(),
             "sandbox": sandbox, "images": images, "baselines": baselines}
@@ -503,7 +510,7 @@ def validate_suite(manifest: Path, *, sandbox: Literal["docker", "host"] = "dock
 def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[BenchmarkCase], ChatModel],
               *, sandbox: Literal["docker", "host"], trusted_host: bool, image: str,
               max_steps: int, time_budget: float, test_timeout: float,
-              failure_artifacts: Path | None = None) -> BenchmarkOutcome:
+              failure_artifacts: Path | None = None, context_budget: int = 8000) -> BenchmarkOutcome:
     started = time.monotonic()
     agent_status = visible_status = holdout_status = provider = model = ""
     changed: list[str] = []
@@ -526,7 +533,8 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
             executor = (DockerExecutor(workspace, image=image) if sandbox == "docker"
                         else HostExecutor(workspace, trusted=trusted_host))
             agent = CodingAgent(model_factory(case.spec), ToolRegistry(workspace, executor),
-                                session, max_steps=max_steps, time_budget=time_budget)
+                                session, max_steps=max_steps, time_budget=time_budget,
+                                context_budget=context_budget)
             task = (case.spec.task + "\n\nAfter the final edit, call run_tests with path="
                     + repr(case.spec.agent_test_path))
             if case.spec.agent_test_keyword is not None:
@@ -592,10 +600,14 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
                    trusted_host: bool = False, image: str = "selfforge-agent-sandbox:latest",
                    max_steps: int = 12, time_budget: float = 300,
                    test_timeout: float = 60, failure_artifacts: Path | None = None,
-                   providers: Sequence[Any] | None = None) -> dict:
+                   providers: Sequence[Any] | None = None, context_budget: int = 8000,
+                   manifest_contents: bytes | None = None,
+                   asset_contents: dict[str, bytes] | None = None) -> dict:
     """Run each pinned case from scratch; verify with an unseen external pytest file."""
     if not 1 <= repeats <= 20 or not 1 <= max_steps <= 100 or time_budget <= 0 or test_timeout <= 0:
         raise ValueError("Invalid benchmark repeat, step, or time limit")
+    if context_budget < 1000:
+        raise ValueError("Invalid benchmark context budget")
     started_at = datetime.now(UTC).isoformat()
     sanitized_providers: list[dict[str, str]] = []
     if providers is not None:
@@ -629,14 +641,14 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
         "app_dirty": _detect_app_dirty(),
         "app_commit_source": ("environment_declared" if any(re.fullmatch(r"[0-9a-fA-F]{40}", os.environ.get(k, "").strip()) for k in ("SELFFORGE_APP_COMMIT_SHA", "SELFFORGE_COMMIT_SHA")) else "source_git" if commit_sha else "unavailable"),
         "docker_version_scope": "engine_or_client" if sandbox == "docker" else None,
-        "context_budget": 8000,
+        "context_budget": context_budget,
         "provider_config_source": "configured" if providers is not None else "observed",
         "started_at": started_at,
         "completed_at": None,
     }
     manifest_bytes, suite, cases, images, baselines = _preflight(
         manifest, sandbox=sandbox, trusted_host=trusted_host, image=image,
-        test_timeout=test_timeout)
+        test_timeout=test_timeout, manifest_contents=manifest_contents, asset_contents=asset_contents)
     artifact_root = (prepare_artifacts(failure_artifacts, [case.repository for case in cases])
                      if failure_artifacts is not None else None)
     outcomes = [_run_once(case, repeat, model_factory, sandbox=sandbox,
@@ -644,7 +656,7 @@ def evaluate_suite(manifest: Path, model_factory: Callable[[BenchmarkCase], Chat
                           image=images[case.spec.id]["id"] if images else image,
                           max_steps=max_steps,
                           time_budget=time_budget, test_timeout=test_timeout,
-                          failure_artifacts=artifact_root)
+                          failure_artifacts=artifact_root, context_budget=context_budget)
                 for case in cases for repeat in range(1, repeats + 1)]
     completed_at = datetime.now(UTC).isoformat()
     provenance["completed_at"] = completed_at

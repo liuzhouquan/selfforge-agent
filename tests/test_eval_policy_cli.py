@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from selfforge_agent.cli import main
+from selfforge_agent.providers import ProviderConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 V3_POLICY_PATH = PROJECT_ROOT / "benchmark" / "validated-candidates" / "suite-twenty-two-tasks-v3.policy.json"
@@ -18,7 +20,7 @@ V3_POLICY_PATH = PROJECT_ROOT / "benchmark" / "validated-candidates" / "suite-tw
 def _make_dummy_eval_report() -> dict:
     return {
         "manifest": "dummy-manifest",
-        "manifest_sha256": "0" * 64,
+        "manifest_sha256": hashlib.sha256(V3_POLICY_PATH.with_name("suite-twenty-two-tasks-v3.json").read_bytes()).hexdigest(),
         "runs": 1,
         "successes": 1,
         "tasks": 1,
@@ -43,7 +45,7 @@ def _make_dummy_eval_report() -> dict:
 def _make_dummy_validate_report() -> dict:
     return {
         "manifest": "dummy-manifest",
-        "manifest_sha256": "0" * 64,
+        "manifest_sha256": hashlib.sha256(V3_POLICY_PATH.with_name("suite-twenty-two-tasks-v3.json").read_bytes()).hexdigest(),
         "tasks": 1,
         "successes": 1,
         "results": [
@@ -143,7 +145,7 @@ def test_eval_suite_policy_enforcement_and_conflicts(
         patch("selfforge_agent.cli.evaluate_suite", return_value=fake_report) as mock_eval,
         patch("selfforge_agent.cli.route_providers") as mock_route,
     ):
-        mock_route.return_value = [MagicMock()]
+        mock_route.return_value = [ProviderConfig("deepseek", "DeepSeek", "fixture-key", "deepseek-flash", "https://api.deepseek.com", "")]
         exit_code = main(["eval-suite", "--policy", str(V3_POLICY_PATH)])
         assert exit_code == 0
         assert mock_eval.called
@@ -198,7 +200,7 @@ def test_eval_cli_output_guards_across_eval_commands(
         # eval-suite --output
         with (
             patch("selfforge_agent.cli.evaluate_suite", return_value=dummy_eval),
-            patch("selfforge_agent.cli.route_providers", return_value=[MagicMock()]),
+            patch("selfforge_agent.cli.route_providers", return_value=[ProviderConfig("deepseek", "DeepSeek", "fixture-key", "deepseek-flash", "https://api.deepseek.com", "")]),
             pytest.raises(SystemExit) as exc,
         ):
             main(["eval-suite", "--policy", str(V3_POLICY_PATH), "--output", str(bad_path)])
@@ -223,7 +225,7 @@ def test_eval_cli_output_guards_across_eval_commands(
     valid_suite_out = tmp_path / "valid_suite.json"
     with (
         patch("selfforge_agent.cli.evaluate_suite", return_value=dummy_eval),
-        patch("selfforge_agent.cli.route_providers", return_value=[MagicMock()]),
+        patch("selfforge_agent.cli.route_providers", return_value=[ProviderConfig("deepseek", "DeepSeek", "fixture-key", "deepseek-flash", "https://api.deepseek.com", "")]),
     ):
         code = main(["eval-suite", "--policy", str(V3_POLICY_PATH), "--output", str(valid_suite_out)])
         assert code == 0
@@ -235,3 +237,138 @@ def test_eval_cli_output_guards_across_eval_commands(
     assert code == 0
     assert valid_diff_out.is_file()
     assert "summary" in json.loads(valid_diff_out.read_text(encoding="utf-8"))
+
+
+def test_policy_routes_credentials_and_propagates_frozen_inputs(monkeypatch, tmp_path, capsys):
+    from test_eval_v3_policy import _create_mini_bundle
+
+    from selfforge_agent import cli
+    from selfforge_agent.providers import ProviderConfig
+
+    policy, *_ = _create_mini_bundle(tmp_path)
+    data = json.loads(policy.read_text())
+    data['budgets']['context_budget_tokens'] = 12000
+    policy.write_text(json.dumps(data))
+    provider = ProviderConfig('deepseek', 'DeepSeek', 'fixture-key', 'configured-model',
+                              'https://api.deepseek.com', '')
+    routed = []
+
+    def route(name, fallback):
+        routed.append((name, fallback))
+        return [provider]
+
+    captured = {}
+
+    def evaluate(*args, **kwargs):
+        captured.update(kwargs)
+        return {'runs': 1, 'successes': 1, 'manifest_sha256': data['manifest_sha256']}
+
+    monkeypatch.setattr(cli, 'route_providers', route)
+    monkeypatch.setattr(cli, 'evaluate_suite', evaluate)
+    monkeypatch.delenv('SELFFORGE_API_KEY', raising=False)
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    assert main(['eval-suite', '--policy', str(policy)]) == 0
+    assert routed == [('deepseek', False)]
+    assert captured['providers'][0].name == 'deepseek'
+    assert captured['providers'][0].key == 'fixture-key'
+    assert captured['context_budget'] == 12000
+    assert captured['manifest_contents'] == (policy.parent / data['manifest']).read_bytes()
+    assert set(captured['asset_contents']) == {'holdouts/test_demo.py', 'references/demo.patch'}
+    capsys.readouterr()
+
+
+def test_policy_rejects_explicit_fallback_conflict(tmp_path):
+    from argparse import Namespace
+
+    from test_eval_v3_policy import _create_mini_bundle
+
+    from selfforge_agent.runtime.eval_policy import (
+        enforce_policy_cli_args,
+        verify_eval_policy_bundle,
+    )
+
+    policy, *_ = _create_mini_bundle(tmp_path)
+    data = json.loads(policy.read_text())
+    data['provider_policy']['fallback'] = True
+    policy.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match='fallback'):
+        enforce_policy_cli_args(verify_eval_policy_bundle(policy), Namespace(no_fallback=True))
+
+
+def test_policy_does_not_treat_default_image_as_explicit_override(monkeypatch, tmp_path):
+    import hashlib
+
+    from test_eval_v3_policy import _create_mini_bundle
+
+    from selfforge_agent import cli
+    from selfforge_agent.providers import ProviderConfig
+
+    policy, *_ = _create_mini_bundle(tmp_path)
+    data = json.loads(policy.read_text())
+    manifest = policy.parent / data['manifest']
+    cases = json.loads(manifest.read_text())
+    cases['cases'][0]['image'] = 'different:locked'
+    manifest.write_text(json.dumps(cases))
+    data['manifest_sha256'] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    data['environment']['images']['default']['reference'] = 'different:locked'
+    policy.write_text(json.dumps(data))
+    monkeypatch.setattr(cli, 'route_providers', lambda *args: [ProviderConfig(
+        'deepseek', 'DeepSeek', 'fixture-key', 'deepseek-flash', 'https://api.deepseek.com', '')])
+    monkeypatch.setattr(cli, 'evaluate_suite', lambda *args, **kwargs: {
+        'runs': 1, 'successes': 1, 'manifest_sha256': data['manifest_sha256']})
+    assert main(['eval-suite', '--policy', str(policy)]) == 0
+
+
+def test_verified_input_bytes_survive_later_file_changes(tmp_path):
+    from test_reference_validation import reference_suite
+
+    from selfforge_agent.runtime.benchmark import validate_suite
+
+    manifest, _ = reference_suite(tmp_path)
+    contents = manifest.read_bytes()
+    data = json.loads(contents)
+    paths = [case[field] for case in data['cases'] for field in ('holdout_test', 'reference_patch')]
+    assets = {path: (manifest.parent / path).read_bytes() for path in paths}
+    manifest.write_text('{}')
+    for path in paths:
+        (manifest.parent / path).write_text('tampered invalid input')
+    report = validate_suite(manifest, sandbox='host', trusted_host=True,
+                            manifest_contents=contents, asset_contents=assets)
+    assert report['status'] == 'validated'
+    assert report['manifest_sha256'] == hashlib.sha256(contents).hexdigest()
+
+
+def test_context_budget_reaches_runtime_agent(tmp_path, monkeypatch):
+    from test_benchmark import ScriptedModel
+    from test_reference_validation import reference_suite
+
+    from selfforge_agent.runtime import benchmark
+
+    manifest, _ = reference_suite(tmp_path)
+    actual_agent = benchmark.CodingAgent
+    observed = []
+
+    def agent(*args, **kwargs):
+        observed.append(kwargs['context_budget'])
+        return actual_agent(*args, **kwargs)
+
+    monkeypatch.setattr(benchmark, 'CodingAgent', agent)
+    report = benchmark.evaluate_suite(manifest, ScriptedModel, sandbox='host', trusted_host=True,
+                                      context_budget=12000)
+    assert observed == [12000]
+    assert report['provenance']['context_budget'] == 12000
+    assert report['successes'] == 1
+
+
+def test_policy_rejects_mismatched_endpoint_before_evaluation(tmp_path, monkeypatch):
+    from test_eval_v3_policy import _create_mini_bundle
+
+    from selfforge_agent import cli
+
+    policy, *_ = _create_mini_bundle(tmp_path)
+    monkeypatch.setattr(cli, 'route_providers', lambda *args: [ProviderConfig(
+        'deepseek', 'DeepSeek', 'fixture-key', 'some-model', 'https://other.invalid', '')])
+    monkeypatch.setattr(cli, 'evaluate_suite', lambda *args, **kwargs: pytest.fail('No evaluation'))
+    with pytest.raises(SystemExit) as exc:
+        main(['eval-suite', '--policy', str(policy)])
+    assert exc.value.code == 2

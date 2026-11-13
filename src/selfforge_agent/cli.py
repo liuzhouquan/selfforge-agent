@@ -273,7 +273,8 @@ def main(argv: list[str] | None = None) -> int:
     suite.add_argument("--base-url")
     suite.add_argument("--sandbox", choices=["docker", "host"], default=None)
     suite.add_argument("--trust-local", action="store_true", help="Required for host execution")
-    suite.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    suite.add_argument("--image", default=None)
+    suite.add_argument("--context-tokens", type=int, default=None)
     suite.add_argument("--max-steps", type=int, default=None)
     suite.add_argument("--time-budget", type=float, default=None)
     suite.add_argument("--test-timeout", type=float, default=None)
@@ -483,10 +484,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             report = validate_suite(manifest_path, sandbox=sandbox,
                                     trusted_host=args.trust_local, image=image,
-                                    test_timeout=test_timeout)
+                                    test_timeout=test_timeout,
+                                    manifest_contents=bundle.manifest_contents if bundle else None,
+                                    asset_contents=bundle.asset_contents if bundle else None)
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
         if bundle is not None:
+            if report.get("manifest_sha256") != bundle.manifest_sha256:
+                parser.error("Evaluation report does not match verified policy manifest")
             report["policy"] = make_policy_provenance(bundle)
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.output:
@@ -792,7 +797,18 @@ def main(argv: list[str] | None = None) -> int:
             model = args.model
             base_url = args.base_url
         try:
-            if model or base_url:
+            if bundle is not None:
+                providers = route_providers(provider_name, not no_fallback)
+                if not providers or providers[0].name != provider_name or not providers[0].key:
+                    raise ValueError("Policy provider is not configured")
+                first = providers[0]
+                if first.base_url.rstrip("/") != base_url.rstrip("/"):
+                    raise ValueError("Configured provider endpoint conflicts with policy base URL")
+                providers = [ProviderConfig(
+                    name=first.name, label=first.label, key=first.key, model=model,
+                    base_url=first.base_url, status_url=first.status_url,
+                ), *providers[1:]]
+            elif model or base_url:
                 if not model or not base_url:
                     parser.error("Custom model requires both --model and --base-url")
                 providers = [ProviderConfig(
@@ -802,30 +818,21 @@ def main(argv: list[str] | None = None) -> int:
                 )]
             else:
                 providers = route_providers(provider_name, not no_fallback)
-            if bundle is not None and providers:
-                target_model = bundle.policy.provider_policy.model
-                target_base_url = bundle.policy.provider_policy.base_url
-                providers = [
-                    ProviderConfig(
-                        name=p.name,
-                        label=p.label,
-                        key=p.key,
-                        model=target_model,
-                        base_url=target_base_url,
-                        status_url=p.status_url,
-                    )
-                    for p in providers
-                ]
             report = evaluate_suite(
                 manifest_path, lambda _case: OpenAIChatAdapter(providers),
                 repeats=repeats, sandbox=sandbox, trusted_host=args.trust_local,
-                image=args.image, max_steps=max_steps, time_budget=time_budget,
+                image=args.image or "selfforge-agent-sandbox:latest", max_steps=max_steps, time_budget=time_budget,
                 test_timeout=test_timeout, failure_artifacts=args.failure_artifacts,
                 providers=providers,
+                context_budget=(bundle.policy.budgets.context_budget_tokens if bundle else (8000 if args.context_tokens is None else args.context_tokens)),
+                manifest_contents=bundle.manifest_contents if bundle else None,
+                asset_contents=bundle.asset_contents if bundle else None,
             )
         except (ValueError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
         if bundle is not None:
+            if report.get("manifest_sha256") != bundle.manifest_sha256:
+                parser.error("Evaluation report does not match verified policy manifest")
             report["policy"] = make_policy_provenance(bundle)
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.output:

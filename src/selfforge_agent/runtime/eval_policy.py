@@ -322,6 +322,8 @@ class VerifiedEvalPolicyBundle:
     manifest_path: Path
     policy_path: Path
     policy_sha256: str
+    manifest_contents: bytes
+    asset_contents: dict[str, bytes]
 
 
 def _project_root_for(policy_dir: Path) -> Path:
@@ -393,6 +395,7 @@ def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
 
     manifest_dir = manifest_path.parent
     expected_asset_keys: set[str] = set()
+    asset_contents: dict[str, bytes] = {}
     image_refs = {spec.reference for spec in policy.environment.images.values()}
     historical_digests = {spec.historical_digest_distinct_from for spec in policy.environment.images.values()}
     image_counts: dict[str, int] = {ref: 0 for ref in image_refs}
@@ -426,9 +429,9 @@ def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
             rel = getattr(case, field_name)
             expected_asset_keys.add(rel)
             asset_resolved = _resolve_relative(manifest_dir, manifest_dir, rel)
-            actual_digest = hashlib.sha256(
-                _read_regular_bytes(asset_resolved, max_bytes=MAX_REFERENCE_BYTES)
-            ).hexdigest()
+            asset_bytes = _read_regular_bytes(asset_resolved, max_bytes=MAX_REFERENCE_BYTES)
+            actual_digest = hashlib.sha256(asset_bytes).hexdigest()
+            asset_contents[rel] = asset_bytes
             if rel not in assets or assets[rel] != actual_digest:
                 raise ValueError(f"Asset SHA-256 mismatch or missing entry for {rel}")
 
@@ -479,13 +482,15 @@ def verify_eval_policy_bundle(policy_path: Path) -> VerifiedEvalPolicyBundle:
         manifest_path=manifest_path,
         policy_path=resolved_policy,
         policy_sha256=policy_sha256,
+        manifest_contents=manifest_bytes,
+        asset_contents=asset_contents,
     )
 
 
 def make_policy_provenance(bundle: VerifiedEvalPolicyBundle) -> dict[str, Any]:
     """Extract standard provenance metadata from a verified policy bundle."""
     return {
-        "policy_path": str(bundle.policy_path),
+        "policy_path": bundle.policy_path.name,
         "policy_sha256": bundle.policy_sha256,
         "policy_version": bundle.policy.policy_version,
         "suite_id": bundle.policy.suite_id,
@@ -497,6 +502,10 @@ def make_policy_provenance(bundle: VerifiedEvalPolicyBundle) -> dict[str, Any]:
 def enforce_policy_cli_args(bundle: VerifiedEvalPolicyBundle, args: Any) -> None:
     """Enforce that CLI flags and parameters do not conflict with the verified policy."""
     pol = bundle.policy
+    if getattr(args, "no_fallback", False) and pol.provider_policy.fallback:
+        raise ValueError("CLI no-fallback conflicts with policy fallback requirement")
+    if getattr(args, "context_tokens", None) is not None and args.context_tokens != pol.budgets.context_budget_tokens:
+        raise ValueError("CLI context-tokens conflicts with policy context budget")
     if getattr(args, "sandbox", None) is not None and args.sandbox != pol.environment.sandbox:
         raise ValueError(
             f"CLI sandbox '{args.sandbox}' conflicts with policy sandbox '{pol.environment.sandbox}'"
