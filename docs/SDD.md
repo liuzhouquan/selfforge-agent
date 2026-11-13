@@ -118,7 +118,7 @@ flowchart LR
 | 8 | [SF-EVAL-09](#sf-eval-09) | Merged | Codex（审查整合） | SF-EVAL-08 / SF-WS-05（Merged） | [PR #65](https://github.com/liuzhouquan/selfforge-agent/pull/65)：CLI `eval-suite` / `eval-validate` 接入 `--policy` 冻结策略强校验、预算门禁与安全导出（`_write_cli_output`） |
 | 9 | [SF-ENV-07](#sf-env-07) | Merged | Codex（审查整合） | SF-WS-05 / SF-ENV-06（Merged） | [PR #66](https://github.com/liuzhouquan/selfforge-agent/pull/66)：CLI `sandbox` 诊断与规划命令补齐结构化安全导出（`--json` / `--output`）与 `export-lock` 安全写盘 |
 | 10 | [SF-TEST-03](#sf-test-03) | Merged | Codex（审查整合） | SF-TEST-02 / SF-WS-05（Merged） | [PR #67](https://github.com/liuzhouquan/selfforge-agent/pull/67)：SessionStore 补齐回归验证记录追溯与 GET /api/code/workspaces/{session_id}/regression 只读接口，并在 PR 交付中绑定回归验证证据 |
-| 11 | [SF-TEST-04](#sf-test-04) | In Progress | Antigravity | SF-TEST-02 / SF-TEST-03 / SF-WS-06（Merged） | Web Coding 工作台接入持久化回归验证记录恢复与会话切换状态同步 |
+| 11 | [SF-TEST-04](#sf-test-04) | In Review | Antigravity | SF-TEST-02 / SF-TEST-03 / SF-WS-06（Merged） | [PR #68](https://github.com/liuzhouquan/selfforge-agent/pull/68)：Web Coding 工作台接入持久化回归验证记录恢复与会话切换状态同步 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -548,21 +548,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #67 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-TEST-04-A1 | 加载/切换具有已完成回归验证的独立工作区会话时，自动调用 `GET /api/code/workspaces/{session_id}/regression` 幂等恢复回归面板，呈现 status、base_status、repaired_status、耗时及指纹等结构化卡片，无需重新点击验证按钮 | 前端 DOM/API 联动单元测试 | 未验证（开发中） |
-| SF-TEST-04-A2 | 404 无记录会话、直接模式（!branch）、本机 sandbox 会话或非法会话切换时，保持/复位回归面板为初始干净状态，不产生未捕获异常或控制台错误 | 前端 DOM/API 正反对照测试 | 未验证（开发中） |
-| SF-TEST-04-A3 | 时效与并发联动控制：当会话执行 Commit、Revert 或移除工作区时，及时撤销或更新回归有效性提示；异步网络响应在快速切换会话时不发生跨会话状态串扰（`isCurrentRequest` 保护） | 会话切换与修改动作模拟测试 | 未验证（开发中） |
-| SF-TEST-04-A4 | `ruff check .`、`python scripts/check_sdd.py`、`node --check src/selfforge_agent/api/static/app.js`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证（开发中） |
+| SF-TEST-04-A1 | 加载/切换具有已完成回归验证的独立工作区会话时，自动调用 `GET /api/code/workspaces/{session_id}/regression` 幂等恢复回归面板，呈现 status、base_status、repaired_status、耗时及指纹等结构化卡片，无需重新点击验证按钮 | 前端 DOM/API 联动单元测试 | E1 |
+| SF-TEST-04-A2 | 404 无记录会话、直接模式（!branch）、本机 sandbox 会话或非法会话切换时，保持/复位回归面板为初始干净状态，不产生未捕获异常或控制台错误 | 前端 DOM/API 正反对照测试 | E2 |
+| SF-TEST-04-A3 | 时效与并发联动控制：当会话执行 Commit、Revert 或移除工作区时，及时撤销或更新回归有效性提示；异步网络响应在快速切换会话时不发生跨会话状态串扰（`isCurrentRequest` 保护） | 会话切换与修改动作模拟测试 | E3 |
+| SF-TEST-04-A4 | `ruff check .`、`python scripts/check_sdd.py`、`node --check src/selfforge_agent/api/static/app.js`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-test-04`；Worktree=`selfforge-sf-test-04`。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-TEST-04-A1 | `tests/test_coding_web_regression_ui.py::test_web_ui_restores_persisted_regression_report_on_job_render` | 前端 DOM/API 联动；验证加载会话时自动拉取持久化回归记录并渲染结构化卡片与状态 | 源码 SHA `e3a2fed6e776c4c6aa448b9d8abc69dad2edff76`；passed；CI [Run #43377209159](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43377209159) success |
+| E2 | SF-TEST-04-A2 | `tests/test_coding_web_regression_ui.py::test_web_ui_durable_regression_404_resets_panel_cleanly`、`tests/test_coding_web_regression_ui.py::test_web_ui_direct_mode_skips_durable_regression_query_and_commit_invalidates` | 前端 DOM/API 正反对照；验证 404 无记录会话静默复位、直接模式（!branch）不发查询 | `e3a2fed6e776c4c6aa448b9d8abc69dad2edff76`；passed；CI [Run #43377209159](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43377209159) success |
+| E3 | SF-TEST-04-A3 | `tests/test_coding_web_regression_ui.py::test_web_ui_direct_mode_skips_durable_regression_query_and_commit_invalidates`、`tests/test_coding_web_regression_ui.py::test_web_ui_revert_invalidates_stale_report_and_unrecorded_sandbox_disables_submit` | 工作区改动时效联动；验证 commit 与 revert 成功后主动复位失效的旧回归面板，防跨状态串扰 | `e3a2fed6e776c4c6aa448b9d8abc69dad2edff76`；passed；CI [Run #43377209159](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43377209159) success |
+| E4 | SF-TEST-04-A4 | `tests/test_coding_web_regression_ui.py::test_web_ui_restores_persisted_regression_report_on_job_render` | `ruff check .`、`python scripts/check_sdd.py`、`node --check src/selfforge_agent/api/static/app.js`、`git diff --check`、`pytest -q -m "not integration"` 与 GitHub Actions CI | `e3a2fed6e776c4c6aa448b9d8abc69dad2edff76`；本地 729 passed, 15 deselected；CI [Run #43377209159](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43377209159) success |
+
+执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-test-04`；Worktree=`selfforge-sf-test-04`；PR=[#68](https://github.com/liuzhouquan/selfforge-agent/pull/68)。先运行 TDD 红灯复现（1 failed），随后在 app.js 中实现 loadDurableRegressionReport、renderCodingJob 挂钩与 commit/revert 时效复位；在源码提交 `e3a2fed6e776c4c6aa448b9d8abc69dad2edff76` 通过本地全量 729 项单测与 GitHub Actions CI `Run #43377209159`（含全套 Docker 集成测试通过）；本状态提交仅修改文档。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-test-04 (worktree: selfforge-sf-test-04) / 开发中
-已完成验收与证据 ID：无（开发中）
-未完成 / 环境限制 / 未提交内容归属：SF-TEST-04-A1..A4（开发中）
-PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-test-04 (worktree: selfforge-sf-test-04) / e3a2fed6e776c4c6aa448b9d8abc69dad2edff76
+已完成验收与证据 ID：SF-TEST-04-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无（专项与全量非集成 729 项测试及 CI 全套 Docker 集成已全部通过）
+PR / 准确 head CI / merge SHA（有则填）：PR #68 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43377209159 / 待合并
 仍在运行的本任务进程或 CI（有则填）：无
-下一步：编写 SF-TEST-04 失败复现测试并在 app.js 中实现回归验证只读恢复与时效联动
+下一步：等待 PR #68 代码审查通过并合入主分支
 ```
 
 ## 5. 验收追踪与执行记录格式
