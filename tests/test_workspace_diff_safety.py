@@ -99,3 +99,23 @@ def test_commit_workspace_filters_untracked_fifos(
     assert "calculator.py" in result.files_committed
     assert "bad_pipe" not in result.files_committed
     assert "bad_pipe" not in git(workspace.path, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+
+
+def test_commit_rejects_prestaged_external_symlink(workspace: CodingWorkspace, tmp_path: Path) -> None:
+    from selfforge_agent.runtime.delivery import DeliveryError
+
+    (workspace.path / "outside").symlink_to(tmp_path / "secret")
+    git(workspace.path, "add", "outside")
+    before = git(workspace.path, "rev-parse", "HEAD")
+    with pytest.raises(DeliveryError):
+        commit_workspace(workspace, "must reject staged external link")
+    assert git(workspace.path, "rev-parse", "HEAD") == before
+    assert "outside" in git(workspace.path, "diff", "--cached", "--name-only")
+
+
+def test_commit_filters_looping_symlink_without_losing_normal_changes(workspace: CodingWorkspace) -> None:
+    (workspace.path / "loop").symlink_to("loop")
+    (workspace.path / "calculator.py").write_text("VALUE = 99\n")
+    result = commit_workspace(workspace, "skip loop")
+    assert "calculator.py" in result.files_committed
+    assert "loop" not in result.files_committed
