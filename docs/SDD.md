@@ -852,9 +852,6 @@ PR / 准确 head CI / merge SHA（有则填）：PR #75 / https://github.com/liu
 下一步：提交 Commit H 并推送到 origin/feat/sf-eval-10，等待 R2 CI 运行完成并确认通过，随后交付。
 ```
 
-## 5. 验收追踪与执行记录格式
-```
-
 ### SF-TEST-05
 
 **目标：** 在差分测试生成与因果推断执行流中贯彻 fail-closed 与无特权安全隔离准则。在 `test_generation.py` 中引入 `_write_test_artifact`，以 `O_CREAT | O_EXCL | O_NOFOLLOW` 模式原子安装候选测试工件并强校验目录符号链接，严防目标符号链接穿透与文件覆写漏洞；在 `_observation` 中采用 `O_NOFOLLOW | O_NONBLOCK` 非阻塞安全读取常规文件，对符号链接与 FIFO 管道安全跳过，防止进程永久挂起；在 `_parse_test` 中捕获 `(RecursionError, MemoryError, TypeError)` 等畸形异常，严防深层嵌套 AST 导致服务崩溃，并禁止顶层非声明可执行语句以防模块导入时执行恶意副作用；在 `causal_investigation.py` 的 `investigate_causality` 中对不可信测试输出实施有界切片防护（单流 64KB，总长 128KB），并强校验 `target.line_number` 为有限正数；在 `risk_prioritization.py` 中强校验 `top_k` 为合法正整数（1–100），消除负切片漏洞。
@@ -888,6 +885,8 @@ PR / 准确 head CI / merge SHA（有则填）：PR #76 / https://github.com/liu
 ```
 
 ## 5. 验收追踪与执行记录格式
+
+每项验收使用全局 ID `任务ID-A序号`，实现后把上表“初始证据”替换为相应记录 ID（如 E1）。在**同一规格节**追加以下表，不要求再建 task 文件：
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |

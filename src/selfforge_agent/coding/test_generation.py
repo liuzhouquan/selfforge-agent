@@ -7,6 +7,7 @@ import os
 import stat
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -97,6 +98,20 @@ def validate_risk_target(context: PRContext, target: RiskTarget | None) -> None:
     raise ValueError("Risk target must match an added line in this Base/Head diff")
 
 
+@contextmanager
+def _workspace_parent(tree: Path, relative: Path):
+    """Anchor all parent lookups; never traverse a swapped directory symlink."""
+    parent_fd = os.open(tree, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in relative.parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = child
+        yield parent_fd
+    finally:
+        os.close(parent_fd)
+
+
 def _write_test_artifact(tree: Path, test_path: str, test_code: str) -> Path:
     """Safely install a generated test artifact preventing symlink traversal and overwrites."""
     if not test_path or Path(test_path).is_absolute() or ".." in Path(test_path).parts:
@@ -108,16 +123,18 @@ def _write_test_artifact(tree: Path, test_path: str, test_code: str) -> Path:
     resolved_parent = target.parent.resolve()
     if target.parent.is_symlink() or not resolved_parent.is_relative_to(resolved_tree):
         raise ValueError(f"Test path {test_path} parent directory escapes worktree")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(target, flags, 0o600)
+        with _workspace_parent(tree, Path(test_path)) as parent_fd:
+            fd = os.open(target.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=parent_fd)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(test_code)
+            except OSError:
+                os.unlink(target.name, dir_fd=parent_fd)
+                raise
     except OSError as exc:
         raise ValueError(f"Cannot securely create test artifact {test_path}: {exc}") from exc
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(test_code)
-    except OSError as exc:
-        raise ValueError(f"Failed writing test artifact {test_path}: {exc}") from exc
     return target
 
 
@@ -136,20 +153,22 @@ def _observation(context: PRContext, head_tree: Path, task: str,
         if unresolved_path.is_symlink():
             continue
         path = unresolved_path.resolve()
-        if not path.is_relative_to(resolved_head):
+        if (not path.is_relative_to(resolved_head)
+                or any(_protected(part) for part in path.relative_to(resolved_head).parts)):
             continue
         try:
-            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-            try:
-                st = os.fstat(fd)
-                if not stat.S_ISREG(st.st_mode) or st.st_size > 12_000:
-                    continue
-                content_bytes = os.read(fd, 12_001)
-                if len(content_bytes) > 12_000:
-                    continue
-                source = content_bytes.decode("utf-8")
-            finally:
-                os.close(fd)
+            with _workspace_parent(head_tree, relative) as parent_fd:
+                fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+                try:
+                    st = os.fstat(fd)
+                    if not stat.S_ISREG(st.st_mode) or st.st_size > 12_000:
+                        continue
+                    content_bytes = os.read(fd, 12_001)
+                    if len(content_bytes) > 12_000:
+                        continue
+                    source = content_bytes.decode("utf-8")
+                finally:
+                    os.close(fd)
         except (OSError, UnicodeError):
             continue
         added = [line.content for hunk in change.hunks for line in hunk.lines
@@ -167,16 +186,62 @@ def _observation(context: PRContext, head_tree: Path, task: str,
                        "previous_candidates": previous, "files": files}, ensure_ascii=False)
 
 
-_ALLOWED_TOP_LEVEL_NODES = (
-    ast.FunctionDef,
-    ast.AsyncFunctionDef,
-    ast.ClassDef,
-    ast.Import,
-    ast.ImportFrom,
-    ast.Assign,
-    ast.AnnAssign,
-    ast.Expr,
-)
+def _literal_expression(node: ast.AST) -> bool:
+    try:
+        ast.literal_eval(node)
+        return True
+    except (ValueError, TypeError, SyntaxError, RecursionError):
+        return isinstance(node, ast.Name)
+
+
+def _pytest_decorator(node: ast.AST) -> bool:
+    call = node if isinstance(node, ast.Call) else None
+    target = call.func if call else node
+    parts = []
+    while isinstance(target, ast.Attribute):
+        parts.insert(0, target.attr)
+        target = target.value
+    if isinstance(target, ast.Name):
+        parts.insert(0, target.id)
+    name = ".".join(parts)
+    if not (name in {"fixture", "pytest.fixture", "staticmethod", "classmethod"}
+            or name.startswith("pytest.mark.")):
+        return False
+    return call is None or all(_literal_expression(arg) for arg in [
+        *call.args, *(keyword.value for keyword in call.keywords)])
+
+
+def _declaration(node: ast.AST, *, in_class: bool = False) -> bool:
+    """Screen explicit import-time execution; imports/pytest still require isolation."""
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return True
+    if isinstance(node, ast.Expr):
+        return isinstance(node.value, ast.Constant)
+    if isinstance(node, ast.Pass):
+        return in_class
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not all(isinstance(target, ast.Name) for target in targets):
+            return False
+        return (node.value is None or _literal_expression(node.value)) and not any(
+            isinstance(child, (ast.Call, ast.NamedExpr, ast.Await, ast.Yield))
+            for child in ast.walk(node))
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        defaults = [*node.args.defaults, *(value for value in node.args.kw_defaults if value is not None)]
+        annotations = [arg.annotation for arg in [*node.args.posonlyargs, *node.args.args,
+                       *node.args.kwonlyargs, *([node.args.vararg] if node.args.vararg else []),
+                       *([node.args.kwarg] if node.args.kwarg else [])] if arg.annotation]
+        if node.returns:
+            annotations.append(node.returns)
+        return (all(_literal_expression(value) for value in defaults)
+                and all(_pytest_decorator(value) for value in node.decorator_list)
+                and not any(isinstance(child, (ast.Call, ast.NamedExpr, ast.Await, ast.Yield))
+                            for value in annotations for child in ast.walk(value)))
+    if isinstance(node, ast.ClassDef):
+        return (not node.keywords and not node.decorator_list
+                and all(isinstance(base, ast.Name) and base.id == "object" for base in node.bases)
+                and all(_declaration(child, in_class=True) for child in node.body))
+    return False
 
 
 def _parse_test(arguments: str) -> GeneratedTest:
@@ -185,11 +250,8 @@ def _parse_test(arguments: str) -> GeneratedTest:
         tree = ast.parse(candidate.test_code)
     except (ValueError, SyntaxError, ValidationError, RecursionError, MemoryError, TypeError) as exc:
         raise ValueError("Model returned invalid pytest source") from exc
-    for node in tree.body:
-        if not isinstance(node, _ALLOWED_TOP_LEVEL_NODES):
-            raise ValueError("Generated pytest source must not contain top-level executable statements")  # noqa: TRY004 - file data
-        if isinstance(node, ast.Expr) and not isinstance(node.value, ast.Constant):
-            raise ValueError("Generated pytest source must not contain top-level executable statements")  # noqa: TRY004 - file data
+    if not all(_declaration(node) for node in tree.body):
+        raise ValueError("Generated pytest source must not contain top-level executable statements")
     tests = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
              and node.name.startswith("test_")]
     if not tests or not any(isinstance(child, ast.Assert) for test in tests

@@ -1,6 +1,5 @@
 """Describe traceback associations; location matches cannot establish causality."""
 
-import math
 import re
 from pathlib import Path
 from typing import Literal
@@ -20,8 +19,8 @@ MAX_COMBINED_TEXT_BYTES = 128 * 1024
 def _truncate_text(text: str | None, max_bytes: int = MAX_INVESTIGATION_TEXT_BYTES) -> str:
     if not text:
         return ""
-    encoded = text.encode("utf-8", errors="replace")
-    if len(encoded) <= max_bytes:
+    encoded = text[:max_bytes].encode("utf-8", errors="replace")
+    if len(text) <= max_bytes and len(encoded) <= max_bytes:
         return text
     return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
@@ -54,7 +53,7 @@ def investigate_causality(
             confidence="none",
             explanation="No risk target specified for causal investigation",
         )
-    if not isinstance(target.line_number, int) or target.line_number < 1 or not math.isfinite(target.line_number):
+    if type(target.line_number) is not int or target.line_number < 1:
         return CausalInvestigation(
             target=target,
             causally_linked=False,

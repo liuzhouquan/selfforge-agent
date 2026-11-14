@@ -230,3 +230,76 @@ def test_remaining_budget_rejects_non_finite_deadline() -> None:
 
     with pytest.raises(ValueError, match="finite"):
         remaining_budget(float("inf"))
+
+
+@pytest.mark.parametrize("declaration", [
+    "VALUE = print('import side effect')",
+    "def helper(value=print('default side effect')): pass",
+    "@print('decorator side effect')\ndef helper(): pass",
+    "class Helper:\n    VALUE = print('class side effect')",
+    "class Helper(factory()): pass",
+])
+def test_parse_rejects_explicit_execution_hidden_in_declarations(declaration: str) -> None:
+    import json
+
+    with pytest.raises(ValueError, match="top-level executable"):
+        _parse_test(json.dumps({"test_code": declaration + "\n\ndef test_ok(): assert True\n",
+                               "rationale": "declaration boundary"}))
+
+
+def test_parse_preserves_literal_constants_and_pytest_decorators() -> None:
+    import json
+
+    code = ("import pytest\nCASES = [1, 2]\nclass Helper:\n    VALUE = 1\n"
+            "@pytest.fixture(scope='module')\ndef value(): return 1\n"
+            "@pytest.mark.parametrize('number', [1, 2])\n"
+            "def test_ok(number, value): assert number >= value\n")
+    assert _parse_test(json.dumps({"test_code": code, "rationale": "compatible"})).test_code == code
+
+
+def test_observation_cannot_reveal_protected_source_through_directory_alias(tmp_path: Path) -> None:
+    secret = tmp_path / ".env"
+    secret.mkdir()
+    (secret / "secret.py").write_text("SECRET_PROTECTED_BODY")
+    (tmp_path / "alias").symlink_to(secret, target_is_directory=True)
+    context = PRContext(repository="repo", base_sha="a" * 40, head_sha="b" * 40,
+                        files=[ChangedFile(path="alias/secret.py", status="D", hunks=[])])
+    assert "SECRET_PROTECTED_BODY" not in _observation(context, tmp_path, "test")
+
+
+def test_artifact_parent_swap_cannot_write_outside(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    parent = tree / "tests"
+    parent.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original = os.open
+    swapped = False
+
+    def swapping_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and (str(path).endswith("test_candidate.py") or Path(path).name == "tests"):
+            swapped = True
+            parent.rename(tree / "original-tests")
+            parent.symlink_to(outside, target_is_directory=True)
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swapping_open)
+    try:
+        _write_test_artifact(tree, "tests/test_candidate.py", "def test_ok(): assert True\n")
+    except ValueError:
+        pass
+    assert list(outside.iterdir()) == []
+
+
+def test_causality_handles_arbitrary_positive_integer_without_float_conversion() -> None:
+    target = RiskTarget(file_path="app.py", line_number=10**1000, description="large",
+                        evidence="line", category="boundary")
+    assert investigate_causality(target, None).confidence == "none"
+
+
+def test_risk_limit_rejects_boolean() -> None:
+    context = PRContext(repository="r", base_sha="a" * 40, head_sha="b" * 40, files=[])
+    with pytest.raises(ValueError, match="top_k"):
+        prioritize_risks(context, top_k=True)
