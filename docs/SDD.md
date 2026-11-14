@@ -124,7 +124,7 @@ flowchart LR
 | 14 | [SF-RUN-07](#sf-run-07) | Merged | Codex（审查整合） | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 | 15 | [SF-WS-08](#sf-ws-08) | Merged | Codex（审查整合） | 无 | [PR #72](https://github.com/liuzhouquan/selfforge-agent/pull/72)：WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
 | 16 | [SF-VERIF-01](#sf-verif-01) | Merged | Codex（审查整合） | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
-| 17 | [SF-ENV-08](#sf-env-08) | In Progress | Antigravity | SF-ENV-07（Merged） | 依赖输入与锁文件安全加固：平台条件标记 fail-closed 拒绝、PEP 503 包名规范化与非阻塞/无符链安全读取 |
+| 17 | [SF-ENV-08](#sf-env-08) | In Review | Antigravity | SF-ENV-07（Merged） | [PR #74](https://github.com/liuzhouquan/selfforge-agent/pull/74)：依赖输入与锁文件安全加固：平台条件标记 fail-closed 拒绝、PEP 503 包名规范化与非阻塞/无符链安全读取 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -794,21 +794,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-ENV-08-A1 | Poetry 与 Pipfile 锁文件中声明了 `platform`、`sys_platform` 或 `os_name` 限制时，导出严格抛出 `ValueError("Conditional markers require a target-aware export; cannot flatten this lock")`；非字符串标记抛出 `ValueError("Invalid package marker in lock file")` | `tests/test_lockfile_security_hardening.py` 平台与条件标记拦截测试 | 未验证 |
-| SF-ENV-08-A2 | 结构化锁文件（Poetry/Pipfile）与 requirements.txt 导出时，包名统一按 PEP 503 规范化（全小写、分隔符连字符规范化）；`parse_locked_requirements` 产出规范化包名 | `tests/test_lockfile_security_hardening.py` 包名规范化测试 | 未验证 |
-| SF-ENV-08-A3 | `images._read` 使用 `O_NOFOLLOW \| O_NONBLOCK` 打开并校验 `S_ISREG`，遇 FIFO、目录、断链或符号链接立刻 fail-closed 抛出 `ValueError`，杜绝读特殊文件挂起；`scan_wheelhouse` 安全隔离特殊文件 | `tests/test_lockfile_security_hardening.py` 特殊文件与符号链接防挂起测试 | 未验证 |
-| SF-ENV-08-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证 |
+| SF-ENV-08-A1 | Poetry 与 Pipfile 锁文件中声明了 `platform`、`sys_platform` 或 `os_name` 限制时，导出严格抛出 `ValueError("Conditional markers require a target-aware export; cannot flatten this lock")`；非字符串标记抛出 `ValueError("Invalid package marker in lock file")` | `tests/test_lockfile_security_hardening.py` 平台与条件标记拦截测试 | E1 |
+| SF-ENV-08-A2 | 结构化锁文件（Poetry/Pipfile）与 requirements.txt 导出时，包名统一按 PEP 503 规范化（全小写、分隔符连字符规范化）；`parse_locked_requirements` 产出规范化包名 | `tests/test_lockfile_security_hardening.py` 包名规范化测试 | E2 |
+| SF-ENV-08-A3 | `images._read` 使用 `O_NOFOLLOW \| O_NONBLOCK` 打开并校验 `S_ISREG`，遇 FIFO、目录、断链或符号链接立刻 fail-closed 抛出 `ValueError`，杜绝读特殊文件挂起；`scan_wheelhouse` 安全隔离特殊文件 | `tests/test_lockfile_security_hardening.py` 特殊文件与符号链接防挂起测试 | E3 |
+| SF-ENV-08-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-env-08`；Worktree=`selfforge-sf-env-08`；PR=-；Source=-。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-ENV-08-A1 | `tests/test_lockfile_security_hardening.py::test_poetry_rejects_platform_conditional_markers`、`tests/test_lockfile_security_hardening.py::test_pipfile_rejects_platform_and_sys_platform`、`tests/test_lockfile_security_hardening.py::test_lockfile_rejects_non_string_markers` | 本地 `pytest -v tests/test_lockfile_security_hardening.py`；GitHub CI `Unit tests` | `7cba88a5a7b5193b69a085c468066eb1e0dbdba6`；passed；CI [Run #43571516639](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43571516639) |
+| E2 | SF-ENV-08-A2 | `tests/test_lockfile_security_hardening.py::test_lockfile_pep503_package_name_normalization` | 本地 `pytest -v tests/test_lockfile_security_hardening.py`；GitHub CI `Unit tests` | `7cba88a5a7b5193b69a085c468066eb1e0dbdba6`；passed；CI [Run #43571516639](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43571516639) |
+| E3 | SF-ENV-08-A3 | `tests/test_lockfile_security_hardening.py::test_images_read_rejects_fifos_without_blocking`、`tests/test_lockfile_security_hardening.py::test_images_read_rejects_symlinks_and_dirs`、`tests/test_lockfile_security_hardening.py::test_scan_wheelhouse_with_fifo_and_symlink` | 本地 `pytest -v tests/test_lockfile_security_hardening.py`；GitHub CI `Unit tests` | `7cba88a5a7b5193b69a085c468066eb1e0dbdba6`；passed；CI [Run #43571516639](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43571516639) |
+| E4 | SF-ENV-08-A4 | `tests/test_lockfile_security_hardening.py::test_images_read_normal_and_limit` | 本地 `ruff check .`、`python scripts/check_sdd.py`、全量单元测试 780 passed；GitHub CI Lint / SDD contract check / Unit tests 780 passed / Docker integration tests 15 passed | `7cba88a5a7b5193b69a085c468066eb1e0dbdba6`；passed；CI [Run #43571516639](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43571516639) 全绿 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-env-08`；Worktree=`selfforge-sf-env-08`；PR=[#74](https://github.com/liuzhouquan/selfforge-agent/pull/74)；Source=`7cba88a5a7b5193b69a085c468066eb1e0dbdba6`。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-env-08 (worktree: selfforge-sf-env-08) / 开发中
-已完成验收与证据 ID：待验证（初始开发阶段）
-未完成 / 环境限制 / 未提交内容归属：代码与专项测试已完成，等待提交 Commit S 与 CI 验证
-PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：完成 Commit S 提交并在 GitHub 创建 PR，等待 R1 CI 通过后更新 SDD 为 In Review 并提交 Commit H。
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-env-08 (worktree: selfforge-sf-env-08) / 已验证源码 7cba88a5a7b5193b69a085c468066eb1e0dbdba6；文档证据同步
+已完成验收与证据 ID：SF-ENV-08-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地与 CI 单元测试 780 passed、Docker 集成测试 15 passed 全绿；未运行付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #74 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43571516639 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；等待 PR 审查与合并
+下一步：等待 PR #74 审查合并；合并后由 Owner 或整合者更新状态为 Merged 并回填 merge SHA。
 ```
 
 ## 5. 验收追踪与执行记录格式
