@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -27,6 +28,8 @@ from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry, _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner
 
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_HOLDOUT_BYTES = 1024 * 1024
 MAX_REFERENCE_BYTES = 256 * 1024
 
 FAILURE_REASON_TAXONOMY: tuple[str, ...] = (
@@ -134,6 +137,33 @@ def _git(*args: str, cwd: Path | None = None, timeout: float = 120) -> str:
     return result.stdout
 
 
+def _read_regular_file(path: Path, max_bytes: int, label: str) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"Cannot read {label} at {path}: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"{label} must be a regular file, not a symlink, directory, or special file: {path}")
+        if st.st_size > max_bytes:
+            raise ValueError(f"{label} file exceeds size limit ({max_bytes} bytes): {path}")
+        contents = b""
+        remaining = max_bytes + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            contents += chunk
+            remaining -= len(chunk)
+        if len(contents) > max_bytes:
+            raise ValueError(f"{label} file exceeds size limit ({max_bytes} bytes): {path}")
+        return contents
+    finally:
+        os.close(fd)
+
+
 def _safe_relative(value: str) -> str:
     path = Path(value)
     if (not value or path.is_absolute() or value in {".", ".."} or path.as_posix() != value
@@ -146,9 +176,12 @@ def _safe_relative(value: str) -> str:
 def load_suite(manifest: Path, *, _contents: bytes | None = None,
                _assets: dict[str, bytes] | None = None
                ) -> tuple[BenchmarkSuite, list[PreparedCase]]:
-    manifest = manifest.expanduser().resolve()
-    suite = BenchmarkSuite.model_validate_json(
-        manifest.read_bytes() if _contents is None else _contents)
+    manifest = manifest.expanduser()
+    if manifest.is_symlink():
+        raise ValueError(f"Manifest must be a regular file, not a symlink: {manifest}")
+    manifest_bytes = _contents if _contents is not None else _read_regular_file(manifest, MAX_MANIFEST_BYTES, "Manifest")
+    manifest = manifest.resolve()
+    suite = BenchmarkSuite.model_validate_json(manifest_bytes)
     ids: set[str] = set()
     prepared = []
     for case in suite.cases:
@@ -156,7 +189,10 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None,
             raise ValueError(f"Duplicate benchmark case ID: {case.id}")
         ids.add(case.id)
         repository = (manifest.parent / case.repository).resolve()
-        holdout = (manifest.parent / case.holdout_test).resolve()
+        holdout_unresolved = manifest.parent / case.holdout_test
+        if holdout_unresolved.is_symlink():
+            raise ValueError(f"Case {case.id} holdout test must not be a symlink")
+        holdout = holdout_unresolved.resolve()
         if not repository.is_dir() or not holdout.is_file() or holdout.suffix != ".py":
             raise ValueError(f"Case {case.id} needs a local Git repository and Python holdout test")
         if holdout.is_relative_to(repository):
@@ -176,16 +212,18 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None,
             _safe_relative(changed)
         if len(set(case.allowed_changes)) != len(case.allowed_changes):
             raise ValueError(f"Case {case.id} repeats an allowed change path")
-        holdout_bytes = holdout.read_bytes() if _assets is None else _assets[case.holdout_test]
+        holdout_bytes = _assets[case.holdout_test] if _assets is not None else _read_regular_file(holdout, MAX_HOLDOUT_BYTES, f"Case {case.id} holdout")
         reference_bytes = None
         if case.reference_patch is not None:
-            reference = (manifest.parent / case.reference_patch).resolve()
+            reference_unresolved = manifest.parent / case.reference_patch
+            if reference_unresolved.is_symlink():
+                raise ValueError(f"Case {case.id} reference patch must not be a symlink")
+            reference = reference_unresolved.resolve()
             if (not reference.is_file() or reference.suffix not in {".patch", ".diff"}
                     or reference.is_relative_to(repository)):
                 raise ValueError(f"Case {case.id} needs a reference patch outside the repository")
             if _assets is None:
-                with reference.open("rb") as handle:
-                    reference_bytes = handle.read(MAX_REFERENCE_BYTES + 1)
+                reference_bytes = _read_regular_file(reference, MAX_REFERENCE_BYTES, f"Case {case.id} reference patch")
             else:
                 reference_bytes = _assets[case.reference_patch]
             if not reference_bytes or len(reference_bytes) > MAX_REFERENCE_BYTES:
@@ -221,7 +259,7 @@ def _usage(session: SessionStore) -> tuple[str, str, int, int, int]:
 def _tool_trace(session: SessionStore) -> list[dict[str, str | bool]]:
     """Keep actionable tool metadata without model messages or tool output."""
     known = {"read_file", "edit_file", "search_code", "bash", "run_tests"}
-    events = [event for event in session.trace_events() if event.get("event") == "tool"]
+    events = [event for event in session.trace_events() if isinstance(event, dict) and event.get("event") == "tool"]
     return [{"name": event["name"] if isinstance(event.get("name"), str)
              and event["name"] in known else "unknown",
              "ok": event.get("ok") is True} for event in events[-100:]]
@@ -367,20 +405,47 @@ def _detect_docker_version(timeout: float = 5.0) -> str | None:
 
 
 def _verification_copy(workspace: Path, destination: Path) -> None:
-    shutil.copytree(workspace, destination, symlinks=True,
-                    ignore=shutil.ignore_patterns(
-                        ".git", ".venv", ".env", ".env.*", ".local", ".selfforge",
-                        ".workspaces", ".aws", ".ssh", ".npmrc", ".pypirc",
-                        ".netrc", "__pycache__", ".pytest_cache"))
+    base_ignore = shutil.ignore_patterns(
+        ".git", ".venv", ".env", ".env.*", ".local", ".selfforge",
+        ".workspaces", ".aws", ".ssh", ".npmrc", ".pypirc",
+        ".netrc", "__pycache__", ".pytest_cache",
+    )
+
+    def _ignore_special(directory: str, names: list[str]) -> set[str]:
+        ignored = set(base_ignore(directory, names))
+        for name in names:
+            if name in ignored:
+                continue
+            item_path = os.path.join(directory, name)
+            try:
+                st = os.lstat(item_path)
+                if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+                    ignored.add(name)
+            except OSError:
+                ignored.add(name)
+        return ignored
+
+    shutil.copytree(workspace, destination, symlinks=True, ignore=_ignore_special)
 
 
 def _install_holdout(destination: Path, case: PreparedCase) -> str:
     holdout_path = Path("tests") / f"test_selfforge_holdout_{case.spec.id}.py"
     target = destination / holdout_path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
+    if target.is_symlink() or target.exists():
         raise ValueError("Repository already contains the reserved holdout test path")
-    target.write_bytes(case.holdout_bytes)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    dest_resolved = destination.resolve()
+    if target.parent.is_symlink() or not target.parent.resolve().is_relative_to(dest_resolved):
+        raise ValueError("Holdout directory is a symlink or escapes workspace")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target, flags, 0o644)
+    except OSError as exc:
+        raise ValueError(f"Cannot install holdout test safely: {exc}") from exc
+    try:
+        os.write(fd, case.holdout_bytes)
+    finally:
+        os.close(fd)
     return holdout_path.as_posix()
 
 
@@ -468,8 +533,11 @@ def _preflight(manifest: Path, *, sandbox: Literal["docker", "host"], trusted_ho
         raise ValueError("Invalid benchmark sandbox or test timeout")
     if sandbox == "host" and not trusted_host:
         raise ValueError("Host benchmark execution requires explicit trust")
-    manifest = manifest.expanduser().resolve()
-    manifest_bytes = manifest.read_bytes() if manifest_contents is None else manifest_contents
+    manifest = manifest.expanduser()
+    if manifest.is_symlink():
+        raise ValueError(f"Manifest must be a regular file, not a symlink: {manifest}")
+    manifest_bytes = manifest_contents if manifest_contents is not None else _read_regular_file(manifest, MAX_MANIFEST_BYTES, "Manifest")
+    manifest = manifest.resolve()
     suite, cases = load_suite(manifest, _contents=manifest_bytes, _assets=asset_contents)
     if require_references and any(case.reference_bytes is None for case in cases):
         raise ValueError("Task validation requires a reference_patch for every case")
@@ -524,6 +592,7 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     agent_error_code = ""
     agent_steps = tools_used = 0
     tool_trace: list[dict[str, str | bool]] = []
+    session: SessionStore | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="selfforge-benchmark-") as temp:
             root = Path(temp)
@@ -584,8 +653,10 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                                         reason=reason, visible=visible, holdout=evidence)
         except (OSError, ValueError):
             artifact_error = "artifact_write_failed"
-    cost = session.token_metrics()["cost"]
-    cost_usd = cost["total_cost_usd"] if cost else None
+    cost_usd = None
+    if session is not None:
+        cost = session.token_metrics().get("cost")
+        cost_usd = cost["total_cost_usd"] if cost else None
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
