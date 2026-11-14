@@ -150,11 +150,14 @@ def _observation(context: PRContext, head_tree: Path, task: str,
                 or any(_protected(part) for part in relative.parts)):
             continue
         unresolved_path = head_tree / relative
-        if unresolved_path.is_symlink():
-            continue
-        path = unresolved_path.resolve()
-        if (not path.is_relative_to(resolved_head)
-                or any(_protected(part) for part in path.relative_to(resolved_head).parts)):
+        try:
+            if unresolved_path.is_symlink():
+                continue
+            path = unresolved_path.resolve()
+            if (not path.is_relative_to(resolved_head)
+                    or any(_protected(part) for part in path.relative_to(resolved_head).parts)):
+                continue
+        except (OSError, RuntimeError, ValueError):
             continue
         try:
             with _workspace_parent(head_tree, relative) as parent_fd:

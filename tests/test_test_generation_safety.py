@@ -303,3 +303,10 @@ def test_risk_limit_rejects_boolean() -> None:
     context = PRContext(repository="r", base_sha="a" * 40, head_sha="b" * 40, files=[])
     with pytest.raises(ValueError, match="top_k"):
         prioritize_risks(context, top_k=True)
+
+
+def test_observation_skips_looping_parent_symlink(tmp_path: Path) -> None:
+    (tmp_path / "loop").symlink_to("loop")
+    context = PRContext(repository="repo", base_sha="a" * 40, head_sha="b" * 40,
+                        files=[ChangedFile(path="loop/old.py", status="D", hunks=[])])
+    assert '"files": []' in _observation(context, tmp_path, "test")
