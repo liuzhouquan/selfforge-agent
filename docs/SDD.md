@@ -118,7 +118,7 @@ flowchart LR
 | 8 | [SF-EVAL-09](#sf-eval-09) | Merged | Codex（审查整合） | SF-EVAL-08 / SF-WS-05（Merged） | [PR #65](https://github.com/liuzhouquan/selfforge-agent/pull/65)：CLI `eval-suite` / `eval-validate` 接入 `--policy` 冻结策略强校验、预算门禁与安全导出（`_write_cli_output`） |
 | 9 | [SF-ENV-07](#sf-env-07) | Merged | Codex（审查整合） | SF-WS-05 / SF-ENV-06（Merged） | [PR #66](https://github.com/liuzhouquan/selfforge-agent/pull/66)：CLI `sandbox` 诊断与规划命令补齐结构化安全导出（`--json` / `--output`）与 `export-lock` 安全写盘 |
 | 10 | [SF-TEST-03](#sf-test-03) | Merged | Codex（审查整合） | SF-TEST-02 / SF-WS-05（Merged） | [PR #67](https://github.com/liuzhouquan/selfforge-agent/pull/67)：SessionStore 补齐回归验证记录追溯与 GET /api/code/workspaces/{session_id}/regression 只读接口，并在 PR 交付中绑定回归验证证据 |
-| 11 | [SF-VERIF-01](#sf-verif-01) | In Progress | Antigravity | 无 | 验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
+| 11 | [SF-VERIF-01](#sf-verif-01) | In Review | Antigravity | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -548,21 +548,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #67 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-VERIF-01-A1 | `parse_junit` 解析深层嵌套 XML 时捕获 `RecursionError`/`TypeError`，安全降级返回包含 `error` 提示的 `JUnitEvidence` 而不发生非受控异常；用例计数超出上限（100,000）或包含畸形超大计数时显式报错拒绝 | `tests/test_verification_runner_safety.py` 递归与用例计数边界测试 | 未验证（开发中） |
-| SF-VERIF-01-A2 | `_test_target` 校验 `timeout`，遇到 `NaN`、`inf`、非正数或超过 3600 秒时严格抛出 `ValueError`；遇到不存在或非目录的仓库路径、空测试路径或受保护组件（`.git`、`.env` 等）时显式抛出 `ValueError` | `tests/test_verification_runner_safety.py` 目标参数与边界防护测试 | 未验证（开发中） |
-| SF-VERIF-01-A3 | `_test_target` 及 `TestRunner.run` 遇到 FIFO 等非普通文件时显式拒绝并报错 `test_path must be a regular file or directory`，不发生进程挂起；`_read_junit_file` 拒绝读取符号链接、断链、目录或 FIFO 工件 | `tests/test_verification_runner_safety.py` 特殊文件与符号链接工件隔离测试 | 未验证（开发中） |
-| SF-VERIF-01-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证（开发中） |
+| SF-VERIF-01-A1 | `parse_junit` 解析深层嵌套 XML 时捕获 `RecursionError`/`TypeError`，安全降级返回包含 `error` 提示的 `JUnitEvidence` 而不发生非受控异常；用例计数超出上限（100,000）或包含畸形超大计数时显式报错拒绝 | `tests/test_verification_runner_safety.py` 递归与用例计数边界测试 | E1 |
+| SF-VERIF-01-A2 | `_test_target` 校验 `timeout`，遇到 `NaN`、`inf`、非正数或超过 3600 秒时严格抛出 `ValueError`；遇到不存在或非目录的仓库路径、空测试路径或受保护组件（`.git`、`.env` 等）时显式抛出 `ValueError` | `tests/test_verification_runner_safety.py` 目标参数与边界防护测试 | E2 |
+| SF-VERIF-01-A3 | `_test_target` 及 `TestRunner.run` 遇到 FIFO 等非普通文件时显式拒绝并报错 `test_path must be a regular file or directory`，不发生进程挂起；`_read_junit_file` 拒绝读取符号链接、断链、目录或 FIFO 工件 | `tests/test_verification_runner_safety.py` 特殊文件与符号链接工件隔离测试 | E3 |
+| SF-VERIF-01-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-verif-01`；Worktree=`selfforge-sf-verif-01`。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-VERIF-01-A1 | `tests/test_verification_runner_safety.py::test_junit_parser_handles_deep_recursion_gracefully`、`tests/test_verification_runner_safety.py::test_junit_parser_rejects_excessive_test_counts` | 本地 `pytest -v tests/test_verification_runner_safety.py`；GitHub CI `Unit tests` | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) |
+| E2 | SF-VERIF-01-A2 | `tests/test_verification_runner_safety.py::test_test_target_rejects_non_finite_and_out_of_bounds_timeouts`、`tests/test_verification_runner_safety.py::test_test_target_rejects_missing_or_non_dir_repository_and_blank_test_path` | 本地 `pytest -v tests/test_verification_runner_safety.py`；GitHub CI `Unit tests` | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) |
+| E3 | SF-VERIF-01-A3 | `tests/test_verification_runner_safety.py::test_test_target_rejects_non_regular_test_files_such_as_fifos`、`tests/test_verification_runner_safety.py::test_read_junit_file_rejects_symlinks_fifos_and_directories` | 本地 `pytest -v tests/test_verification_runner_safety.py`；GitHub CI `Unit tests` | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) |
+| E4 | SF-VERIF-01-A4 | `tests/test_verification_runner_safety.py::test_read_junit_file_rejects_symlinks_fifos_and_directories` | 本地 `ruff check .`、`python scripts/check_sdd.py`、全量单元测试 732 passed；GitHub CI Lint / SDD contract check / Unit tests 732 passed / Docker integration tests 15 passed | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) 全绿 |
+
+执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-verif-01`；Worktree=`selfforge-sf-verif-01`；PR=[#73](https://github.com/liuzhouquan/selfforge-agent/pull/73)；Source=`d80f97a000fc98b0498fb5ea23746ca6cc0cb386`。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-verif-01 (worktree: selfforge-sf-verif-01) / 开发中
-已完成验收与证据 ID：无（开发中）
-未完成 / 环境限制 / 未提交内容归属：SF-VERIF-01-A1..A4（开发中）
-PR / 准确 head CI / merge SHA（有则填）：待创建 PR
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-verif-01 (worktree: selfforge-sf-verif-01) / 源码提交 d80f97a000fc98b0498fb5ea23746ca6cc0cb386；本次状态提交仅文档
+已完成验收与证据 ID：SF-VERIF-01-A1..A4（E1、E2、E3、E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；已通过 R1 门禁；待审查合并
+PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419 / 待合并
 仍在运行的本任务进程或 CI（有则填）：无
-下一步：运行本地全量测试门禁并提交源码提交 S
+下一步：等待审查合并
 ```
 
 ## 5. 验收追踪与执行记录格式
