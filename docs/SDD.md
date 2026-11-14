@@ -128,6 +128,7 @@ flowchart LR
 | 18 | [SF-EVAL-10](#sf-eval-10) | In Review | Antigravity | SF-EVAL-09（Merged） | [PR #75](https://github.com/liuzhouquan/selfforge-agent/pull/75)：评测执行器与基准测试安全加固：未绑定状态防御、非阻塞常规文件读取、测试拷贝防FIFO阻塞与原子工件安装 |
 | 19 | [SF-TEST-05](#sf-test-05) | In Review | Antigravity | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | In Review | Antigravity | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
+| 21 | [SF-RUN-08](#sf-run-08) | In Review | Antigravity | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -915,6 +916,38 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #77 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43589885389（R1 CI） / 无
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：提交 Commit H 并推送到 origin/feat/sf-api-01，等待 R2 CI 运行完成并确认通过，随后交付。
+```
+
+### SF-RUN-08
+
+**目标：** 在 `selfforge_agent.runtime` 核心执行器与失败工件模块中贯彻 fail-closed 与安全隔离防御。在 `failure_artifacts.py` 中严格校验 `write_failure` 的用例名称、重复次数（0 至 100,000）与根目录有效性，采用 `O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW` 杜绝符号链接劫持；`prepare_artifacts` 严格拒绝符号链接目录并阻止与被评测仓库冲突；新增 `read_failure` 安全读取诊断工件，严格校验文件名格式并防止路径穿越，以 `O_RDONLY | O_NOFOLLOW | O_NONBLOCK` 打开并校验 `S_ISREG`，拒绝符号链接、FIFO 管道与特殊设备，限制读取上限 128 KiB 并校验 JSON 结构与版本号；在 `execution.py` 中，`HostExecutor` 与 `DockerExecutor` 构造时强制校验 `root` 为已存在非符号链接目录，执行时严格校验 `timeout` 为有限正数（阻断 `NaN`/`inf`/非正数绕过），校验 `command` 非空、不含空字符 `\x00` 且不超过 64 KiB；`resolve_docker_image` 校验有限正超时；`run_with_artifact` 对工件文件名执行白名单校验。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/runtime/failure_artifacts.py`、`src/selfforge_agent/runtime/execution.py` 及专项测试 `tests/test_runtime_execution_safety.py`；不改动上层 Coding/Review/Benchmark 模型调用逻辑。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-RUN-08-A1 | `write_failure` 严格校验 `case` 名称（非空、无路径穿越/分隔符、只含 `[A-Za-z0-9_-]`、不超过 128 字符）、`repeat` 索引（0 至 100,000 间整数、拒绝布尔/浮点/负数/越界）及 `reason` 长度；`root` 必须为已存在非符号链接目录；写盘采用 `O_WRONLY`、`O_CREAT`、`O_EXCL`、`O_NOFOLLOW` 标志原子写入，杜绝符号链接劫持与覆盖 | `tests/test_runtime_execution_safety.py` 路径穿越、非法索引与符号链接隔离测试 | E1 |
+| SF-RUN-08-A2 | 新增 `read_failure` 安全读取测试失败诊断工件，严格校验文件名格式并防止路径穿越；以 `O_RDONLY`、`O_NOFOLLOW`、`O_NONBLOCK` 打开并校验 `S_ISREG`，拒绝符号链接、FIFO 管道与特殊设备以防挂起；限制读取上限 128 KiB 并校验 JSON 结构与版本号 | `tests/test_runtime_execution_safety.py` 诊断工件安全读取、特殊文件与损坏工件防御测试 | E2 |
+| SF-RUN-08-A3 | `HostExecutor` 与 `DockerExecutor` 构造时强制校验 `root` 为已存在非符号链接目录；执行时严格校验 `timeout` 为有限正数（阻断 `NaN`/`inf`/非正数绕过），校验 `command` 非空、不含空字符 `\x00` 且不超过 64 KiB；`resolve_docker_image` 校验有限正超时；`run_with_artifact` 对工件文件名执行白名单校验 | `tests/test_runtime_execution_safety.py` 执行器超时、命令有效性、工作区根目录与工件命名测试 | E3 |
+| SF-RUN-08-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-RUN-08-A1 | `tests/test_runtime_execution_safety.py::test_write_failure_rejects_path_traversal_in_case_name`、`tests/test_runtime_execution_safety.py::test_write_failure_rejects_invalid_repeat`、`tests/test_runtime_execution_safety.py::test_write_failure_rejects_symlink_root_and_target`、`tests/test_runtime_execution_safety.py::test_prepare_artifacts_rejects_symlinks_and_repo_conflicts` | 本地 `pytest -v tests/test_runtime_execution_safety.py`；GitHub Actions CI `Unit tests` | `1d03cd3739a53ae7c7928af1001dbcb02d3f1c99`；passed；CI [R1 43593364230](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43593364230) |
+| E2 | SF-RUN-08-A2 | `tests/test_runtime_execution_safety.py::test_read_failure_safely_reads_valid_artifact`、`tests/test_runtime_execution_safety.py::test_read_failure_rejects_symlinks_fifos_and_path_traversal` | 本地 `pytest -v tests/test_runtime_execution_safety.py`；GitHub Actions CI `Unit tests` | `1d03cd3739a53ae7c7928af1001dbcb02d3f1c99`；passed；CI [R1 43593364230](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43593364230) |
+| E3 | SF-RUN-08-A3 | `tests/test_runtime_execution_safety.py::test_executor_rejects_non_finite_and_non_positive_timeout`、`tests/test_runtime_execution_safety.py::test_executor_rejects_empty_and_null_byte_commands`、`tests/test_runtime_execution_safety.py::test_executor_rejects_symlink_or_missing_root`、`tests/test_runtime_execution_safety.py::test_docker_artifact_name_validation`、`tests/test_runtime_execution_safety.py::test_resolve_docker_image_rejects_non_finite_timeout` | 本地 `pytest -v tests/test_runtime_execution_safety.py`；GitHub Actions CI `Unit tests` | `1d03cd3739a53ae7c7928af1001dbcb02d3f1c99`；passed；CI [R1 43593364230](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43593364230) |
+| E4 | SF-RUN-08-A4 | `tests/test_runtime_execution_safety.py::test_resolve_docker_image_rejects_non_finite_timeout` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、全量单元测试 783 passed；GitHub Actions CI Lint / SDD contract check / Unit tests 783 passed / Docker integration tests 15 passed | `1d03cd3739a53ae7c7928af1001dbcb02d3f1c99`；passed；CI [R1 43593364230](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43593364230) 全绿 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-run-08`；Worktree=`selfforge-sf-run-08`；PR=[#78](https://github.com/liuzhouquan/selfforge-agent/pull/78)；Source=`1d03cd3739a53ae7c7928af1001dbcb02d3f1c99`。
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-run-08 (worktree: selfforge-sf-run-08) / 源码 1d03cd3739a53ae7c7928af1001dbcb02d3f1c99；当前仅文档更新
+已完成验收与证据 ID：SF-RUN-08-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；本提交仅更新 SDD 状态与验证证据；待合并
+PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43593364230 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无
+下一步：等待 PR #78 审查合并；合并后由审查整合更新 SDD 状态为 Merged。
 ```
 
 ## 5. 验收追踪与执行记录格式
