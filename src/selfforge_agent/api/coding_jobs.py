@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import stat
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -35,10 +36,12 @@ class DurableCancel(Event):
             self.set()
 
     def is_set(self) -> bool:
-        return super().is_set() or self.marker.is_file()
+        return super().is_set() or (self.marker.is_file() and not self.marker.is_symlink())
 
     def set(self) -> None:
-        fd = os.open(self.marker, os.O_WRONLY | os.O_CREAT, 0o600)
+        if self.marker.is_symlink():
+            raise ValueError("Cancellation marker cannot be a symlink")
+        fd = os.open(self.marker, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
         os.close(fd)
         super().set()
 
@@ -61,7 +64,8 @@ class CodingJob:
 class CodingJobManager:
     def __init__(self, max_active: int = 2, max_history: int = 50,
                  root: Path | None = None) -> None:
-        if max_active <= 0 or max_history <= 0:
+        if (not isinstance(max_active, int) or isinstance(max_active, bool) or max_active <= 0
+                or not isinstance(max_history, int) or isinstance(max_history, bool) or max_history <= 0):
             raise ValueError("Positive job limits are required")
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         self.root = (root or data_home / "selfforge-agent" / "jobs").expanduser().resolve()
@@ -107,9 +111,11 @@ class CodingJobManager:
 
     def _write_record(self, record: dict) -> None:
         target = self._record_path(record["job_id"])
+        if target.is_symlink():
+            raise ValueError("Job record target cannot be a symlink")
         temporary = self.records / f".{record['job_id']}.{uuid4().hex}.tmp"
         try:
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(record, handle, ensure_ascii=False)
                 handle.write("\n")
@@ -139,8 +145,19 @@ class CodingJobManager:
         }
 
     def _load_record(self, job_id: str) -> dict:
+        path = self._record_path(job_id)
+        if path.is_symlink():
+            raise KeyError(job_id)
         try:
-            record = json.loads(self._record_path(job_id).read_text(encoding="utf-8"))
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            try:
+                stat_info = os.fstat(fd)
+                if not stat.S_ISREG(stat_info.st_mode) or stat_info.st_size > 65536:
+                    raise KeyError(job_id)
+                content = os.read(fd, 65536).decode("utf-8")
+            finally:
+                os.close(fd)
+            record = json.loads(content)
         except (OSError, ValueError) as exc:
             raise KeyError(job_id) from exc
         if (not isinstance(record, dict) or record.get("job_id") != job_id
@@ -269,10 +286,20 @@ class CodingJobManager:
 
     def list_jobs(self, repository: Path | None = None) -> list[dict]:
         target = str(repository.resolve()) if repository else None
-        records = sorted(self.records.glob("*.json"), key=lambda path: path.stat().st_mtime,
-                         reverse=True)
+
+        def _safe_mtime(p: Path) -> float:
+            try:
+                if p.is_symlink():
+                    return 0.0
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        records = sorted(self.records.glob("*.json"), key=_safe_mtime, reverse=True)
         jobs = []
         for path in records:
+            if path.is_symlink():
+                continue
             try:
                 item = self.get(path.stem)
             except (KeyError, OSError, ValueError):
@@ -298,6 +325,9 @@ class CodingJobManager:
                 if job:
                     job.cancel.set()
                 else:
-                    fd = os.open(self._cancel_path(job_id), os.O_WRONLY | os.O_CREAT, 0o600)
+                    cancel_file = self._cancel_path(job_id)
+                    if cancel_file.is_symlink():
+                        raise ValueError("Cancel marker cannot be a symlink")
+                    fd = os.open(cancel_file, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
                     os.close(fd)
         return self.get(job_id)
