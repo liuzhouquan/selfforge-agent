@@ -2,6 +2,9 @@
 
 import ast
 import json
+import math
+import os
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -94,22 +97,60 @@ def validate_risk_target(context: PRContext, target: RiskTarget | None) -> None:
     raise ValueError("Risk target must match an added line in this Base/Head diff")
 
 
+def _write_test_artifact(tree: Path, test_path: str, test_code: str) -> Path:
+    """Safely install a generated test artifact preventing symlink traversal and overwrites."""
+    if not test_path or Path(test_path).is_absolute() or ".." in Path(test_path).parts:
+        raise ValueError(f"Invalid test artifact path: {test_path}")
+    target = tree / test_path
+    if target.is_symlink() or target.exists():
+        raise ValueError(f"Test target {test_path} already exists or is a symlink in worktree")
+    resolved_tree = tree.resolve()
+    resolved_parent = target.parent.resolve()
+    if target.parent.is_symlink() or not resolved_parent.is_relative_to(resolved_tree):
+        raise ValueError(f"Test path {test_path} parent directory escapes worktree")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target, flags, 0o600)
+    except OSError as exc:
+        raise ValueError(f"Cannot securely create test artifact {test_path}: {exc}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(test_code)
+    except OSError as exc:
+        raise ValueError(f"Failed writing test artifact {test_path}: {exc}") from exc
+    return target
+
+
 def _observation(context: PRContext, head_tree: Path, task: str,
                  target: RiskTarget | None = None,
                  prior: list[DifferentialTestReport] | None = None) -> str:
     files = []
     changes = sorted(context.files, key=lambda item: item.path != target.file_path) if target else context.files
+    resolved_head = head_tree.resolve()
     for change in changes[:12]:
         relative = Path(change.path)
         if (relative.is_absolute() or ".." in relative.parts or relative.suffix != ".py"
                 or any(_protected(part) for part in relative.parts)):
             continue
-        path = (head_tree / relative).resolve()
-        if not path.is_relative_to(head_tree) or not path.is_file() or path.stat().st_size > 12_000:
+        unresolved_path = head_tree / relative
+        if unresolved_path.is_symlink():
+            continue
+        path = unresolved_path.resolve()
+        if not path.is_relative_to(resolved_head):
             continue
         try:
-            source = path.read_text(encoding="utf-8")
-        except UnicodeError:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode) or st.st_size > 12_000:
+                    continue
+                content_bytes = os.read(fd, 12_001)
+                if len(content_bytes) > 12_000:
+                    continue
+                source = content_bytes.decode("utf-8")
+            finally:
+                os.close(fd)
+        except (OSError, UnicodeError):
             continue
         added = [line.content for hunk in change.hunks for line in hunk.lines
                  if line.kind == "added"][:100]
@@ -126,13 +167,30 @@ def _observation(context: PRContext, head_tree: Path, task: str,
                        "previous_candidates": previous, "files": files}, ensure_ascii=False)
 
 
+_ALLOWED_TOP_LEVEL_NODES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.Import,
+    ast.ImportFrom,
+    ast.Assign,
+    ast.AnnAssign,
+    ast.Expr,
+)
+
+
 def _parse_test(arguments: str) -> GeneratedTest:
     try:
         candidate = GeneratedTest.model_validate_json(arguments)
         tree = ast.parse(candidate.test_code)
-    except (ValueError, SyntaxError, ValidationError) as exc:
+    except (ValueError, SyntaxError, ValidationError, RecursionError, MemoryError, TypeError) as exc:
         raise ValueError("Model returned invalid pytest source") from exc
-    tests = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+    for node in tree.body:
+        if not isinstance(node, _ALLOWED_TOP_LEVEL_NODES):
+            raise ValueError("Generated pytest source must not contain top-level executable statements")  # noqa: TRY004 - file data
+        if isinstance(node, ast.Expr) and not isinstance(node.value, ast.Constant):
+            raise ValueError("Generated pytest source must not contain top-level executable statements")  # noqa: TRY004 - file data
+    tests = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
              and node.name.startswith("test_")]
     if not tests or not any(isinstance(child, ast.Assert) for test in tests
                             for child in ast.walk(test)):
@@ -148,6 +206,8 @@ def remaining_budget(
     """Return remaining monotonic seconds before *deadline*, or raise ``TimeoutError``."""
     if deadline is None:
         return float("inf")
+    if not math.isfinite(deadline):
+        raise ValueError("deadline must be a finite number")
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError(message)
@@ -176,8 +236,8 @@ class DifferentialTestGenerator:
             raise ValueError("A test generation task is required")
         if len(task) > 8_000:
             raise ValueError("Test generation task exceeds 8000 characters")
-        if timeout <= 0:
-            raise ValueError("Test timeout must be positive")
+        if not math.isfinite(timeout) or timeout <= 0 or timeout > 600:
+            raise ValueError("Test timeout must be a positive finite number not exceeding 600 seconds")
         if candidate_index < 1 or candidate_index > 3:
             raise ValueError("Candidate index must be between 1 and 3")
         if not trusted and getattr(self.runner, "requires_trust", True):
@@ -229,7 +289,7 @@ class DifferentialTestGenerator:
                         self.session.trace("generated_test", candidate_index=candidate_index,
                                            bytes=len(generated.test_code.encode("utf-8")))
                     for tree in (base_tree, head_tree):
-                        (tree / report.test_path).write_text(generated.test_code, encoding="utf-8")
+                        _write_test_artifact(tree, report.test_path, generated.test_code)
                     report.base_test = self.runner.run(
                         base_tree, trusted=trusted, timeout=min(timeout, _remaining(deadline)),
                         test_path=report.test_path)

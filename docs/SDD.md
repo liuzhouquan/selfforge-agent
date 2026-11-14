@@ -124,6 +124,7 @@ flowchart LR
 | 14 | [SF-RUN-07](#sf-run-07) | Merged | Codex（审查整合） | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 | 15 | [SF-WS-08](#sf-ws-08) | Merged | Codex（审查整合） | 无 | [PR #72](https://github.com/liuzhouquan/selfforge-agent/pull/72)：WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
 | 16 | [SF-VERIF-01](#sf-verif-01) | Merged | Codex（审查整合） | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
+| 17 | [SF-TEST-05](#sf-test-05) | In Progress | Antigravity | SF-TEST-04（Merged） | 差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -785,9 +786,32 @@ PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liu
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
-## 5. 验收追踪与执行记录格式
+### SF-TEST-05
 
-每项验收使用全局 ID `任务ID-A序号`，实现后把上表“初始证据”替换为相应记录 ID（如 E1）。在**同一规格节**追加以下表，不要求再建 task 文件：
+**目标：** 在差分测试生成与因果推断执行流中贯彻 fail-closed 与无特权安全隔离准则。在 `test_generation.py` 中引入 `_write_test_artifact`，以 `O_CREAT | O_EXCL | O_NOFOLLOW` 模式原子安装候选测试工件并强校验目录符号链接，严防目标符号链接穿透与文件覆写漏洞；在 `_observation` 中采用 `O_NOFOLLOW | O_NONBLOCK` 非阻塞安全读取常规文件，对符号链接与 FIFO 管道安全跳过，防止进程永久挂起；在 `_parse_test` 中捕获 `(RecursionError, MemoryError, TypeError)` 等畸形异常，严防深层嵌套 AST 导致服务崩溃，并禁止顶层非声明可执行语句以防模块导入时执行恶意副作用；在 `causal_investigation.py` 的 `investigate_causality` 中对不可信测试输出实施有界切片防护（单流 64KB，总长 128KB），并强校验 `target.line_number` 为有限正数；在 `risk_prioritization.py` 中强校验 `top_k` 为合法正整数（1–100），消除负切片漏洞。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/coding/test_generation.py`、`src/selfforge_agent/coding/causal_investigation.py`、`src/selfforge_agent/coding/risk_prioritization.py` 及专项测试 `tests/test_test_generation_safety.py`；保持既有差分评估、模型交互契约与回归测试接口完全兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-TEST-05-A1 | `_write_test_artifact` 及 `DifferentialTestGenerator.run` 安装测试工件时，遇到目标符号链接、已存在文件或逃逸父目录时显式拒绝，并以原子排他方式写盘 | `tests/test_test_generation_safety.py` 测试工件防符链与原子写盘测试 | 未验证 |
+| SF-TEST-05-A2 | `_parse_test` 解析模型测试代码时受控捕获 `RecursionError`/`MemoryError`/`TypeError`，并显式拒绝顶层非声明可执行语句与无断言函数 | `tests/test_test_generation_safety.py` AST 安全边界与递归防御测试 | 未验证 |
+| SF-TEST-05-A3 | `_observation` 安全忽略符号链接与 FIFO 特殊文件，不阻塞进程；`investigate_causality` 对超大日志有界切片并在非法行号时安全降级；`prioritize_risks` 校验 `top_k` | `tests/test_test_generation_safety.py` 非阻塞观察与因果推断边界测试 | 未验证 |
+| SF-TEST-05-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-test-05`；Worktree=`selfforge-sf-test-05`；PR=-；Source=-。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-test-05 (worktree: selfforge-sf-test-05) / 开发中
+已完成验收与证据 ID：待验证（初始开发阶段）
+未完成 / 环境限制 / 未提交内容归属：代码与专项测试已完成，等待提交 Commit S 与 CI 验证
+PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：完成 Commit S 提交并在 GitHub 创建 PR，等待 R1 CI 通过后更新 SDD 为 In Review 并提交 Commit H。
+```
+
+## 5. 验收追踪与执行记录格式
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
