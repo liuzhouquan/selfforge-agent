@@ -79,7 +79,7 @@ from selfforge_agent.runtime.environment import (
 )
 from selfforge_agent.runtime.execution import DockerExecutor, HostExecutor
 from selfforge_agent.runtime.model import OpenAIChatAdapter
-from selfforge_agent.runtime.session import SessionStore
+from selfforge_agent.runtime.session import RegressionJournalCorruptError, SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
 from selfforge_agent.runtime.workspace import CodingWorkspaceManager, WorkspaceError
 from selfforge_agent.runtime.workspace_diff import DiffLimitError, workspace_diff
@@ -843,7 +843,9 @@ def code_workspace_get_regression(
         if not directory.is_dir():
             raise HTTPException(status_code=404, detail="No regression validation record")
         store = SessionStore(session_root, session_id)
-        latest = store.latest_regression_record()
+        latest = store.latest_regression_record(strict=True)
+    except RegressionJournalCorruptError:
+        raise HTTPException(status_code=422, detail="Corrupted regression validation record") from None
     except (ValueError, OSError, WorkspaceError):
         raise HTTPException(status_code=400, detail="Invalid repository or regression storage") from None
     if latest is None:

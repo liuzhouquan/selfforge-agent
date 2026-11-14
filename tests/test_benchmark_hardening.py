@@ -214,8 +214,9 @@ def test_frozen_inputs_obey_the_same_size_limits(
         load_suite(manifest, **kwargs)
 
 
+@pytest.mark.parametrize("error_type", [ValueError, TypeError, KeyError, AttributeError])
 def test_metrics_error_after_session_creation_returns_harness_outcome(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type,
 ) -> None:
     from test_benchmark import _manifest
 
@@ -223,14 +224,16 @@ def test_metrics_error_after_session_creation_returns_harness_outcome(
 
     manifest, _ = _manifest(tmp_path)
     _, cases = load_suite(manifest)
-    monkeypatch.setattr(benchmark.SessionStore, "token_metrics", MagicMock(side_effect=ValueError("bad metrics")))
+    monkeypatch.setattr(benchmark.SessionStore, "token_metrics", MagicMock(side_effect=error_type("bad metrics")))
     agent = MagicMock()
-    agent.run.side_effect = ValueError("initialization failed")
+    from types import SimpleNamespace
+
+    agent.run.return_value = SimpleNamespace(status="failed", steps=0, tools_used=0, error="fixture failure")
     monkeypatch.setattr(benchmark, "CodingAgent", MagicMock(return_value=agent))
     outcome = _run_once(cases[0], 1, lambda _case: None, sandbox="host", trusted_host=True,
                         image="unused", max_steps=1, time_budget=10, test_timeout=10)
     assert not outcome.success
-    assert outcome.reason == "harness_error:ValueError"
+    assert outcome.reason == f"harness_error:{error_type.__name__}"
     assert outcome.cost_usd is None
 
 
