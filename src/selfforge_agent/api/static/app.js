@@ -115,7 +115,7 @@ function refreshCodingAvailability() {
 function resetCodingRegressionState(statusMessage = "") {
   codingRegressionGeneration += 1;
   codingRegressionRunning = false;
-  codingRegressionLoaded = false;
+  codingRegressionLoaded = true; // Mutations invalidate history until another job is selected.
   $("coding-regression-result").hidden = true;
   $("coding-regression-result").replaceChildren();
   if (statusMessage) {
@@ -128,13 +128,14 @@ function resetCodingRegressionState(statusMessage = "") {
 }
 
 async function loadDurableRegressionReport(job) {
-  if (!job || !job.branch || !job.session_id || !job.repository) return;
+  if (!job || job.sandbox !== "docker" || !job.branch || !job.session_id || !job.repository) return;
   const requestJobId = job.job_id;
   const requestSession = job.session_id;
   const requestRepo = job.repository;
   const requestGeneration = ++codingRegressionGeneration;
   const isCurrent = () => requestGeneration === codingRegressionGeneration &&
-    requestJobId === activeCodingJob && requestSession === currentCodingSession;
+    requestJobId === activeCodingJob && requestSession === currentCodingSession &&
+    requestRepo === currentCodingRepo;
 
   try {
     const res = await fetch(
@@ -144,9 +145,9 @@ async function loadDurableRegressionReport(job) {
     if (res.status === 200) {
       const report = await res.json();
       if (!isCurrent()) return;
-      renderCodingRegressionReport(report);
+      renderCodingRegressionReport(report, true);
       const statusEl = $("coding-regression-status");
-      statusEl.textContent = `已恢复持久化回归验证记录：${regressionStatusLabel(report.status)}（独立 Docker 验证结果）。`;
+      statusEl.textContent = `已恢复持久化回归验证记录：${regressionStatusLabel(report.status)}（历史 Docker 快照，未经当前工作区重新验证）。`;
       statusEl.hidden = false;
     }
   } catch (_err) {
@@ -224,7 +225,7 @@ function renderRegressionRunCard(title, summary) {
   return card;
 }
 
-function renderCodingRegressionReport(report) {
+function renderCodingRegressionReport(report, historical = false) {
   const container = $("coding-regression-result");
   const summaryLine = element("div", "coding-regression-summary");
   summaryLine.append(
@@ -234,7 +235,7 @@ function renderCodingRegressionReport(report) {
   const grid = element("div", "coding-regression-grid");
   grid.append(
     renderRegressionRunCard("Base 基线快照", report.base_result),
-    renderRegressionRunCard("当前工作区快照", report.repaired_result),
+    renderRegressionRunCard(historical ? "历史工作区快照（需重新验证）" : "当前工作区快照", report.repaired_result),
   );
   const hashes = element(
     "p",
@@ -254,12 +255,15 @@ function renderCodingJob(job) {
   currentCodingSandbox = job.sandbox || "docker";
   currentCodingSandboxRaw = job.sandbox || null;
   codingJobRunning = ["queued", "running"].includes(job.state);
-  const jobChanged = codingRegressionJobId !== job.job_id;
+  const context = JSON.stringify([job.job_id, job.session_id, job.repository, job.branch, job.sandbox]);
+  const jobChanged = codingRegressionJobId !== context;
   if (jobChanged) {
-    codingRegressionJobId = job.job_id;
+    codingRegressionJobId = context;
     resetCodingRegressionState();
+    codingRegressionLoaded = false;
   }
-  if (job.branch && !codingJobRunning && (jobChanged || !codingRegressionLoaded)) {
+  if (job.sandbox === "docker" && job.branch && !codingJobRunning &&
+      !codingRegressionRunning && !codingRegressionLoaded) {
     codingRegressionLoaded = true;
     loadDurableRegressionReport(job);
   }
@@ -563,6 +567,7 @@ $("coding-regression-form").addEventListener("submit", async (event) => {
   const isCurrentRequest = () => requestGeneration === codingRegressionGeneration &&
     requestJobId === activeCodingJob && requestSession === currentCodingSession;
   codingRegressionRunning = true;
+  codingRegressionLoaded = true;
   $("coding-regression-result").hidden = true;
   statusEl.textContent = "正在隔离运行 Base 与当前工作区对照验证…";
   statusEl.hidden = false;

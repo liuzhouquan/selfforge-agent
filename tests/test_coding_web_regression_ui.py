@@ -1149,3 +1149,41 @@ def test_web_ui_direct_mode_skips_durable_regression_query_and_commit_invalidate
     assert outcome["callsAfterDirect"] == 0
     assert outcome["resultVisibleBeforeCommit"] is True
     assert outcome["resultHiddenAfterCommit"] is True
+
+
+@pytest.mark.parametrize("sandbox", ["host", None])
+def test_durable_restore_requires_explicit_docker(sandbox: str | None) -> None:
+    scenario = r"""
+    let reads = 0;
+    setFetchHandler(async (url) => {
+      if (url.includes('/regression?')) reads++;
+      return { status: 404, async json() { return {}; } };
+    });
+    renderCodingJob({job_id:'guard', session_id:'sess', repository:'/repo',
+      branch:'selfforge/sess', base_sha:'123456789012', sandbox:__SANDBOX__,
+      state:'completed', trace:[]});
+    await flushMicrotasks();
+    return {reads};
+    """.replace('__SANDBOX__', json.dumps(sandbox))
+    assert _run_app_js_scenario(scenario)['reads'] == 0
+
+
+def test_invalidated_history_does_not_reload_on_same_job_poll() -> None:
+    scenario = r"""
+    let reads = 0;
+    setFetchHandler(async (url) => {
+      if (url.includes('/regression?')) reads++;
+      return { status:404, async json() { return {}; } };
+    });
+    const job = {job_id:'guard', session_id:'sess', repository:'/repo',
+      branch:'selfforge/sess', base_sha:'123456789012', sandbox:'docker',
+      state:'completed', trace:[]};
+    renderCodingJob(job);
+    await flushMicrotasks();
+    resetCodingRegressionState('invalidated');
+    renderCodingJob(job);
+    await flushMicrotasks();
+    return {reads, hidden:$('coding-regression-result').hidden};
+    """
+    outcome = _run_app_js_scenario(scenario)
+    assert outcome == {'reads': 1, 'hidden': True}
