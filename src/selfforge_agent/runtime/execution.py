@@ -1,6 +1,7 @@
 """Bounded command execution on the host or in an isolated Docker container."""
 
 import fnmatch
+import math
 import os
 import re
 import shutil
@@ -41,7 +42,7 @@ class _StageCancelled(Exception):
 def _check_staging(deadline: float, cancel: Event | None) -> None:
     if cancel is not None and cancel.is_set():
         raise _StageCancelled
-    if time.monotonic() >= deadline:
+    if not math.isfinite(deadline) or time.monotonic() >= deadline:
         raise _StageTimedOut
 
 
@@ -167,7 +168,7 @@ def resolve_docker_image(image: str, timeout: float = 10) -> str:
     """Resolve a local reference without pulling or running its code."""
     if not image or image.startswith("-") or any(char.isspace() for char in image):
         raise ValueError("Invalid Docker image reference")
-    if timeout <= 0:
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
         raise TimeoutError("Docker image inspection timed out")
     result = _run(["docker", "image", "inspect", "--format", "{{.Id}}", image], None, timeout)
     if result.timed_out:
@@ -184,9 +185,15 @@ class HostExecutor:
     def __init__(self, root: Path, *, trusted: bool = False) -> None:
         if not trusted:
             raise ValueError("Host execution requires explicit trust")
+        if root.is_symlink() or not root.exists() or not root.is_dir():
+            raise ValueError("HostExecutor root must be an existing non-symlink directory")
         self.root = root.resolve()
 
     def run(self, command: str, timeout: float) -> CommandResult:
+        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be a finite positive number")
+        if not isinstance(command, str) or not command.strip() or "\x00" in command or len(command) > 65536:
+            raise ValueError("Command must be a non-empty string without null bytes under 64KB")
         process = subprocess.Popen(["sh", "-lc", command], cwd=self.root,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    start_new_session=(os.name == "posix"))
@@ -210,10 +217,12 @@ class DockerExecutor:
 
     def __init__(self, root: Path, image: str | None = None,
                  *, cancel: Event | None = None) -> None:
+        if root.is_symlink() or not root.exists() or not root.is_dir():
+            raise ValueError("DockerExecutor root must be an existing non-symlink directory")
         self.root = root.resolve()
         self.image_explicit = image is not None
         image = image if image is not None else "selfforge-agent-sandbox:latest"
-        if not self.root.is_dir() or not image or any(char.isspace() for char in image):
+        if not image or any(char.isspace() for char in image):
             raise ValueError("A workspace directory and Docker image are required")
         self.image = image
         self.cancel = cancel
@@ -224,13 +233,18 @@ class DockerExecutor:
 
     def run_with_artifact(self, command: str, timeout: float, name: str) -> tuple[CommandResult, bytes | None]:
         """Return one container-created artifact without trusting command stdout as evidence."""
-        if name != Path(name).name or name in {"", ".", ".."}:
+        if (not isinstance(name, str)
+                or not re.fullmatch(r"^[A-Za-z0-9._-]{1,256}\Z", name)
+                or name in {"", ".", ".."}
+                or "\x00" in name):
             raise ValueError("Artifact name must be a plain filename")
         return self._execute(command, timeout, artifact=name)
 
     def _execute(self, command: str, timeout: float, *, artifact: str | None = None) -> tuple[CommandResult, bytes | None]:
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be a finite positive number")
+        if not isinstance(command, str) or not command.strip() or "\x00" in command or len(command) > 65536:
+            raise ValueError("Command must be a non-empty string without null bytes under 64KB")
         uid = os.getuid() if hasattr(os, "getuid") else 1000
         gid = os.getgid() if hasattr(os, "getgid") else 1000
         name = "selfforge-" + uuid4().hex[:12]
