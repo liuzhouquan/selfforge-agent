@@ -228,9 +228,11 @@ function renderRegressionRunCard(title, summary, historical = false) {
 function renderCodingRegressionReport(report, historical = false) {
   const container = $("coding-regression-result");
   const summaryLine = element("div", "coding-regression-summary");
+  const statusLabel = regressionStatusLabel(report.status);
+  const reasonLabel = regressionReasonLabel(report.reason);
   summaryLine.append(
-    element("span", "coding-regression-badge", `${regressionStatusLabel(report.status)} (${report.status})`),
-    element("span", "", `${regressionReasonLabel(report.reason)} (${report.reason})`),
+    element("span", "coding-regression-badge", `${historical ? "历史记录：" + statusLabel.replaceAll("当前工作区", "历史工作区") : statusLabel} (${report.status})`),
+    element("span", "", `${historical ? reasonLabel.replaceAll("当前工作区", "历史工作区") : reasonLabel} (${report.reason})`),
   );
   const grid = element("div", "coding-regression-grid");
   grid.append(
