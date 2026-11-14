@@ -18,6 +18,10 @@ MAX_REGRESSION_LINE_BYTES = 16 * 1024
 MAX_REGRESSION_EVENTS = 10000
 
 
+class RegressionJournalCorruptError(ValueError):
+    """The last committed journal entry cannot be decoded as a JSON object."""
+
+
 class SessionStore:
     def __init__(self, root: Path, session_id: str | None = None) -> None:
         self.root = root.resolve()
@@ -138,7 +142,7 @@ class SessionStore:
                             and re.fullmatch(r"[0-9a-f]{64}", candidate) else None)
         return snapshot
 
-    def _regression_journal(self, limit: int | None = None) -> tuple[list[dict], dict | None]:
+    def _regression_journal(self, limit: int | None = None) -> tuple[list[dict], dict | None, bool]:
         """Read bounded, committed and sanitized history; uncertainty revokes latest evidence."""
         if limit is not None and (type(limit) is not int or limit <= 0):
             raise ValueError("Limit must be a positive integer")
@@ -146,12 +150,12 @@ class SessionStore:
         fd = None
         try:
             if any(part.is_symlink() for part in (path, *path.parents)):
-                return [], None
+                return [], None, False
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_REGRESSION_BYTES:
-                return [], None
+                return [], None, False
             chunks = []
             total = 0
             while total <= MAX_REGRESSION_BYTES:
@@ -164,26 +168,33 @@ class SessionStore:
             if (total > MAX_REGRESSION_BYTES or not stat.S_ISREG(after.st_mode)
                     or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
                     != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
-                return [], None
+                return [], None, False
         except OSError:
-            return [], None
+            return [], None, False
         finally:
             if fd is not None:
                 os.close(fd)
         records: deque[dict] = deque(maxlen=min(limit or MAX_REGRESSION_EVENTS, MAX_REGRESSION_EVENTS))
         latest = None
+        corrupt = False
         for index, line in enumerate(io.BytesIO(b"".join(chunks))):
             if index >= MAX_REGRESSION_EVENTS:
-                return [], None
+                return [], None, False
             if not line.endswith(b"\n") or len(line) > MAX_REGRESSION_LINE_BYTES:
-                return list(records), None
+                return list(records), None, False
             try:
-                latest = self._sanitize_regression(json.loads(line))
+                event = json.loads(line)
+            except (ValueError, TypeError, UnicodeError, RecursionError):
+                latest, corrupt = None, True
+                continue
+            corrupt = not isinstance(event, dict)
+            try:
+                latest = self._sanitize_regression(event)
             except (ValueError, TypeError, UnicodeError, RecursionError):
                 latest = None
             if latest is not None:
                 records.append(latest)
-        return list(records), latest
+        return list(records), latest, corrupt
 
     def _sanitize_regression(self, event: object) -> dict | None:
         # Imported lazily because the validation service itself uses SessionStore.
@@ -232,8 +243,11 @@ class SessionStore:
     def regression_records(self, limit: int | None = None) -> list[dict]:
         return self._regression_journal(limit)[0]
 
-    def latest_regression_record(self) -> dict | None:
-        return self._regression_journal(limit=1)[1]
+    def latest_regression_record(self, *, strict: bool = False) -> dict | None:
+        _, latest, corrupt = self._regression_journal(limit=1)
+        if strict and corrupt:
+            raise RegressionJournalCorruptError("Corrupted regression validation record")
+        return latest
 
     def confirmed_regression_snapshot(self, *, base_sha: str | None = None) -> str | None:
         record = self.latest_regression_record()

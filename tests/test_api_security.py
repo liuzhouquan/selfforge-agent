@@ -249,7 +249,7 @@ def test_corrupted_regression_record_returns_422(monkeypatch: pytest.MonkeyPatch
 
     rec_dir = sessions_root / ".selfforge" / "sessions"
     rec_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(api_module.SessionStore, "latest_regression_record", lambda self: {"corrupt": "data"})
+    monkeypatch.setattr(api_module.SessionStore, "latest_regression_record", lambda self, *, strict=False: {"corrupt": "data"})
 
     client = TestClient(api_module.app)
     response = client.get(
@@ -341,3 +341,43 @@ def test_job_writer_does_not_publish_unreadably_large_record(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="64 KiB"):
         manager._write_record({"job_id": job_id, "answer": "x" * 65536})
     assert not (manager.records / f"{job_id}.json").exists()
+
+
+@pytest.mark.parametrize("tail,status", [
+    (None, 404), (b"", 404), (b'{"status":"started"}\n', 404),
+    (b"{bad}\n", 422), (b"[]\n", 422), (b"\xff\n", 422),
+])
+def test_real_regression_journal_reports_corruption_without_reusing_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, test_repo: Path, tail: bytes | None, status: int,
+) -> None:
+    from selfforge_agent.runtime.session import SessionStore
+
+    manager = CodingWorkspaceManager(root=tmp_path / "worktrees")
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES", manager)
+    store = SessionStore(manager.session_root(test_repo), "realbad")
+    if tail is not None:
+        store.path.with_name("realbad.regression.jsonl").write_bytes(tail)
+    response = TestClient(api_module.app).get("/api/code/workspaces/realbad/regression",
+                                             params={"repository": str(test_repo)})
+    assert response.status_code == status
+    assert store.latest_regression_record() is None
+    assert store.confirmed_regression_snapshot() is None
+
+
+def test_valid_record_after_corrupt_history_recovers_api_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, test_repo: Path,
+) -> None:
+    from test_regression_record_safety import _event
+
+    from selfforge_agent.runtime.session import SessionStore
+
+    manager = CodingWorkspaceManager(root=tmp_path / "worktrees")
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES", manager)
+    store = SessionStore(manager.session_root(test_repo), "realbad")
+    path = store.path.with_name("realbad.regression.jsonl")
+    path.write_bytes(b"{bad}\n")
+    SessionStore._append(path, _event("realbad"))
+    response = TestClient(api_module.app).get("/api/code/workspaces/realbad/regression",
+                                             params={"repository": str(test_repo)})
+    assert response.status_code == 200
+    assert response.json()["status"] == "confirmed"
