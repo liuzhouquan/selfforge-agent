@@ -108,3 +108,64 @@ def test_run_tests_rejects_fifo_target(tmp_path: Path) -> None:
     res = tools.execute("run_tests", {"path": "tests_pipe"})
     assert not res.ok
     assert "not a regular file or directory" in res.content
+
+
+def test_search_budget_counts_growth_after_stat(tmp_path: Path, monkeypatch) -> None:
+    import selfforge_agent.runtime.tools as module
+
+    target = tmp_path / "grow.py"
+    target.write_text("x")
+    monkeypatch.setattr(module, "MAX_RANGED_FILE_BYTES", 16)
+    monkeypatch.setattr(module, "MAX_SEARCH_BYTES", 32)
+    original_open = Path.open
+    original_os_open = os.open
+
+    def grow() -> None:
+        with original_open(target, "w") as output:
+            output.write("X" * 129)
+
+    def open_path(path, *args, **kwargs):
+        if path == target:
+            grow()
+        return original_open(path, *args, **kwargs)
+
+    def open_fd(path, *args, **kwargs):
+        if str(path) == target.name:
+            grow()
+        return original_os_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_path)
+    monkeypatch.setattr(os, "open", open_fd)
+    result = ToolRegistry(tmp_path).execute("search_code", {"pattern": "X"})
+    assert "X" * 17 not in result.content
+    assert result.ok
+
+
+def test_read_limit_survives_growth_at_open(tmp_path: Path, monkeypatch) -> None:
+    import selfforge_agent.runtime.tools as module
+
+    target = tmp_path / "grow.py"
+    target.write_text("x")
+    monkeypatch.setattr(module, "MAX_WHOLE_FILE_BYTES", 16)
+    original_open = Path.open
+    original_os_open = os.open
+
+    def grow():
+        with original_open(target, "w") as output:
+            output.write("X" * 129)
+
+    def open_path(path, *args, **kwargs):
+        if path == target:
+            grow()
+        return original_open(path, *args, **kwargs)
+
+    def open_fd(path, *args, **kwargs):
+        if str(path) == target.name:
+            grow()
+        return original_os_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_path)
+    monkeypatch.setattr(os, "open", open_fd)
+    result = ToolRegistry(tmp_path).execute("read_file", {"path": "grow.py"})
+    assert not result.ok
+    assert "limit" in result.content
