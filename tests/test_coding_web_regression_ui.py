@@ -1006,6 +1006,8 @@ def test_web_ui_restores_persisted_regression_report_on_job_render() -> None:
     assert outcome["resultHidden"] is False
     assert "已确认修复" in str(outcome["resultText"]) or "confirmed" in str(outcome["resultText"])
     assert "已恢复" in str(outcome["statusText"])
+    assert "历史记录" in str(outcome["resultText"])
+    assert "当前工作区通过" not in str(outcome["resultText"])
 
 
 def test_web_ui_durable_regression_404_resets_panel_cleanly() -> None:

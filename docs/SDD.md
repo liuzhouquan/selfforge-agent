@@ -123,6 +123,7 @@ flowchart LR
 | 13 | [SF-WS-07](#sf-ws-07) | In Review | Antigravity | SF-WS-05 / SF-WS-06（Merged） | [PR #70](https://github.com/liuzhouquan/selfforge-agent/pull/70)：CLI `workspaces` 全动作（`list`/`diff`/`commit`/`pr`/`revert`/`remove`/`audit`/`prune`/`storage`）结构化 `--json` 与安全 `--output` 导出对齐 |
 | 14 | [SF-RUN-07](#sf-run-07) | In Review | Antigravity | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 | 15 | [SF-WS-08](#sf-ws-08) | In Review | Antigravity | 无 | [PR #72](https://github.com/liuzhouquan/selfforge-agent/pull/72)：WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
+| 16 | [SF-VERIF-01](#sf-verif-01) | In Review | Antigravity | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -696,6 +697,36 @@ Owner / 状态：Antigravity / In Review
 已完成验收与证据 ID：SF-WS-08-A1..A4（E1、E2、E3、E4）
 未完成 / 环境限制 / 未提交内容归属：无未提交内容；已通过 R1 门禁；待审查合并
 PR / 准确 head CI / merge SHA（有则填）：PR #72 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43439068333 / 待合并
+```
+
+### SF-VERIF-01
+
+**目标：** 在 `selfforge_agent.verification` 核心验证模块中贯彻 fail-closed 与无特权安全隔离原则。在 `junit.py` 的 `parse_junit` 中增强对畸形 XML 的受控异常收敛与 DoS 防御，捕获 `(ET.ParseError, ValueError, RecursionError, TypeError)`，防止深层标签嵌套导致进程崩溃，并显式校验用例数量上限 `MAX_TEST_COUNT` (100,000)，阻止超大计数攻击；在 `runner.py` 的 `_test_target` 中严格校验 `timeout` 为有限正数且不超过 3600 秒（阻断 `NaN`/`inf`/非正数），校验仓库必须为已存在的真实目录，校验测试目标路径非空且不包含受保护路径（如 `.git`、`.env` 等），严格拒绝非普通文件（如 FIFO、设备文件等）以防执行器在 `open()` 上永久挂起；在 `TestRunner` 中通过 `_read_junit_file` 采用 `O_NOFOLLOW | O_NONBLOCK` 安全读取测试生成的 JUnit 工件，杜绝符号链接穿透与特殊文件阻塞。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/verification/junit.py`、`src/selfforge_agent/verification/runner.py` 及专项测试 `tests/test_verification_runner_safety.py`；不改动外部执行器生命周期或上层 Coding/Review 调度。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-VERIF-01-A1 | `parse_junit` 解析深层嵌套 XML 时捕获 `RecursionError`/`TypeError`，安全降级返回包含 `error` 提示的 `JUnitEvidence` 而不发生非受控异常；用例计数超出上限（100,000）或包含畸形超大计数时显式报错拒绝 | `tests/test_verification_runner_safety.py` 递归与用例计数边界测试 | E1 |
+| SF-VERIF-01-A2 | `_test_target` 校验 `timeout`，遇到 `NaN`、`inf`、非正数或超过 3600 秒时严格抛出 `ValueError`；遇到不存在或非目录的仓库路径、空测试路径或受保护组件（`.git`、`.env` 等）时显式抛出 `ValueError` | `tests/test_verification_runner_safety.py` 目标参数与边界防护测试 | E2 |
+| SF-VERIF-01-A3 | `_test_target` 及 `TestRunner.run` 遇到 FIFO 等非普通文件时显式拒绝并报错 `test_path must be a regular file or directory`，不发生进程挂起；`_read_junit_file` 拒绝读取符号链接、断链、目录或 FIFO 工件 | `tests/test_verification_runner_safety.py` 特殊文件与符号链接工件隔离测试 | E3 |
+| SF-VERIF-01-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-VERIF-01-A1 | `tests/test_verification_runner_safety.py::test_junit_parser_handles_deep_recursion_gracefully`、`tests/test_verification_runner_safety.py::test_junit_parser_rejects_excessive_test_counts` | 本地 `pytest -v tests/test_verification_runner_safety.py`；GitHub CI `Unit tests` | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) |
+| E2 | SF-VERIF-01-A2 | `tests/test_verification_runner_safety.py::test_test_target_rejects_non_finite_and_out_of_bounds_timeouts`、`tests/test_verification_runner_safety.py::test_test_target_rejects_missing_or_non_dir_repository_and_blank_test_path` | 本地 `pytest -v tests/test_verification_runner_safety.py`；GitHub CI `Unit tests` | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) |
+| E3 | SF-VERIF-01-A3 | `tests/test_verification_runner_safety.py::test_test_target_rejects_non_regular_test_files_such_as_fifos`、`tests/test_verification_runner_safety.py::test_read_junit_file_rejects_symlinks_fifos_and_directories` | 本地 `pytest -v tests/test_verification_runner_safety.py`；GitHub CI `Unit tests` | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) |
+| E4 | SF-VERIF-01-A4 | `tests/test_verification_runner_safety.py::test_read_junit_file_rejects_symlinks_fifos_and_directories` | 本地 `ruff check .`、`python scripts/check_sdd.py`、全量单元测试 732 passed；GitHub CI Lint / SDD contract check / Unit tests 732 passed / Docker integration tests 15 passed | `d80f97a000fc98b0498fb5ea23746ca6cc0cb386`；passed；CI [Run #43536759419](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419) 全绿 |
+
+执行记录（Owner/状态以上表为准）：Base=`10eff75cb3c5e35b2531e5dd2d9da17a894d2a92`；Branch=`feat/sf-verif-01`；Worktree=`selfforge-sf-verif-01`；PR=[#73](https://github.com/liuzhouquan/selfforge-agent/pull/73)；Source=`d80f97a000fc98b0498fb5ea23746ca6cc0cb386`。
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：10eff75cb3c5e35b2531e5dd2d9da17a894d2a92 / feat/sf-verif-01 (worktree: selfforge-sf-verif-01) / 源码提交 d80f97a000fc98b0498fb5ea23746ca6cc0cb386；本次状态提交仅文档
+已完成验收与证据 ID：SF-VERIF-01-A1..A4（E1、E2、E3、E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；已通过 R1 门禁；待审查合并
+PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43536759419 / 待合并
 仍在运行的本任务进程或 CI（有则填）：无
 下一步：等待审查合并
 ```

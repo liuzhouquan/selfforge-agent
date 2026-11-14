@@ -169,6 +169,8 @@ def _validate_cli_output_target(path: Path) -> Path:
         info = os.lstat(target)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError(f"Output path is not a regular file: {path}")
+        if info.st_nlink != 1:
+            raise ValueError(f"Output path has multiple hard links: {path}")
     return target
 
 
@@ -192,6 +194,8 @@ def _write_cli_output(path: Path, content: str) -> None:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError(f"Output path is not a regular file: {path}")
+        if info.st_nlink != 1:
+            raise ValueError(f"Output path has multiple hard links: {path}")
         os.ftruncate(fd, 0)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = -1
@@ -640,7 +644,8 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(str(exc))
         manager = CodingWorkspaceManager()
         try:
-            if args.output and args.action in {"remove", "revert", "commit", "pr", "prune"}:
+            if (args.output and args.action in {"remove", "revert", "commit", "pr", "prune"}
+                    and (args.session_id or args.action == "prune")):
                 # Keep reports outside trees the action may delete or change after evidence checks.
                 affected = (manager.root if args.action == "prune" else
                             manager.get(args.repo, args.session_id).path)

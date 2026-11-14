@@ -270,3 +270,21 @@ def test_workspace_mutation_rejects_report_inside_affected_tree(
     assert error.value.code == 2
     assert ws.path.is_dir()
     assert not (ws.path / "report.json").exists()
+
+
+def test_commit_report_hardlink_is_rejected_before_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _init_repo(tmp_path)
+    root = tmp_path / "worktrees"
+    monkeypatch.setenv("SELFFORGE_WORKSPACES_ROOT", str(root))
+    ws = CodingWorkspaceManager(root).create(repo, "hardreport")
+    source = ws.path / "app.py"
+    source.write_text("x = 42\n")
+    report = tmp_path / "outside.json"
+    report.hardlink_to(source)
+    before = subprocess.check_output(["git", "-C", str(ws.path), "rev-parse", "HEAD"])
+    with pytest.raises(SystemExit) as error:
+        main(["workspaces", "commit", "hardreport", "--repo", str(repo),
+              "-m", "keep source", "--output", str(report), "--json"])
+    assert error.value.code == 2
+    assert subprocess.check_output(["git", "-C", str(ws.path), "rev-parse", "HEAD"]) == before
+    assert source.read_text() == "x = 42\n"
