@@ -7,6 +7,7 @@ from selfforge_agent.models import TestFailure
 
 MAX_JUNIT_BYTES = 8 * 1024 * 1024
 MAX_FAILURE_DETAILS = 5
+MAX_TEST_COUNT = 100_000
 
 
 @dataclass
@@ -48,6 +49,8 @@ def parse_junit(xml: bytes | None, timed_out: bool) -> JUnitEvidence:
             )
             if min(total, failed, errors, skipped) < 0 or failed + errors + skipped > total:
                 raise ValueError("Inconsistent testsuite counts")
+            if max(total, failed, errors, skipped) > MAX_TEST_COUNT:
+                raise ValueError(f"Test count exceeds maximum limit ({MAX_TEST_COUNT})")
             if ((suite.findall("testcase/failure") and failed == 0)
                     or (suite.findall("testcase/error") and errors == 0)):
                 raise ValueError("Failure elements disagree with testsuite counts")
@@ -71,5 +74,5 @@ def parse_junit(xml: bytes | None, timed_out: bool) -> JUnitEvidence:
                 evidence.failures.append(TestFailure(test_id=test_id, kind=child.tag,
                                                       message=message, detail=detail))
         return evidence
-    except (ET.ParseError, ValueError) as exc:
+    except (ET.ParseError, ValueError, RecursionError, TypeError) as exc:
         return JUnitEvidence(error=f"Invalid JUnit XML: {exc}")
