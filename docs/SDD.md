@@ -124,6 +124,7 @@ flowchart LR
 | 14 | [SF-RUN-07](#sf-run-07) | Merged | Codex（审查整合） | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 | 15 | [SF-WS-08](#sf-ws-08) | Merged | Codex（审查整合） | 无 | [PR #72](https://github.com/liuzhouquan/selfforge-agent/pull/72)：WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
 | 16 | [SF-VERIF-01](#sf-verif-01) | Merged | Codex（审查整合） | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
+| 17 | [SF-API-01](#sf-api-01) | In Progress | Antigravity | 无 | Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -783,6 +784,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43552476659（最终组合；各源 PR 见审查记录） / af31537e72f39aeccf98fb9149edb51787d4bcaa
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填 PR #73 交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-API-01
+
+**目标：** 在 Web Coding API 与后台作业管理模块中贯彻输入防御（Fail-Closed）、跨层规范化与未受控异常收敛原则。在 `app.py` 中引入请求体大小限制中间件（`enforce_payload_limit`），对超过 2MB 的请求直接拒绝并返回 HTTP 413，对非法/负数 `Content-Length` 返回 HTTP 400；为所有 `{session_id}` 路径参数路由（`remove`/`revert`/`diff`/`commit`/`pr`/`validate-regression`/`regression`）增加统一字符集与长度校验 `_validate_session_id`（仅允许 `[A-Za-z0-9_-]{1,64}`），阻断路径遍历攻击并显式返回 HTTP 400；为仓库路径路由增加 `_validate_repository_dir` 预检防御并对负数 `quota_bytes` 显式校验拦截；将回归报告解析异常从 HTTP 500 收敛映射为受控的 HTTP 422；在 `coding_jobs.py` 中加固 `DurableCancel`，拒绝符号链接标记并使用 `O_NOFOLLOW` 打开；在 `_load_record` 与 `_write_record` 中增加符号链接排斥、FIFO/设备文件非阻塞校验与 64KB 读取上限；在 `list_jobs` 中安全容错损坏断链；在 `CodingJobManager.__init__` 中校验正整数限制，杜绝 NaN/inf 逃逸。
+
+**范围/入口：** 改动 `src/selfforge_agent/api/app.py`、`src/selfforge_agent/api/coding_jobs.py`，并新增专项测试 `tests/test_api_security.py`；不破坏既有前端交互与 Web Coding 工作台功能。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-API-01-A1 | API 接收请求体时校验 Content-Length，超过 2MB 时直接拦截并返回 HTTP 413（`Request body too large`）；负数或非整数 Content-Length 返回 HTTP 400 | `tests/test_api_security.py` 请求体大小限制与非法头测试 | 未验证 |
+| SF-API-01-A2 | `{session_id}` 路由参数校验仅允许合法字符（`[A-Za-z0-9_-]{1,64}`），遇到路径遍历（如 `..`）、特殊字符或超长时显式返回 HTTP 400 | `tests/test_api_security.py` 会话路径遍历与语法防御测试 | 未验证 |
+| SF-API-01-A3 | `DurableCancel` 拒绝符号链接取消标记；`_load_record` 与 `_write_record` 防御符号链接穿透、FIFO 挂起与超过 64KB 超大记录；`list_jobs` 容错断链；`CodingJobManager` 校验正整数配置 | `tests/test_api_security.py` 取消标记与作业记录防御测试 | 未验证 |
+| SF-API-01-A4 | 仓库路径预检拒绝非仓库/非目录并拦截负数 `quota_bytes`；损坏回归记录受控映射为 HTTP 422 而非 500；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-api-01`；Worktree=`selfforge-sf-api-01`；PR=-；Source=-。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-api-01 (worktree: selfforge-sf-api-01) / 开发中
+已完成验收与证据 ID：待验证（初始开发阶段）
+未完成 / 环境限制 / 未提交内容归属：代码与专项测试已完成，等待提交 Commit S 与 CI 验证
+PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：完成 Commit S 提交并在 GitHub 创建 PR，等待 R1 CI 通过后更新 SDD 为 In Review 并提交 Commit H。
 ```
 
 ## 5. 验收追踪与执行记录格式
