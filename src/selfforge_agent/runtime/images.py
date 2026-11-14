@@ -4,6 +4,7 @@ import hashlib
 import io
 import os
 import re
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -28,13 +29,30 @@ def _remaining(deadline: float) -> float:
 
 
 def _read(path: Path, limit: int) -> bytes:
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("Dependency inputs must be regular files, not symlinks")
-    with path.open("rb") as handle:
-        contents = handle.read(limit + 1)
-    if len(contents) > limit:
-        raise ValueError("Dependency input size limit exceeded")
-    return contents
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"Dependency inputs must be regular files, not symlinks: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Dependency inputs must be regular files, not symlinks")
+        if st.st_size > limit:
+            raise ValueError("Dependency input size limit exceeded")
+        contents = b""
+        remaining = limit + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            contents += chunk
+            remaining -= len(chunk)
+        if len(contents) > limit:
+            raise ValueError("Dependency input size limit exceeded")
+        return contents
+    finally:
+        os.close(fd)
 
 
 def parse_locked_requirements(lock: bytes) -> list[dict]:
@@ -56,7 +74,7 @@ def parse_locked_requirements(lock: bytes) -> list[dict]:
         if canonical in names:
             raise ValueError("Duplicate requirement names are unsupported")
         names.add(canonical)
-        packages.append({"name": name, "version": version,
+        packages.append({"name": canonical, "version": version,
                          "hashes": sorted(set(re.findall(r"sha256:[0-9a-f]{64}", line)))})
     if not packages or len(packages) > 200:
         raise ValueError("Lock must contain 1-200 hashed requirements")
