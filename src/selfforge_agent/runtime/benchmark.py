@@ -633,7 +633,7 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
             try:
                 cost = session.token_metrics().get("cost")
                 cost_usd = cost["total_cost_usd"] if cost else None
-            except (OSError, RuntimeError, ValueError, TypeError, KeyError):
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
                 # Optional telemetry must not replace the primary harness outcome.
                 pass
             tool_trace = _tool_trace(session)
@@ -666,7 +666,7 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                 reason = _reason(agent_status, changed, set(case.spec.allowed_changes),
                                  visible_status, visible_passed, visible_failed, visible_errors,
                                  holdout_status, passed, failed, errors)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
         reason = f"harness_error:{type(exc).__name__}"
     if reason != "passed" and failure_artifacts is not None:
         try:
