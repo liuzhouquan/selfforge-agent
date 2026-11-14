@@ -172,6 +172,17 @@ def _validate_cli_output_target(path: Path) -> Path:
     return target
 
 
+def _validate_distinct_cli_outputs(*paths: Path | None) -> None:
+    """Reject exports that would overwrite another export from this invocation."""
+    targets = [_validate_cli_output_target(path) for path in paths if path is not None]
+    for index, target in enumerate(targets):
+        for other in targets[:index]:
+            if target.resolve() == other.resolve() or (
+                target.exists() and other.exists() and target.samefile(other)
+            ):
+                raise ValueError("Output paths must refer to distinct files")
+
+
 def _write_cli_output(path: Path, content: str) -> None:
     """Write CLI export content safely without following symlinks or special files."""
     target = _validate_cli_output_target(path)
@@ -305,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     review.add_argument("--test-path", default="tests")
     review.add_argument("--timeout", type=float, default=60)
     review.add_argument("--output", type=Path, help="Write full JSON evidence to this file")
+    review.add_argument("--json", action="store_true", help="Format review report as JSON")
     repair = subcommands.add_parser("repair", help="Repair a verified local regression")
     repair.add_argument("--repo", type=Path, required=True)
     repair.add_argument("--base", required=True)
@@ -323,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     repair.add_argument("--base-url", default=os.environ.get("SELFFORGE_API_BASE_URL"))
     repair.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     repair.add_argument("--patch-output", type=Path, help="Write a verified patch to this file")
+    repair.add_argument("--json", action="store_true", help="Format repair report as JSON")
     generate = subcommands.add_parser("generate-test", help="Generate and verify a Base/Head regression test")
     generate.add_argument("--repo", type=Path, required=True)
     generate.add_argument("--base", required=True)
@@ -344,6 +357,7 @@ def main(argv: list[str] | None = None) -> int:
                           help="Automatically prioritize risk hypotheses from the diff")
     generate.add_argument("--output", type=Path, help="Write JSON evidence to this file")
     generate.add_argument("--test-output", type=Path, help="Write a differential test to this file")
+    generate.add_argument("--json", action="store_true", help="Format test generation report as JSON")
     regress = subcommands.add_parser(
         "test-regression",
         help="Validate a regression test against a Coding workspace and its base commit",
@@ -911,6 +925,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.command == "generate-test":
         try:
+            _validate_distinct_cli_outputs(args.output, args.test_output)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        try:
             candidates = route_providers(args.provider, not args.no_fallback)
             if not candidates:
                 parser.error("A configured model provider is required")
@@ -942,7 +960,8 @@ def main(argv: list[str] | None = None) -> int:
                 top = prioritized[0]
                 target = top.to_risk_target().model_dump()
                 print(f"Auto-selected risk target (rank {top.rank}, score {top.score:.0f}): "
-                      f"{top.file_path}:{top.line_number} [{top.category}]")
+                      f"{top.file_path}:{top.line_number} [{top.category}]",
+                      file=sys.stderr if args.json else sys.stdout)
             if args.max_candidates > 1 or target is not None:
                 batch = generator.run_many(
                     args.repo.resolve(), args.base, args.head, args.task,
@@ -963,30 +982,43 @@ def main(argv: list[str] | None = None) -> int:
                 )
         except (GitContextError, TrustRequiredError, WorktreeError, ValueError, OSError) as exc:
             parser.error(str(exc))
+        rendered_json = (batch or result).model_dump_json(indent=2) + "\n"
         if args.output:
-            args.output.write_text((batch or result).model_dump_json(indent=2) + "\n",
-                                   encoding="utf-8")
+            try:
+                _write_cli_output(args.output, rendered_json)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         if result.status == "differential" and args.test_output and result.generated_test:
-            args.test_output.write_text(result.generated_test.test_code, encoding="utf-8")
-        print(f"Run {result.run_id}: {batch.status if batch else result.status} "
-              f"({len(batch.candidates) if batch else 1} candidate(s))")
-        if batch:
-            for item in batch.candidates:
-                print(f"  Candidate {item.candidate_index}: {item.status} "
-                      f"({item.provider}/{item.model})")
-        if result.base_test and result.head_test:
-            print(f"Base: {result.base_test.status} ({result.base_test.passed} passed); "
-                  f"Head: {result.head_test.status} ({result.head_test.failed} failed)")
-        inv = (batch.selected_causal_investigation if batch else None) or result.causal_investigation
-        if inv:
-            print(f"Trace association: {inv.confidence} ({inv.explanation})")
-        cost = (batch.total_cost if batch else None) or result.cost
-        if cost:
-            print(f"Cost: {format_monetary_cost(cost)}")
+            try:
+                _write_cli_output(args.test_output, result.generated_test.test_code)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+        if getattr(args, "json", False):
+            print(rendered_json, end="")
+        else:
+            print(f"Run {result.run_id}: {batch.status if batch else result.status} "
+                  f"({len(batch.candidates) if batch else 1} candidate(s))")
+            if batch:
+                for item in batch.candidates:
+                    print(f"  Candidate {item.candidate_index}: {item.status} "
+                          f"({item.provider}/{item.model})")
+            if result.base_test and result.head_test:
+                print(f"Base: {result.base_test.status} ({result.base_test.passed} passed); "
+                      f"Head: {result.head_test.status} ({result.head_test.failed} failed)")
+            inv = (batch.selected_causal_investigation if batch else None) or result.causal_investigation
+            if inv:
+                print(f"Trace association: {inv.confidence} ({inv.explanation})")
+            cost = (batch.total_cost if batch else None) or result.cost
+            if cost:
+                print(f"Cost: {format_monetary_cost(cost)}")
         for error in result.errors:
             print(error, file=sys.stderr)
         return 0 if result.status == "differential" else 1
     if args.command == "repair":
+        try:
+            _validate_distinct_cli_outputs(args.output, args.patch_output)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
         try:
             candidates = route_providers(args.provider, not args.no_fallback)
             if args.model or args.base_url or os.environ.get("SELFFORGE_API_KEY"):
@@ -1012,21 +1044,36 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (GitContextError, TrustRequiredError, WorktreeError, ValueError) as exc:
             parser.error(str(exc))
+        rendered_json = result.model_dump_json(indent=2) + "\n"
         if args.output:
-            args.output.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            try:
+                _write_cli_output(args.output, rendered_json)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         if result.status == "verified" and args.patch_output:
-            args.patch_output.write_text(result.verified_patch, encoding="utf-8")
-        cost_str = f" · {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
-        token_str = f" ({result.total_tokens} tokens{cost_str})" if result.total_tokens else ""
-        print(f"Run {result.run_id}: {result.status}{token_str}")
-        if result.base_test and result.head_test:
-            print(f"Base tests: {result.base_test.status}; Head tests: {result.head_test.status}")
-        for attempt in result.attempts:
-            outcome = attempt.test_result.status if attempt.test_result else attempt.error
-            print(f"Attempt {attempt.number}: {outcome}")
+            try:
+                _write_cli_output(args.patch_output, result.verified_patch)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+        if getattr(args, "json", False):
+            print(rendered_json, end="")
+        else:
+            cost_str = f" · {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
+            token_str = f" ({result.total_tokens} tokens{cost_str})" if result.total_tokens else ""
+            print(f"Run {result.run_id}: {result.status}{token_str}")
+            if result.base_test and result.head_test:
+                print(f"Base tests: {result.base_test.status}; Head tests: {result.head_test.status}")
+            for attempt in result.attempts:
+                outcome = attempt.test_result.status if attempt.test_result else attempt.error
+                print(f"Attempt {attempt.number}: {outcome}")
         if result.errors:
             print("Errors: " + "; ".join(result.errors), file=sys.stderr)
         return 0 if result.status == "verified" else 1
+    if getattr(args, "output", None):
+        try:
+            _validate_cli_output_target(args.output)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
     try:
         report = ReviewService().review(
             args.repo,
@@ -1038,19 +1085,26 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (GitContextError, ValueError) as exc:
         parser.error(str(exc))
+    rendered_json = report.model_dump_json(indent=2) + "\n"
     if args.output:
-        args.output.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    print(f"Run {report.run_id}: {report.execution_status}")
-    print(f"{report.base_sha[:12]}..{report.head_sha[:12]} | {len(report.context.files)} files")
-    print(f"Findings: {len(report.findings)} heuristic suspected")
-    for index, finding in enumerate(report.findings):
-        print(f"  [{index}] {finding.file_path}:{finding.line_number} "
-              f"[{finding.severity}] {finding.description}")
-    for result in report.test_results:
-        print(
-            f"Tests: {result.status} (exit={result.exit_code}, "
-            f"passed={result.passed}, failed={result.failed}, errors={result.errors})"
-        )
+        try:
+            _write_cli_output(args.output, rendered_json)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+    if getattr(args, "json", False):
+        print(rendered_json, end="")
+    else:
+        print(f"Run {report.run_id}: {report.execution_status}")
+        print(f"{report.base_sha[:12]}..{report.head_sha[:12]} | {len(report.context.files)} files")
+        print(f"Findings: {len(report.findings)} heuristic suspected")
+        for index, finding in enumerate(report.findings):
+            print(f"  [{index}] {finding.file_path}:{finding.line_number} "
+                  f"[{finding.severity}] {finding.description}")
+        for result in report.test_results:
+            print(
+                f"Tests: {result.status} (exit={result.exit_code}, "
+                f"passed={result.passed}, failed={result.failed}, errors={result.errors})"
+            )
     if report.errors:
         print("Errors: " + "; ".join(report.errors), file=sys.stderr)
     return 2 if report.execution_status == "error" else 0
