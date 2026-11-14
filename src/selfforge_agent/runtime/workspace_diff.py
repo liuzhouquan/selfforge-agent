@@ -42,16 +42,37 @@ def workspace_diff(workspace: CodingWorkspace) -> dict:
         current = workspace.path / path
         output_truncated = False
         if path in untracked:
-            if current.is_symlink() or not current.is_file() or current.stat().st_size > MAX_FILE_BYTES:
+            candidate = workspace.path
+            has_symlink = False
+            for part in Path(path).parts:
+                candidate /= part
+                if candidate.is_symlink():
+                    has_symlink = True
+                    break
+            if not has_symlink:
+                try:
+                    resolved = current.resolve(strict=True)
+                    if (not resolved.is_relative_to(workspace.path)
+                            or any(_protected(p) for p in resolved.relative_to(workspace.path).parts)):
+                        has_symlink = True
+                except OSError:
+                    has_symlink = True
+
+            if has_symlink or not current.is_file():
                 patch = "[Untracked non-text, symlink, or large file omitted]"
             else:
                 try:
-                    lines = current.read_text(encoding="utf-8").splitlines(keepends=True)
+                    size = current.stat().st_size
+                    if size > MAX_FILE_BYTES:
+                        patch = "[Untracked non-text, symlink, or large file omitted]"
+                    else:
+                        lines = current.read_text(encoding="utf-8").splitlines(keepends=True)
+                        patch = "".join(difflib.unified_diff([], lines, fromfile="/dev/null",
+                                                              tofile=f"b/{path}"))
                 except UnicodeError:
                     patch = "[Untracked non-UTF-8 file omitted]"
-                else:
-                    patch = "".join(difflib.unified_diff([], lines, fromfile="/dev/null",
-                                                          tofile=f"b/{path}"))
+                except OSError:
+                    patch = "[Untracked unreadable file omitted]"
             status = "untracked"
         else:
             patch, output_truncated = git_bounded(
