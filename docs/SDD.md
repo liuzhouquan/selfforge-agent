@@ -124,7 +124,7 @@ flowchart LR
 | 14 | [SF-RUN-07](#sf-run-07) | Merged | Codex（审查整合） | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 | 15 | [SF-WS-08](#sf-ws-08) | Merged | Codex（审查整合） | 无 | [PR #72](https://github.com/liuzhouquan/selfforge-agent/pull/72)：WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
 | 16 | [SF-VERIF-01](#sf-verif-01) | Merged | Codex（审查整合） | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
-| 17 | [SF-TEST-05](#sf-test-05) | In Progress | Antigravity | SF-TEST-04（Merged） | 差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
+| 17 | [SF-TEST-05](#sf-test-05) | In Review | Antigravity | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -794,21 +794,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-TEST-05-A1 | `_write_test_artifact` 及 `DifferentialTestGenerator.run` 安装测试工件时，遇到目标符号链接、已存在文件或逃逸父目录时显式拒绝，并以原子排他方式写盘 | `tests/test_test_generation_safety.py` 测试工件防符链与原子写盘测试 | 未验证 |
-| SF-TEST-05-A2 | `_parse_test` 解析模型测试代码时受控捕获 `RecursionError`/`MemoryError`/`TypeError`，并显式拒绝顶层非声明可执行语句与无断言函数 | `tests/test_test_generation_safety.py` AST 安全边界与递归防御测试 | 未验证 |
-| SF-TEST-05-A3 | `_observation` 安全忽略符号链接与 FIFO 特殊文件，不阻塞进程；`investigate_causality` 对超大日志有界切片并在非法行号时安全降级；`prioritize_risks` 校验 `top_k` | `tests/test_test_generation_safety.py` 非阻塞观察与因果推断边界测试 | 未验证 |
-| SF-TEST-05-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证 |
+| SF-TEST-05-A1 | `_write_test_artifact` 及 `DifferentialTestGenerator.run` 安装测试工件时，遇到目标符号链接、已存在文件或逃逸父目录时显式拒绝，并以原子排他方式写盘 | `tests/test_test_generation_safety.py` 测试工件防符链与原子写盘测试 | E1 |
+| SF-TEST-05-A2 | `_parse_test` 解析模型测试代码时受控捕获 `RecursionError`/`MemoryError`/`TypeError`，并显式拒绝顶层非声明可执行语句与无断言函数 | `tests/test_test_generation_safety.py` AST 安全边界与递归防御测试 | E2 |
+| SF-TEST-05-A3 | `_observation` 安全忽略符号链接与 FIFO 特殊文件，不阻塞进程；`investigate_causality` 对超大日志有界切片并在非法行号时安全降级；`prioritize_risks` 校验 `top_k` | `tests/test_test_generation_safety.py` 非阻塞观察与因果推断边界测试 | E3 |
+| SF-TEST-05-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-test-05`；Worktree=`selfforge-sf-test-05`；PR=-；Source=-。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-TEST-05-A1 | `tests/test_test_generation_safety.py::test_write_test_artifact_rejects_symlink_and_existing_files`、`tests/test_test_generation_safety.py::test_write_test_artifact_rejects_escaping_parent_directory`、`tests/test_test_generation_safety.py::test_write_test_artifact_successfully_creates_file` | 本地 `pytest -v tests/test_test_generation_safety.py`；GitHub Actions `Unit tests` | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) |
+| E2 | SF-TEST-05-A2 | `tests/test_test_generation_safety.py::test_parse_test_rejects_top_level_executable_statements`、`tests/test_test_generation_safety.py::test_parse_test_catches_uncontrolled_exceptions_gracefully` | 本地 `pytest -v tests/test_test_generation_safety.py`；GitHub Actions `Unit tests` | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) |
+| E3 | SF-TEST-05-A3 | `tests/test_test_generation_safety.py::test_observation_skips_symlinks_and_fifos`、`tests/test_test_generation_safety.py::test_investigate_causality_bounds_massive_failure_output`、`tests/test_test_generation_safety.py::test_investigate_causality_rejects_invalid_line_number`、`tests/test_test_generation_safety.py::test_prioritize_risks_validates_top_k` | 本地 `pytest -v tests/test_test_generation_safety.py`；GitHub Actions `Unit tests` | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) |
+| E4 | SF-TEST-05-A4 | `tests/test_test_generation_safety.py::test_remaining_budget_rejects_non_finite_deadline` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -q`（789 passed）；GitHub Actions Lint / SDD contract check / Unit tests (789 passed) / Docker integration tests (15 passed) | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) 全绿 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-test-05`；Worktree=`selfforge-sf-test-05`；PR=[#76](https://github.com/liuzhouquan/selfforge-agent/pull/76)；Source=`9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`。实现差分测试生成工件隔离、AST 递归异常防御与有界因果推断（源码提交 `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`，[R1 CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) 全绿）；本状态提交仅更新文档，最终 head `H` CI 待回填。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-test-05 (worktree: selfforge-sf-test-05) / 开发中
-已完成验收与证据 ID：待验证（初始开发阶段）
-未完成 / 环境限制 / 未提交内容归属：代码与专项测试已完成，等待提交 Commit S 与 CI 验证
-PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-test-05 (worktree: selfforge-sf-test-05) / 已验证源码 9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e；后续对账仅文档
+已完成验收与证据 ID：SF-TEST-05-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；已通过 GitHub Actions R1 CI（Lint、SDD 契约、789 个单元测试全绿、15 个 Docker 集成测试全绿）
+PR / 准确 head CI / merge SHA（有则填）：PR #76 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362（R1 CI） / 无
 仍在运行的本任务进程或 CI（无则写无）：无
-下一步：完成 Commit S 提交并在 GitHub 创建 PR，等待 R1 CI 通过后更新 SDD 为 In Review 并提交 Commit H。
+下一步：提交 Commit H 并推送到 origin/feat/sf-test-05，等待 R2 CI 运行完成并确认通过，随后交付。
 ```
 
 ## 5. 验收追踪与执行记录格式
