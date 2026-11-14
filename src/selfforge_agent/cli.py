@@ -169,6 +169,8 @@ def _validate_cli_output_target(path: Path) -> Path:
         info = os.lstat(target)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError(f"Output path is not a regular file: {path}")
+        if info.st_nlink != 1:
+            raise ValueError(f"Output path has multiple hard links: {path}")
     return target
 
 
@@ -192,6 +194,8 @@ def _write_cli_output(path: Path, content: str) -> None:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError(f"Output path is not a regular file: {path}")
+        if info.st_nlink != 1:
+            raise ValueError(f"Output path has multiple hard links: {path}")
         os.ftruncate(fd, 0)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = -1
