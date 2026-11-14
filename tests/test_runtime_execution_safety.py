@@ -199,3 +199,92 @@ def test_resolve_docker_image_rejects_non_finite_timeout() -> None:
     for bad_timeout in (0, -1, float("nan"), float("inf")):
         with pytest.raises(TimeoutError):
             resolve_docker_image("ubuntu:latest", timeout=bad_timeout)
+
+
+@pytest.mark.parametrize("payload", [
+    {"version": True, "case": "case", "repeat": 0, "reason": "failed", "visible": None, "holdout": None},
+    {"version": 1},
+    {"version": 1, "case": "other", "repeat": 0, "reason": "failed", "visible": None, "holdout": None},
+    {"version": 1, "case": "case", "repeat": 0, "reason": "failed", "visible": {}, "holdout": None},
+])
+def test_failure_reader_validates_complete_identity_and_summary(tmp_path: Path, payload: dict) -> None:
+    import json
+
+    (tmp_path / "case-0.json").write_text(json.dumps(payload))
+    with pytest.raises(ValueError):
+        read_failure(tmp_path, "case-0.json")
+
+
+def test_failure_reader_closes_descriptor_when_stat_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import errno
+
+    (tmp_path / "case-0.json").write_text('{"version":1}')
+    original = os.fstat
+    captured = []
+
+    def failed_stat(fd):
+        captured.append(fd)
+        raise OSError(errno.EIO, "stat unavailable")
+
+    monkeypatch.setattr(os, "fstat", failed_stat)
+    with pytest.raises((ValueError, OSError)):
+        read_failure(tmp_path, "case-0.json")
+    monkeypatch.setattr(os, "fstat", original)
+    closed = False
+    try:
+        try:
+            original(captured[-1])
+        except OSError:
+            closed = True
+        assert closed, "failed read leaked its file descriptor"
+    finally:
+        if not closed:
+            os.close(captured[-1])
+
+
+def test_failure_reader_converts_parser_recursion_to_value_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from selfforge_agent.runtime import failure_artifacts
+
+    (tmp_path / "case-0.json").write_text('{"version":1}')
+
+    def recursive_parser(*_args, **_kwargs):
+        raise RecursionError("deep JSON")
+
+    monkeypatch.setattr(failure_artifacts.json, "loads", recursive_parser)
+    with pytest.raises(ValueError, match="Corrupt artifact"):
+        read_failure(tmp_path, "case-0.json")
+
+
+def test_failure_file_becomes_visible_only_after_complete_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import contextmanager
+
+    original = os.fdopen
+
+    @contextmanager
+    def observing_write(fd, *args, **kwargs):
+        with original(fd, *args, **kwargs) as handle:
+            assert not (tmp_path / "case-0.json").exists()
+            yield handle
+
+    monkeypatch.setattr(os, "fdopen", observing_write)
+    filename = write_failure(tmp_path, case="case", repeat=0, reason="failed", visible=None, holdout=None)
+    assert (tmp_path / filename).is_file()
+
+
+@pytest.mark.parametrize("executor_type", [HostExecutor, DockerExecutor])
+def test_executor_enforces_utf8_byte_command_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executor_type) -> None:
+    import subprocess
+
+    def unexpected_execution(*_args, **_kwargs):
+        raise AssertionError("process reached for oversized command")
+
+    monkeypatch.setattr(subprocess, "Popen", unexpected_execution)
+    executor = executor_type(tmp_path, **({"trusted": True} if executor_type is HostExecutor else {}))
+    with pytest.raises(ValueError, match="Command"):
+        executor.run("echo " + "中" * 30000, 5)
+
+
+@pytest.mark.parametrize("timeout", [True, 10**1000])
+def test_executor_rejects_unusable_numeric_timeouts(tmp_path: Path, timeout) -> None:
+    with pytest.raises(ValueError, match="timeout"):
+        HostExecutor(tmp_path, trusted=True).run("true", timeout)

@@ -164,11 +164,30 @@ def _run(argv: list[str], cwd: Path | None, timeout: float) -> CommandResult:
     return CommandResult(result.returncode, (result.stdout + result.stderr)[-12_000:])
 
 
+def _valid_timeout(timeout: float) -> bool:
+    try:
+        return type(timeout) in (int, float) and timeout > 0 and math.isfinite(timeout)
+    except OverflowError:
+        return False
+
+
+def _validate_command(command: str, timeout: float) -> None:
+    if not _valid_timeout(timeout):
+        raise ValueError("timeout must be a finite positive number")
+    try:
+        valid = (isinstance(command, str) and bool(command.strip()) and "\x00" not in command
+                 and len(command) <= 65536 and len(command.encode("utf-8")) <= 65536)
+    except UnicodeError:
+        valid = False
+    if not valid:
+        raise ValueError("Command must be a non-empty string without null bytes under 64KB")
+
+
 def resolve_docker_image(image: str, timeout: float = 10) -> str:
     """Resolve a local reference without pulling or running its code."""
     if not image or image.startswith("-") or any(char.isspace() for char in image):
         raise ValueError("Invalid Docker image reference")
-    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+    if not _valid_timeout(timeout):
         raise TimeoutError("Docker image inspection timed out")
     result = _run(["docker", "image", "inspect", "--format", "{{.Id}}", image], None, timeout)
     if result.timed_out:
@@ -190,10 +209,7 @@ class HostExecutor:
         self.root = root.resolve()
 
     def run(self, command: str, timeout: float) -> CommandResult:
-        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("timeout must be a finite positive number")
-        if not isinstance(command, str) or not command.strip() or "\x00" in command or len(command) > 65536:
-            raise ValueError("Command must be a non-empty string without null bytes under 64KB")
+        _validate_command(command, timeout)
         process = subprocess.Popen(["sh", "-lc", command], cwd=self.root,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    start_new_session=(os.name == "posix"))
@@ -241,10 +257,7 @@ class DockerExecutor:
         return self._execute(command, timeout, artifact=name)
 
     def _execute(self, command: str, timeout: float, *, artifact: str | None = None) -> tuple[CommandResult, bytes | None]:
-        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("timeout must be a finite positive number")
-        if not isinstance(command, str) or not command.strip() or "\x00" in command or len(command) > 65536:
-            raise ValueError("Command must be a non-empty string without null bytes under 64KB")
+        _validate_command(command, timeout)
         uid = os.getuid() if hasattr(os, "getuid") else 1000
         gid = os.getgid() if hasattr(os, "getgid") else 1000
         name = "selfforge-" + uuid4().hex[:12]
