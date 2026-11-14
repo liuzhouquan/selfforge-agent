@@ -69,11 +69,51 @@ def commit_workspace(
 
     tracked = _paths(workspace, "diff", "--no-renames", "--name-only", "-z", "HEAD")
     untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
-    visible_changes = [path for path in set(tracked + untracked) if _visible(path)]
+
+    def _safe_commit_path(p: str) -> bool:
+        if not _visible(p):
+            return False
+        candidate = workspace.path / p
+        try:
+            if candidate.exists() and not (candidate.is_file() or candidate.is_symlink() or candidate.is_dir()):
+                return False
+            if candidate.is_symlink():
+                resolved = candidate.resolve()
+                if not resolved.is_relative_to(workspace.path):
+                    return False
+                if not _visible(resolved.relative_to(workspace.path).as_posix()):
+                    return False
+        except (OSError, RuntimeError):
+            return False
+        return True
+
+    def _validate_staged(paths: list[str]) -> None:
+        if any(not _visible(path) for path in paths):
+            raise DeliveryError("Protected files are already staged; unstage them before committing")
+        if any(not _safe_commit_path(path) for path in paths):
+            raise DeliveryError("Protected or unsafe files are staged; unstage them before committing")
+        # Validate the index itself: a staged symlink may differ from the current file.
+        entries = _paths(workspace, "ls-files", "--stage", "-z")
+        selected = set(paths)
+        for entry in entries:
+            header, name = entry.split("\t", 1)
+            mode, object_id, _stage = header.split()
+            if name not in selected or mode != "120000":
+                continue
+            link, truncated = git_bounded(workspace.path, "cat-file", "blob", object_id, max_bytes=4096)
+            try:
+                resolved = (workspace.path / name).parent.joinpath(link).resolve()
+                safe = (not truncated and resolved.is_relative_to(workspace.path)
+                        and _visible(resolved.relative_to(workspace.path).as_posix()))
+            except (OSError, RuntimeError):
+                safe = False
+            if not safe:
+                raise DeliveryError("Unsafe symlink is staged; unstage it before committing")
+
+    visible_changes = [path for path in set(tracked + untracked) if _safe_commit_path(path)]
 
     cached_before = _paths(workspace, "diff", "--cached", "--no-renames", "--name-only", "-z")
-    if any(not _visible(path) for path in cached_before):
-        raise DeliveryError("Protected files are already staged; unstage them before committing")
+    _validate_staged(cached_before)
     visible_cached = cached_before
 
     if not visible_changes and not visible_cached:
@@ -87,8 +127,7 @@ def commit_workspace(
             raise DeliveryError(f"Failed to stage changes: {exc}") from exc
 
     cached_now = _paths(workspace, "diff", "--cached", "--no-renames", "--name-only", "-z")
-    if any(not _visible(path) for path in cached_now):
-        raise DeliveryError("Protected files are staged; unstage them before committing")
+    _validate_staged(cached_now)
     visible_to_commit = cached_now
     if not visible_to_commit:
         raise DeliveryError("No changes to commit in this workspace")
@@ -154,7 +193,7 @@ def revert_workspace(
             try:
                 if not target.parent.resolve(strict=True).is_relative_to(workspace.path):
                     continue
-                if target.is_symlink() or target.is_file():
+                if target.is_symlink() or not target.is_dir():
                     # Unlink the entry, never the target of an untracked symlink.
                     target.unlink(missing_ok=True)
                     reverted.append(rel)
