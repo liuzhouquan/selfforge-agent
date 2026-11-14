@@ -129,7 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
-| 22 | [SF-INT-01](#sf-int-01) | In Progress | Antigravity | 无 | GitHub PR 提取与检出安全加固：命令注入与参数投毒防御、URL 规范化、工作区路径防符链穿透、Diff Hunk 解析有界防御 |
+| 22 | [SF-INT-01](#sf-int-01) | In Review | Antigravity | 无 | [PR #80](https://github.com/liuzhouquan/selfforge-agent/pull/80)：GitHub PR 提取与检出安全加固：命令注入与参数投毒防御、URL 规范化、工作区路径防符链穿透、Diff Hunk 解析有界防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -999,21 +999,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-INT-01-A1 | `parse_pr_url` 严格校验 URL Scheme 为 `https`，禁止凭据、端口、空白与控制字符；严格校验 `owner` 与 `repo` 规范（阻断 `-` 或 `.` 前缀、`.git` 后缀及 `.`/`..` 注入），校验 PR 编号为正整数（1–2147483647） | `tests/test_github_pr_security.py` 参数注入、协议规范与边界测试 | 未验证 |
-| SF-INT-01-A2 | `checkout_pr` 严格校验 `workspace_root` 及其父路径非符号链接/FIFO/非目录，杜绝符号链接逃逸；检出目录冲突时显式拒绝；在失败回滚时采用防符链安全清理 | `tests/test_github_pr_security.py` 符号链接根、父路径、目录冲突与回滚隔离测试 | 未验证 |
-| SF-INT-01-A3 | `_run` 严格校验 `timeout` 为有限正数（1 至 300 秒，阻断布尔值与 NaN/inf），校验 `cwd` 非符号链接，实施 8 MiB 输出有界限制；`_api` 阻断 `-` 开头或含控制字符的非法端点 | `tests/test_github_pr_security.py` 命令超时、符号链接 cwd、API 端点有界测试 | 未验证 |
-| SF-INT-01-A4 | `build_context` 与 `_git` 严格拒绝符号链接仓库与控制字符，统一 SHA 大小写规范化；`parse_hunks` 限制行数/Hunk 上限并校验非负有界行号；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_github_pr_security.py` 仓库符链、SHA 规范化、Hunk 边界测试及本地命令矩阵与 CI | 未验证 |
+| SF-INT-01-A1 | `parse_pr_url` 严格校验 URL Scheme 为 `https`，禁止凭据、端口、空白与控制字符；严格校验 `owner` 与 `repo` 规范（阻断 `-` 或 `.` 前缀、`.git` 后缀及 `.`/`..` 注入），校验 PR 编号为正整数（1–2147483647） | `tests/test_github_pr_security.py` 参数注入、协议规范与边界测试 | E1 |
+| SF-INT-01-A2 | `checkout_pr` 严格校验 `workspace_root` 及其父路径非符号链接/FIFO/非目录，杜绝符号链接逃逸；检出目录冲突时显式拒绝；在失败回滚时采用防符链安全清理 | `tests/test_github_pr_security.py` 符号链接根、父路径、目录冲突与回滚隔离测试 | E2 |
+| SF-INT-01-A3 | `_run` 严格校验 `timeout` 为有限正数（1 至 300 秒，阻断布尔值与 NaN/inf），校验 `cwd` 非符号链接，实施 8 MiB 输出有界限制；`_api` 阻断 `-` 开头或含控制字符的非法端点 | `tests/test_github_pr_security.py` 命令超时、符号链接 cwd、API 端点有界测试 | E3 |
+| SF-INT-01-A4 | `build_context` 与 `_git` 严格拒绝符号链接仓库与控制字符，统一 SHA 大小写规范化；`parse_hunks` 限制行数/Hunk 上限并校验非负有界行号；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_github_pr_security.py` 仓库符链、SHA 规范化、Hunk 边界测试及本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=14203249e58444780422567ce98606217ea1ba36；Branch=feat/sf-int-01；Worktree=selfforge-sf-int-01。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-INT-01-A1 | `tests/test_github_pr_security.py::test_parse_pr_url_rejects_argument_injection_and_invalid_chars` | 本地 `pytest -v tests/test_github_pr_security.py` 与 GitHub Actions CI | 源码 SHA `5b2bbc2ed9874ce5ea1b4f4f5c94fb118d3ef08c`；passed；CI [R1 43609921849](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43609921849) success |
+| E2 | SF-INT-01-A2 | `tests/test_github_pr_security.py::test_checkout_pr_rejects_symlink_workspace_root_and_parent`、`tests/test_github_pr_security.py::test_checkout_pr_rejects_existing_destination_and_cleans_up` | 本地 `pytest -v tests/test_github_pr_security.py` 与 GitHub Actions CI | 源码 SHA `5b2bbc2ed9874ce5ea1b4f4f5c94fb118d3ef08c`；passed；CI [R1 43609921849](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43609921849) success |
+| E3 | SF-INT-01-A3 | `tests/test_github_pr_security.py::test_run_validates_timeout_and_bounds_output`、`tests/test_github_pr_security.py::test_api_rejects_malicious_endpoints` | 本地 `pytest -v tests/test_github_pr_security.py` 与 GitHub Actions CI | 源码 SHA `5b2bbc2ed9874ce5ea1b4f4f5c94fb118d3ef08c`；passed；CI [R1 43609921849](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43609921849) success |
+| E4 | SF-INT-01-A4 | `tests/test_github_pr_security.py::test_git_context_build_context_rejects_symlink_repository`、`tests/test_github_pr_security.py::test_git_context_normalizes_sha_case_and_rejects_null_bytes`、`tests/test_github_pr_security.py::test_parse_hunks_bounds_lines_and_rejects_null_bytes` | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -q -m "not integration"` 与 GitHub Actions CI（含 Docker 集成） | 源码 SHA `5b2bbc2ed9874ce5ea1b4f4f5c94fb118d3ef08c`；本地 passed；CI [R1 43609921849](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43609921849) success |
+
+执行记录（Owner/状态以上表为准）：Base=`14203249e58444780422567ce98606217ea1ba36`；Branch=`feat/sf-int-01`；Worktree=`selfforge-sf-int-01`；PR=[#80](https://github.com/liuzhouquan/selfforge-agent/pull/80)。先运行 TDD 红灯复现（5 failed），随后在 github_pr.py 与 git_context.py 中实现严格 URL 校验、CLI 选项注入防御、工作区符号链接隔离、超时与输出有界防御、仓库防符链及 Hunk 解析上限防御；在源码提交 `5b2bbc2ed9874ce5ea1b4f4f5c94fb118d3ef08c` 通过本地专项与 GitHub Actions CI `Run #43609921849`（含 Docker 集成）；本状态提交仅修改文档。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-int-01 (worktree: selfforge-sf-int-01) / 待提交
-已完成验收与证据 ID：未验证（初始实现完成）
-未完成 / 环境限制 / 未提交内容归属：本分支实现与专项测试完成，全量测试套件通过；待开 PR 与 CI 验证
-PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-int-01 (worktree: selfforge-sf-int-01) / 源码 5b2bbc2ed9874ce5ea1b4f4f5c94fb118d3ef08c；当前仅文档更新
+已完成验收与证据 ID：SF-INT-01-A1..A4（E1、E2、E3、E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；对账文档归 Antigravity；真 Docker 完整测试由 CI 验证；不调用外部付费模型
+PR / 准确 head CI / merge SHA（有则填）：PR #80 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43609921849 / 无
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无
-下一步：创建 PR，观察 R1 CI，通过后更新 SDD 为 In Review 并提交 Commit H。
+下一步：等待 PR #80 审查合并，合并后在后续整合或对账中闭合 merge SHA。
 ```
 
 ## 5. 验收追踪与执行记录格式
