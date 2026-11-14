@@ -4,6 +4,7 @@ import fcntl
 import ipaddress
 import json
 import os
+import stat
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -70,11 +71,37 @@ def _settings_path() -> Path:
 
 def _settings() -> dict[str, dict[str, str]]:
     path = _settings_path()
+    if path.is_symlink():
+        raise ValueError("Provider settings path must not be a symlink")
     if not path.exists():
         return {}
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"Cannot read provider settings: {exc}") from exc
+
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Provider settings must be a regular file, not a FIFO, device, or directory")
+        if st.st_size > 64 * 1024:
+            raise ValueError("Provider settings file exceeds 64 KiB size limit")
+        with os.fdopen(fd, "rb") as handle:
+            content = handle.read(64 * 1024 + 1)
+            if len(content) > 64 * 1024:
+                raise ValueError("Provider settings file exceeds 64 KiB size limit")
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+    try:
+        data = json.loads(content.decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
         raise ValueError(f"Cannot read provider settings: {exc}") from exc
     if not isinstance(data, dict):
         raise TypeError("Provider settings must be a JSON object")
@@ -90,8 +117,15 @@ def _settings() -> dict[str, dict[str, str]]:
 def _settings_lock(path: Path) -> Iterator[None]:
     """Serialize provider settings read-modify-write operations across processes."""
     lock_path = path.with_name(path.name + ".lock")
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0), 0o600)
+    if lock_path.is_symlink():
+        raise ValueError("Provider settings lock must not be a symlink")
+    flags = (os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+             | getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(lock_path, flags, 0o600)
     try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Provider settings lock must be a regular file")
         os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
@@ -103,16 +137,35 @@ def _settings_lock(path: Path) -> Iterator[None]:
 
 
 def validate_base_url(value: str) -> str:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise ValueError("Base URL must be a non-empty string without null bytes")
     url = value.strip().rstrip("/")
-    parts = urlsplit(url)
-    if parts.username or parts.password or parts.query or parts.fragment or not parts.hostname:
+    if any(char.isspace() for char in url):
+        raise ValueError("Base URL must not contain whitespace")
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        raise ValueError(f"Invalid Base URL structure: {exc}") from exc
+    if not parts.scheme:
+        raise ValueError("Base URL missing scheme")
+    if parts.scheme not in {"https", "http"}:
+        raise ValueError("Base URL must use HTTPS, except for localhost")
+    if not parts.hostname:
+        raise ValueError("Base URL missing hostname")
+    if parts.username or parts.password or parts.query or parts.fragment:
         raise ValueError("Base URL must be a plain HTTPS URL without credentials or query")
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid Base URL port: {exc}") from exc
+    if port is not None and (port < 1 or port > 65535):
+        raise ValueError(f"Invalid Base URL port {port}; must be between 1 and 65535")
     if parts.scheme != "https":
         try:
             loopback = ipaddress.ip_address(parts.hostname).is_loopback
         except ValueError:
-            loopback = parts.hostname == "localhost"
-        if parts.scheme != "http" or not loopback:
+            loopback = parts.hostname in {"localhost", "localhost.localdomain"}
+        if not loopback:
             raise ValueError("Base URL must use HTTPS, except for localhost")
     return url
 
@@ -125,10 +178,15 @@ def save_provider_settings(name: ProviderName, *, api_key: str | None,
     model = model.strip()
     if not model or len(model) > 200 or any(char.isspace() for char in model):
         raise ValueError("Model must be a nonempty model ID without spaces")
-    if api_key is not None and (len(api_key) > 4096 or "\n" in api_key or "\r" in api_key):
+    if api_key is not None and (len(api_key) > 4096 or "\n" in api_key or "\r" in api_key or "\x00" in api_key):
         raise ValueError("Invalid API key")
     path = _settings_path()
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise ValueError("Provider settings path must not be a symlink")
+    parent = path.parent
+    if parent.is_symlink():
+        raise ValueError("Provider settings parent directory must not be a symlink")
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with _settings_lock(path):
         settings = _settings()
         current = settings.get(name, {})
@@ -138,7 +196,7 @@ def save_provider_settings(name: ProviderName, *, api_key: str | None,
                 settings[name]["api_key"] = current["api_key"]
         elif api_key:
             settings[name]["api_key"] = api_key.strip()
-        fd, temp_name = tempfile.mkstemp(prefix=".providers-", dir=path.parent)
+        fd, temp_name = tempfile.mkstemp(prefix=".providers-", dir=parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(settings, handle, indent=2)
