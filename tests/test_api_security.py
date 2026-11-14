@@ -293,3 +293,51 @@ def test_repository_endpoints_reject_invalid_or_nonexistent_repo() -> None:
     res = client.get("/api/code/jobs", params={"repository": bad_repo})
     assert res.status_code == 400
     assert "Repository directory does not exist" in res.json()["detail"]
+
+
+@pytest.mark.parametrize("declared_length", [None, "1"])
+def test_actual_request_bytes_are_limited_even_without_honest_length(declared_length: str | None) -> None:
+    body = b'{"task":"' + b"x" * (2 * 1024 * 1024) + b'"}'
+    headers = {"content-type": "application/json"}
+    if declared_length is not None:
+        headers["content-length"] = declared_length
+    response = TestClient(api_module.app).post("/api/code/jobs", content=iter([body]), headers=headers)
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Request body too large"}
+
+
+def test_fifo_cancel_marker_is_rejected_without_blocking(tmp_path: Path) -> None:
+    marker = tmp_path / "cancel"
+    os.mkfifo(marker)
+    code = (
+        "from pathlib import Path\nfrom threading import Event\nimport sys\n"
+        "from selfforge_agent.api.coding_jobs import DurableCancel\n"
+        "try:\n DurableCancel(Path(sys.argv[1]), Event()).set()\n"
+        "except ValueError:\n sys.exit(0)\n"
+        "sys.exit(1)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code, str(marker)], timeout=3, check=False)
+    assert result.returncode == 0
+
+
+def test_list_jobs_skips_record_with_non_string_state(tmp_path: Path) -> None:
+    manager = CodingJobManager(root=tmp_path / "jobs")
+    job_id = "0123456789ab"
+    record = {"job_id": job_id, "session_id": "s1", "session_root": str(tmp_path),
+              "workspace_path": str(tmp_path), "state": []}
+    (manager.records / f"{job_id}.json").write_text(json.dumps(record))
+    assert manager.list_jobs() == []
+
+
+def test_fake_git_marker_does_not_establish_repository(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    response = TestClient(api_module.app).get("/api/code/environment", params={"repository": str(tmp_path)})
+    assert response.status_code == 400
+
+
+def test_job_writer_does_not_publish_unreadably_large_record(tmp_path: Path) -> None:
+    manager = CodingJobManager(root=tmp_path / "jobs")
+    job_id = "0123456789ab"
+    with pytest.raises(ValueError, match="64 KiB"):
+        manager._write_record({"job_id": job_id, "answer": "x" * 65536})
+    assert not (manager.records / f"{job_id}.json").exists()

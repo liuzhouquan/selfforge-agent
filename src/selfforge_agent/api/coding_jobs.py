@@ -1,6 +1,7 @@
 """Durable local Web jobs with process-safe workspace ownership."""
 
 import json
+import math
 import os
 import re
 import stat
@@ -25,6 +26,22 @@ from selfforge_agent.runtime.workspace import (
 _JOB_ID = re.compile(r"[0-9a-f]{12}\Z")
 _ACTIVE = {"queued", "running"}
 
+MAX_JOB_RECORD_BYTES = 64 * 1024
+
+
+def _write_cancel_marker(marker: Path) -> None:
+    if marker.is_symlink():
+        raise ValueError("Cancellation marker cannot be a symlink")
+    try:
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError("Cancellation marker must be a regular file")
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise ValueError("Cannot create a regular cancellation marker") from exc
+
 
 class DurableCancel(Event):
     """Local event backed by a marker other server processes can create."""
@@ -39,10 +56,7 @@ class DurableCancel(Event):
         return super().is_set() or (self.marker.is_file() and not self.marker.is_symlink())
 
     def set(self) -> None:
-        if self.marker.is_symlink():
-            raise ValueError("Cancellation marker cannot be a symlink")
-        fd = os.open(self.marker, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        os.close(fd)
+        _write_cancel_marker(self.marker)
         super().set()
 
 
@@ -113,12 +127,16 @@ class CodingJobManager:
         target = self._record_path(record["job_id"])
         if target.is_symlink():
             raise ValueError("Job record target cannot be a symlink")
+        if target.exists() and not target.is_file():
+            raise ValueError("Job record target must be a regular file")
+        payload = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+        if len(payload) > MAX_JOB_RECORD_BYTES:
+            raise ValueError("Job record exceeds 64 KiB")
         temporary = self.records / f".{record['job_id']}.{uuid4().hex}.tmp"
         try:
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(record, handle, ensure_ascii=False)
-                handle.write("\n")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, target)
@@ -152,18 +170,42 @@ class CodingJobManager:
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
             try:
                 stat_info = os.fstat(fd)
-                if not stat.S_ISREG(stat_info.st_mode) or stat_info.st_size > 65536:
+                if not stat.S_ISREG(stat_info.st_mode) or stat_info.st_size > MAX_JOB_RECORD_BYTES:
                     raise KeyError(job_id)
-                content = os.read(fd, 65536).decode("utf-8")
+                blocks = []
+                remaining = MAX_JOB_RECORD_BYTES + 1
+                while remaining:
+                    block = os.read(fd, remaining)
+                    if not block:
+                        break
+                    blocks.append(block)
+                    remaining -= len(block)
+                content = b"".join(blocks)
+                if len(content) > MAX_JOB_RECORD_BYTES:
+                    raise KeyError(job_id)
             finally:
                 os.close(fd)
             record = json.loads(content)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             raise KeyError(job_id) from exc
         if (not isinstance(record, dict) or record.get("job_id") != job_id
                 or not isinstance(record.get("workspace_path"), str)
                 or not isinstance(record.get("session_root"), str)
-                or not isinstance(record.get("session_id"), str)):
+                or not isinstance(record.get("session_id"), str)
+                or not isinstance(record.get("state"), str)):
+            raise KeyError(job_id)
+        for key in ("workspace_path", "session_root", "session_id"):
+            if not record[key] or "\x00" in record[key]:
+                raise KeyError(job_id)
+        for key in ("repository", "branch", "base_sha", "answer", "error"):
+            if key in record and not isinstance(record[key], str):
+                raise KeyError(job_id)
+        for key in ("steps", "tools_used"):
+            if key in record and (type(record[key]) is not int or record[key] < 0):
+                raise KeyError(job_id)
+        updated = record.get("updated_at", 0)
+        if (type(updated) not in (int, float) or updated < 0
+                or (isinstance(updated, float) and not math.isfinite(updated))):
             raise KeyError(job_id)
         return record
 
@@ -325,9 +367,5 @@ class CodingJobManager:
                 if job:
                     job.cancel.set()
                 else:
-                    cancel_file = self._cancel_path(job_id)
-                    if cancel_file.is_symlink():
-                        raise ValueError("Cancel marker cannot be a symlink")
-                    fd = os.open(cancel_file, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-                    os.close(fd)
+                    _write_cancel_marker(self._cancel_path(job_id))
         return self.get(job_id)

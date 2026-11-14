@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import subprocess
 from pathlib import Path
 from threading import Event
 from typing import Any, Literal
@@ -123,26 +124,72 @@ def _validate_repository_dir(repository: str | Path, *, must_be_git: bool = True
         repo = Path(repository).expanduser().resolve()
         if not repo.is_dir():
             raise HTTPException(status_code=400, detail="Repository directory does not exist")
-        if must_be_git and not (repo / ".git").exists():
-            raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
+        if must_be_git:
+            if not (repo / ".git").exists():
+                raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
+            result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    text=True, timeout=5, check=False)
+            if result.returncode or Path(result.stdout.strip()).resolve() != repo:
+                raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
         return repo
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         raise HTTPException(status_code=400, detail="Repository directory does not exist") from exc
 
 
-@app.middleware("http")
-async def enforce_payload_limit(request: Request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            length = int(content_length)
-            if length < 0:
-                return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
-            if length > _MAX_REQUEST_BYTES:
-                return JSONResponse({"detail": "Request body too large"}, status_code=413)
-        except ValueError:
-            return JSONResponse({"detail": "Invalid Content-Length header"}, status_code=400)
-    return await call_next(request)
+class _PayloadLimitMiddleware:
+    """Bound actual request bytes before endpoint parsing or side effects."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        lengths = [value for key, value in scope.get("headers", []) if key.lower() == b"content-length"]
+        error = None
+        status = 400
+        if lengths:
+            try:
+                if len(lengths) != 1:
+                    raise ValueError("Multiple Content-Length headers")
+                length = int(lengths[0])
+                if length < 0:
+                    error = "Invalid Content-Length"
+                elif length > _MAX_REQUEST_BYTES:
+                    error, status = "Request body too large", 413
+            except ValueError:
+                error = "Invalid Content-Length header"
+        if error:
+            return await JSONResponse({"detail": error}, status_code=status)(scope, receive, send)
+        chunks = []
+        size = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > _MAX_REQUEST_BYTES:
+                return await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+            if chunk:
+                chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        body = b"".join(chunks)
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        return await self.app(scope, replay, send)
+
+
+app.add_middleware(_PayloadLimitMiddleware)
 
 
 @app.middleware("http")
