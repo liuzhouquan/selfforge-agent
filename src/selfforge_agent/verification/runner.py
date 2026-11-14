@@ -1,9 +1,11 @@
 """Pytest evidence from explicitly trusted host or isolated Docker execution."""
 
+import math
 import os
 import platform
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,15 @@ from pathlib import Path
 from selfforge_agent.models import TestResult
 from selfforge_agent.runtime.execution import DockerExecutor
 from selfforge_agent.verification.junit import MAX_JUNIT_BYTES, parse_junit
+
+PROTECTED_TARGETS = {
+    ".git", ".venv", ".env", ".local", ".selfforge", ".workspaces", ".aws", ".ssh",
+    ".npmrc", ".pypirc", ".netrc",
+}
+
+
+def _is_protected(name: str) -> bool:
+    return name in PROTECTED_TARGETS or name.startswith(".env.")
 
 
 class TrustRequiredError(ValueError):
@@ -35,13 +46,44 @@ def _result_status(returncode: int | None, timed_out: bool, counts: dict[str, in
 
 
 def _test_target(repository: Path, test_path: str, timeout: float) -> tuple[Path, Path]:
-    if timeout <= 0:
-        raise ValueError("timeout must be positive")
+    if not math.isfinite(timeout) or timeout <= 0 or timeout > 3600:
+        raise ValueError("timeout must be a finite positive number not exceeding 3600 seconds")
+    if not repository.exists() or not repository.is_dir():
+        raise ValueError("repository must be an existing directory")
     repo = repository.resolve()
+    if not repo.is_dir():
+        raise ValueError("repository must be an existing directory")
+    if not isinstance(test_path, str) or not test_path.strip():
+        raise ValueError("test_path must not be blank")
+    for part in Path(test_path).parts:
+        if part == ".." or _is_protected(part):
+            raise ValueError(f"test_path traverses protected or invalid path component: {part}")
     target = (repo / test_path).resolve()
     if not target.is_relative_to(repo) or not target.exists():
         raise ValueError("test_path must exist inside the repository")
+    if not (target.is_file() or target.is_dir()):
+        raise ValueError("test_path must be a regular file or directory")
     return repo, target
+
+
+def _read_junit_file(xml_path: Path) -> bytes | None:
+    if not xml_path.is_file() or xml_path.is_symlink():
+        return None
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(xml_path, flags)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                return None
+            with open(fd, "rb", closefd=True) as handle:
+                fd = -1
+                return handle.read(MAX_JUNIT_BYTES + 1)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except OSError:
+        return None
 
 
 class TestRunner:
@@ -92,10 +134,7 @@ class TestRunner:
                 if isinstance(exc, KeyboardInterrupt):
                     raise
             duration = time.monotonic() - start
-            xml = None
-            if xml_path.exists():
-                with xml_path.open("rb") as handle:
-                    xml = handle.read(MAX_JUNIT_BYTES + 1)
+            xml = _read_junit_file(xml_path)
             evidence = parse_junit(xml, timed_out)
             status, error = _result_status(process.returncode, timed_out, evidence.counts,
                                            evidence.error, timeout)
