@@ -180,6 +180,8 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None,
     if manifest.is_symlink():
         raise ValueError(f"Manifest must be a regular file, not a symlink: {manifest}")
     manifest_bytes = _contents if _contents is not None else _read_regular_file(manifest, MAX_MANIFEST_BYTES, "Manifest")
+    if len(manifest_bytes) > MAX_MANIFEST_BYTES:
+        raise ValueError("Manifest file exceeds size limit")
     manifest = manifest.resolve()
     suite = BenchmarkSuite.model_validate_json(manifest_bytes)
     ids: set[str] = set()
@@ -212,7 +214,9 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None,
             _safe_relative(changed)
         if len(set(case.allowed_changes)) != len(case.allowed_changes):
             raise ValueError(f"Case {case.id} repeats an allowed change path")
-        holdout_bytes = _assets[case.holdout_test] if _assets is not None else _read_regular_file(holdout, MAX_HOLDOUT_BYTES, f"Case {case.id} holdout")
+        holdout_bytes = _assets[case.holdout_test] if _assets is not None else _read_regular_file(holdout_unresolved, MAX_HOLDOUT_BYTES, f"Case {case.id} holdout")
+        if len(holdout_bytes) > MAX_HOLDOUT_BYTES:
+            raise ValueError(f"Case {case.id} holdout file exceeds size limit")
         reference_bytes = None
         if case.reference_patch is not None:
             reference_unresolved = manifest.parent / case.reference_patch
@@ -223,7 +227,7 @@ def load_suite(manifest: Path, *, _contents: bytes | None = None,
                     or reference.is_relative_to(repository)):
                 raise ValueError(f"Case {case.id} needs a reference patch outside the repository")
             if _assets is None:
-                reference_bytes = _read_regular_file(reference, MAX_REFERENCE_BYTES, f"Case {case.id} reference patch")
+                reference_bytes = _read_regular_file(reference_unresolved, MAX_REFERENCE_BYTES, f"Case {case.id} reference patch")
             else:
                 reference_bytes = _assets[case.reference_patch]
             if not reference_bytes or len(reference_bytes) > MAX_REFERENCE_BYTES:
@@ -433,19 +437,29 @@ def _install_holdout(destination: Path, case: PreparedCase) -> str:
     target = destination / holdout_path
     if target.is_symlink() or target.exists():
         raise ValueError("Repository already contains the reserved holdout test path")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    dest_resolved = destination.resolve()
-    if target.parent.is_symlink() or not target.parent.resolve().is_relative_to(dest_resolved):
-        raise ValueError("Holdout directory is a symlink or escapes workspace")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    root_fd = tests_fd = -1
+    created = False
     try:
-        fd = os.open(target, flags, 0o644)
+        root_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.mkdir("tests", dir_fd=root_fd)
+        except FileExistsError:
+            pass
+        tests_fd = os.open("tests", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+        fd = os.open(target.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o644, dir_fd=tests_fd)
+        created = True
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(case.holdout_bytes)
     except OSError as exc:
-        raise ValueError(f"Cannot install holdout test safely: {exc}") from exc
-    try:
-        os.write(fd, case.holdout_bytes)
+        if created:
+            os.unlink(target.name, dir_fd=tests_fd)
+        raise ValueError("Cannot install holdout test safely; directory or target may be a symlink") from exc
     finally:
-        os.close(fd)
+        if tests_fd >= 0:
+            os.close(tests_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
     return holdout_path.as_posix()
 
 
@@ -593,6 +607,7 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
     agent_steps = tools_used = 0
     tool_trace: list[dict[str, str | bool]] = []
     session: SessionStore | None = None
+    cost_usd = None
     try:
         with tempfile.TemporaryDirectory(prefix="selfforge-benchmark-") as temp:
             root = Path(temp)
@@ -615,6 +630,12 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
             if result.status == "failed":
                 agent_error_code = _agent_error_code(result.error)
             provider, model, prompt, completion, total = _usage(session)
+            try:
+                cost = session.token_metrics().get("cost")
+                cost_usd = cost["total_cost_usd"] if cost else None
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError):
+                # Optional telemetry must not replace the primary harness outcome.
+                pass
             tool_trace = _tool_trace(session)
             if _git("rev-parse", "HEAD", cwd=workspace).strip() != case.spec.revision:
                 reason = "revision_changed"
@@ -653,10 +674,6 @@ def _run_once(case: PreparedCase, repeat: int, model_factory: Callable[[Benchmar
                                         reason=reason, visible=visible, holdout=evidence)
         except (OSError, ValueError):
             artifact_error = "artifact_write_failed"
-    cost_usd = None
-    if session is not None:
-        cost = session.token_metrics().get("cost")
-        cost_usd = cost["total_cost_usd"] if cost else None
     return BenchmarkOutcome(case.spec.id, repeat, reason == "passed", reason, agent_status,
                             changed, holdout_status, passed, failed, errors, exit_code,
                             round(time.monotonic() - started, 3), provider, model,
