@@ -124,6 +124,7 @@ flowchart LR
 | 14 | [SF-RUN-07](#sf-run-07) | Merged | Codex（审查整合） | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 | 15 | [SF-WS-08](#sf-ws-08) | Merged | Codex（审查整合） | 无 | [PR #72](https://github.com/liuzhouquan/selfforge-agent/pull/72)：WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
 | 16 | [SF-VERIF-01](#sf-verif-01) | Merged | Codex（审查整合） | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
+| 17 | [SF-ENV-08](#sf-env-08) | In Progress | Antigravity | SF-ENV-07（Merged） | 依赖输入与锁文件安全加固：平台条件标记 fail-closed 拒绝、PEP 503 包名规范化与非阻塞/无符链安全读取 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -783,6 +784,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43552476659（最终组合；各源 PR 见审查记录） / af31537e72f39aeccf98fb9149edb51787d4bcaa
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填 PR #73 交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-ENV-08
+
+**目标：** 在依赖输入解析与离线镜像构建准备阶段贯彻 fail-closed 与安全规范化准则。在 `lockfiles.py` 中强化环境与平台条件标记的识别（`markers`、`marker`、`resolution-markers`、`platform`、`sys_platform`、`os_name` 等），非字符串标记抛出 `Invalid package marker in lock file`，任何非通配（`*`）的平台或环境条件显式抛出 `Conditional markers require a target-aware export; cannot flatten this lock`，杜绝将目标特异性依赖静默扁平化为跨平台通用导出；统一在数据入口实施 PEP 503 包名规范化（`re.sub(r"[-_.]+", "-", name).lower()`），确保下游构建器与校验器名称完全对齐；在 `images.py` 中通过 `_read` 采用 `O_RDONLY | O_NOFOLLOW | O_NONBLOCK` 与 `fstat(fd)` 判定，防止符号链接穿透、目录及 FIFO 特殊文件引起的阻塞挂起或 TOCTOU 竞争。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/runtime/lockfiles.py`、`src/selfforge_agent/runtime/images.py` 及专项测试 `tests/test_lockfile_security_hardening.py`；不破坏既有离线准备流程与构建接口。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-ENV-08-A1 | Poetry 与 Pipfile 锁文件中声明了 `platform`、`sys_platform` 或 `os_name` 限制时，导出严格抛出 `ValueError("Conditional markers require a target-aware export; cannot flatten this lock")`；非字符串标记抛出 `ValueError("Invalid package marker in lock file")` | `tests/test_lockfile_security_hardening.py` 平台与条件标记拦截测试 | 未验证 |
+| SF-ENV-08-A2 | 结构化锁文件（Poetry/Pipfile）与 requirements.txt 导出时，包名统一按 PEP 503 规范化（全小写、分隔符连字符规范化）；`parse_locked_requirements` 产出规范化包名 | `tests/test_lockfile_security_hardening.py` 包名规范化测试 | 未验证 |
+| SF-ENV-08-A3 | `images._read` 使用 `O_NOFOLLOW \| O_NONBLOCK` 打开并校验 `S_ISREG`，遇 FIFO、目录、断链或符号链接立刻 fail-closed 抛出 `ValueError`，杜绝读特殊文件挂起；`scan_wheelhouse` 安全隔离特殊文件 | `tests/test_lockfile_security_hardening.py` 特殊文件与符号链接防挂起测试 | 未验证 |
+| SF-ENV-08-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-env-08`；Worktree=`selfforge-sf-env-08`；PR=-；Source=-。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-env-08 (worktree: selfforge-sf-env-08) / 开发中
+已完成验收与证据 ID：待验证（初始开发阶段）
+未完成 / 环境限制 / 未提交内容归属：代码与专项测试已完成，等待提交 Commit S 与 CI 验证
+PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：完成 Commit S 提交并在 GitHub 创建 PR，等待 R1 CI 通过后更新 SDD 为 In Review 并提交 Commit H。
 ```
 
 ## 5. 验收追踪与执行记录格式

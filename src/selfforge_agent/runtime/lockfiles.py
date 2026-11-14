@@ -17,7 +17,7 @@ def _add(requirements: dict, name: object, version: object, hashes: set[str]) ->
             raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
         requirements[key][2].update(hashes)
     else:
-        requirements[key] = (name, version, hashes)
+        requirements[key] = (key, version, hashes)
 
 
 def _hash(value: object) -> set[str]:
@@ -39,11 +39,13 @@ def _file_hashes(entries: object, label: str) -> set[str]:
 
 
 def _unconditional(package: dict) -> None:
-    for key in ("markers", "marker"):
+    for key in ("markers", "marker", "resolution-markers", "platform", "sys_platform", "os_name"):
         if key in package:
-            if not isinstance(package[key], str):
+            val = package[key]
+            if not isinstance(val, str):
                 raise ValueError("Invalid package marker in lock file")
-            if package[key].strip():
+            cleaned = val.strip()
+            if cleaned and cleaned != "*":
                 raise ValueError("Conditional markers require a target-aware export; cannot flatten this lock")
 
 
