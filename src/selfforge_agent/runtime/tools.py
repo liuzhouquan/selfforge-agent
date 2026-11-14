@@ -2,10 +2,11 @@
 
 import fnmatch
 import os
+import stat
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
-from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -148,22 +149,51 @@ class ToolRegistry:
             content = content[:MAX_TOOL_OUTPUT] + "\n[output truncated]"
         return ToolOutcome(content, outcome.ok, time.monotonic() - started)
 
+    @contextmanager
+    def _open_source(self, path: Path):
+        """Open a regular source through anchored, non-following directory descriptors."""
+        parts = path.relative_to(self.root).parts
+        directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for part in parts[:-1]:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(fd, "rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    raise ValueError("Target is not a regular file")
+                yield source
+        finally:
+            os.close(directory)
+
+    def _read_source(self, path: Path, limit: int) -> str:
+        with self._open_source(path) as source:
+            if os.fstat(source.fileno()).st_size > limit:
+                raise ValueError("File exceeds read limit")
+            data = source.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError("File exceeds read limit")
+        return data.decode("utf-8")
+
     def _read(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, ReadFile)
         path = self._path(args.path)
+        if not path.is_file():
+            raise ValueError("File does not exist or is not a regular file")
         size = path.stat().st_size
         if args.start_line is None and args.end_line is None:
             if size > MAX_WHOLE_FILE_BYTES:
                 raise ValueError("File exceeds whole-file read limit; use start_line and end_line")
-            return ToolOutcome(path.read_text(encoding="utf-8"), True)
+            return ToolOutcome(self._read_source(path, MAX_WHOLE_FILE_BYTES), True)
         if args.start_line is None or args.end_line is None:
             raise ValueError("Specify both start_line and end_line")
         if args.end_line < args.start_line or args.end_line - args.start_line + 1 > MAX_READ_LINES:
             raise ValueError("Read range must contain 1-200 ordered lines")
         if size > MAX_RANGED_FILE_BYTES:
             raise ValueError("File exceeds ranged read limit")
-        with path.open(encoding="utf-8") as handle:
-            content = "".join(islice(handle, args.start_line - 1, args.end_line))
+        lines = self._read_source(path, MAX_RANGED_FILE_BYTES).splitlines(keepends=True)
+        content = "".join(lines[args.start_line - 1:args.end_line])
         if not content:
             raise ValueError("Read range begins beyond end of file")
         return ToolOutcome(content, True)
@@ -179,10 +209,14 @@ class ToolRegistry:
             candidate /= part
             if candidate.is_symlink():
                 raise ValueError("Edit path contains a symlink")
+        if path.is_symlink() or (self.root / args.path).is_symlink():
+            raise ValueError("Edit path contains a symlink")
         if path.exists():
-            if not path.is_file() or path.stat().st_size > policy.max_file_bytes or not args.old_text:
+            if not path.is_file():
+                raise ValueError("Target exists and is not a regular file")
+            if path.stat().st_size > policy.max_file_bytes or not args.old_text:
                 raise ValueError("Existing files require a nonempty exact replacement")
-            original = path.read_text(encoding="utf-8")
+            original = self._read_source(path, policy.max_file_bytes)
             if original.count(args.old_text) != 1:
                 raise ValueError("old_text must occur exactly once")
             updated = original.replace(args.old_text, args.new_text, 1)
@@ -202,7 +236,9 @@ class ToolRegistry:
 
     def _search(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, SearchCode)
-        if not args.pattern or len(args.pattern) > 200 or len(args.glob) > 100:
+        if not args.pattern or len(args.pattern) > 200:
+            raise ValueError("Search pattern or glob is invalid")
+        if not args.glob or not args.glob.strip() or len(args.glob) > 100:
             raise ValueError("Search pattern or glob is invalid")
         base = self.root if args.path == "." else self._path(args.path)
         if not base.is_dir():
@@ -210,6 +246,8 @@ class ToolRegistry:
         hits: list[str] = []
         visited = 0
         scanned_bytes = 0
+        budget_exceeded = False
+        count_exceeded = False
         for directory, folders, files in os.walk(base):
             folders[:] = [name for name in folders if not _protected(name)]
             for filename in files:
@@ -218,30 +256,52 @@ class ToolRegistry:
                 if not fnmatch.fnmatch(filename, args.glob):
                     continue
                 visited += 1
-                if visited > 2_000 or len(hits) >= 80:
+                if visited > 2_000:
+                    count_exceeded = True
+                    break
+                if len(hits) >= 80:
                     break
                 path = Path(directory) / filename
-                resolved = path.resolve()
-                if (not path.is_file() or not resolved.is_relative_to(self.root)
-                        or any(_protected(part) for part in resolved.relative_to(self.root).parts)
-                        or path.stat().st_size > MAX_RANGED_FILE_BYTES):
-                    continue
-                size = path.stat().st_size
-                if scanned_bytes + size > MAX_SEARCH_BYTES:
-                    continue
-                scanned_bytes += size
                 try:
-                    with path.open(encoding="utf-8") as handle:
-                        for number, line in enumerate(handle, 1):
+                    resolved = path.resolve()
+                    if (not path.is_file() or not resolved.is_relative_to(self.root)
+                            or any(_protected(part) for part in resolved.relative_to(self.root).parts)):
+                        continue
+                    size = path.stat().st_size
+                except (OSError, RuntimeError):
+                    continue
+                if size > MAX_RANGED_FILE_BYTES:
+                    continue
+                if scanned_bytes + size > MAX_SEARCH_BYTES:
+                    budget_exceeded = True
+                    break
+                try:
+                    with self._open_source(resolved) as source:
+                        if os.fstat(source.fileno()).st_size > MAX_RANGED_FILE_BYTES:
+                            continue
+                        limit = min(MAX_RANGED_FILE_BYTES, MAX_SEARCH_BYTES - scanned_bytes)
+                        data = source.read(limit)
+                        scanned_bytes += len(data)
+                        # No read can consume more than the remaining budget, even after growth.
+                        if os.fstat(source.fileno()).st_size > len(data):
+                            budget_exceeded = True
+                        for number, line in enumerate(data.decode("utf-8").splitlines(keepends=True), 1):
                             if args.pattern in line:
                                 hits.append(f"{path.relative_to(self.root)}:{number}: {line[:200]}")
                                 if len(hits) >= 80:
                                     break
-                except UnicodeError:
+                except (UnicodeError, OSError, ValueError):
                     continue
-            if visited > 2_000 or len(hits) >= 80:
+            if count_exceeded or budget_exceeded or len(hits) >= 80:
                 break
-        return ToolOutcome("\n".join(hits) or "No matches", True)
+        result_text = "\n".join(hits)
+        if budget_exceeded:
+            marker = "[search limit reached: byte budget exceeded]"
+            result_text = f"{result_text}\n{marker}" if result_text else marker
+        elif count_exceeded:
+            marker = "[search limit reached: file count limit exceeded]"
+            result_text = f"{result_text}\n{marker}" if result_text else marker
+        return ToolOutcome(result_text or "No matches", True)
 
     def _bash(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, Bash)
@@ -258,6 +318,8 @@ class ToolRegistry:
         path = self._path(args.path)
         if not path.exists():
             raise ValueError("Test path does not exist")
+        if not path.is_file() and not path.is_dir():
+            raise ValueError("Test path is not a regular file or directory")
         relative = path.relative_to(self.root).as_posix()
         if isinstance(self.executor, DockerExecutor):
             # Retain the existing executor's image and durable cancellation marker.
