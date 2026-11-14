@@ -172,6 +172,17 @@ def _validate_cli_output_target(path: Path) -> Path:
     return target
 
 
+def _validate_distinct_cli_outputs(*paths: Path | None) -> None:
+    """Reject exports that would overwrite another export from this invocation."""
+    targets = [_validate_cli_output_target(path) for path in paths if path is not None]
+    for index, target in enumerate(targets):
+        for other in targets[:index]:
+            if target.resolve() == other.resolve() or (
+                target.exists() and other.exists() and target.samefile(other)
+            ):
+                raise ValueError("Output paths must refer to distinct files")
+
+
 def _write_cli_output(path: Path, content: str) -> None:
     """Write CLI export content safely without following symlinks or special files."""
     target = _validate_cli_output_target(path)
@@ -913,12 +924,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 2
     if args.command == "generate-test":
-        for target in (getattr(args, "output", None), getattr(args, "test_output", None)):
-            if target:
-                try:
-                    _validate_cli_output_target(target)
-                except (ValueError, OSError) as exc:
-                    parser.error(str(exc))
+        try:
+            _validate_distinct_cli_outputs(args.output, args.test_output)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
         try:
             candidates = route_providers(args.provider, not args.no_fallback)
             if not candidates:
@@ -951,7 +960,8 @@ def main(argv: list[str] | None = None) -> int:
                 top = prioritized[0]
                 target = top.to_risk_target().model_dump()
                 print(f"Auto-selected risk target (rank {top.rank}, score {top.score:.0f}): "
-                      f"{top.file_path}:{top.line_number} [{top.category}]")
+                      f"{top.file_path}:{top.line_number} [{top.category}]",
+                      file=sys.stderr if args.json else sys.stdout)
             if args.max_candidates > 1 or target is not None:
                 batch = generator.run_many(
                     args.repo.resolve(), args.base, args.head, args.task,
@@ -1005,12 +1015,10 @@ def main(argv: list[str] | None = None) -> int:
             print(error, file=sys.stderr)
         return 0 if result.status == "differential" else 1
     if args.command == "repair":
-        for target in (getattr(args, "output", None), getattr(args, "patch_output", None)):
-            if target:
-                try:
-                    _validate_cli_output_target(target)
-                except (ValueError, OSError) as exc:
-                    parser.error(str(exc))
+        try:
+            _validate_distinct_cli_outputs(args.output, args.patch_output)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
         try:
             candidates = route_providers(args.provider, not args.no_fallback)
             if args.model or args.base_url or os.environ.get("SELFFORGE_API_KEY"):

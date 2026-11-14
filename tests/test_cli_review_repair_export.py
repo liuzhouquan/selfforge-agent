@@ -163,7 +163,9 @@ def test_cli_repair_rejects_symlinks_and_supports_json_export(
         assert out_patch.read_text(encoding="utf-8") == "diff --git a/app.py b/app.py\n"
 
 
+@pytest.mark.parametrize("auto_target", [False, True])
 def test_cli_generate_test_rejects_symlinks_and_supports_json_export(
+    auto_target: bool,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -207,12 +209,18 @@ def test_cli_generate_test_rejects_symlinks_and_supports_json_export(
     ):
         instance = MagicMock()
         instance.run.return_value = mock_result
+        from selfforge_agent.coding.test_generation import TestGenerationBatchReport
+        instance.run_many.return_value = TestGenerationBatchReport(
+            run_id="batch", repository=str(repo), base_sha=base_sha, head_sha=head_sha,
+            task="Detect bug", status="differential", stop_reason="differential",
+            candidates=[mock_result], selected_candidate=mock_result.candidate_index,
+        )
         mock_gen_cls.return_value = instance
 
         exit_code = main([
             "generate-test", "--repo", str(repo), "--base", base_sha, "--head", head_sha,
             "--task", "Detect bug", "--output", str(out_json), "--test-output", str(out_test),
-            "--json",
+            "--json", *(["--auto-target"] if auto_target else []),
         ])
         assert exit_code == 0
         captured_json = capsys.readouterr().out
@@ -220,3 +228,23 @@ def test_cli_generate_test_rejects_symlinks_and_supports_json_export(
         assert data["status"] == "differential"
         assert out_json.is_file()
         assert out_test.read_text(encoding="utf-8") == "def test_fail(): assert False\n"
+
+
+@pytest.mark.parametrize("command,secondary", [("repair", "--patch-output"), ("generate-test", "--test-output")])
+@pytest.mark.parametrize("hardlink", [False, True])
+def test_dual_exports_reject_aliases_before_model(
+    tmp_path: Path, command: str, secondary: str, hardlink: bool,
+) -> None:
+    report = tmp_path / "report"
+    report.write_text("keep")
+    artifact = tmp_path / "artifact" if hardlink else report
+    if hardlink:
+        artifact.hardlink_to(report)
+    with (
+        patch("selfforge_agent.cli.route_providers", side_effect=AssertionError("model routing reached")),
+        pytest.raises(SystemExit) as error,
+    ):
+        main([command, "--repo", str(tmp_path), "--base", "a", "--head", "b", "--task", "test",
+              "--output", str(report), secondary, str(artifact)])
+    assert error.value.code == 2
+    assert report.read_text() == "keep"
