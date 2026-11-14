@@ -640,6 +640,12 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(str(exc))
         manager = CodingWorkspaceManager()
         try:
+            if args.output and args.action in {"remove", "revert", "commit", "pr", "prune"}:
+                # Keep reports outside trees the action may delete or change after evidence checks.
+                affected = (manager.root if args.action == "prune" else
+                            manager.get(args.repo, args.session_id).path)
+                if args.output.expanduser().resolve().is_relative_to(affected.resolve()):
+                    raise ValueError("Mutation reports must be written outside the affected workspace")
             if args.action == "list":
                 if args.session_id:
                     parser.error("workspaces list does not take a session ID")

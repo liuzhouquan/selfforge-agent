@@ -254,3 +254,19 @@ def test_workspaces_rejects_symlinks_directories_and_missing_parents(
     with pytest.raises(SystemExit) as exc:
         main(["workspaces", "list", "--repo", str(repo), "--output", str(missing_parent)])
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("action", ["remove", "revert"])
+def test_workspace_mutation_rejects_report_inside_affected_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str,
+) -> None:
+    repo = _init_repo(tmp_path)
+    root = tmp_path / "worktrees"
+    monkeypatch.setenv("SELFFORGE_WORKSPACES_ROOT", str(root))
+    ws = CodingWorkspaceManager(root).create(repo, "sessreport")
+    with pytest.raises(SystemExit) as error:
+        main(["workspaces", action, "sessreport", "--repo", str(repo),
+              "--output", str(ws.path / "report.json"), "--json"])
+    assert error.value.code == 2
+    assert ws.path.is_dir()
+    assert not (ws.path / "report.json").exists()
