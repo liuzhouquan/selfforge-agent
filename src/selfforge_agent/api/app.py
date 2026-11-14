@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import subprocess
 from pathlib import Path
 from threading import Event
 from typing import Any, Literal
@@ -106,6 +107,89 @@ def _same_origin(request: Request, origin: str) -> bool:
         443 if current.scheme == "https" else 80)
     return (supplied.scheme, supplied.hostname, supplied_port) == (
         current.scheme, current.hostname, current_port)
+
+
+_MAX_REQUEST_BYTES = 2 * 1024 * 1024  # 2MB
+_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
+
+
+def _validate_session_id(session_id: str) -> str:
+    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    return session_id
+
+
+def _validate_repository_dir(repository: str | Path, *, must_be_git: bool = True) -> Path:
+    try:
+        repo = Path(repository).expanduser().resolve()
+        if not repo.is_dir():
+            raise HTTPException(status_code=400, detail="Repository directory does not exist")
+        if must_be_git:
+            if not (repo / ".git").exists():
+                raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
+            result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    text=True, timeout=5, check=False)
+            if result.returncode or Path(result.stdout.strip()).resolve() != repo:
+                raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
+        return repo
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=400, detail="Repository directory does not exist") from exc
+
+
+class _PayloadLimitMiddleware:
+    """Bound actual request bytes before endpoint parsing or side effects."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        lengths = [value for key, value in scope.get("headers", []) if key.lower() == b"content-length"]
+        error = None
+        status = 400
+        if lengths:
+            try:
+                if len(lengths) != 1:
+                    raise ValueError("Multiple Content-Length headers")
+                length = int(lengths[0])
+                if length < 0:
+                    error = "Invalid Content-Length"
+                elif length > _MAX_REQUEST_BYTES:
+                    error, status = "Request body too large", 413
+            except ValueError:
+                error = "Invalid Content-Length header"
+        if error:
+            return await JSONResponse({"detail": error}, status_code=status)(scope, receive, send)
+        chunks = []
+        size = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > _MAX_REQUEST_BYTES:
+                return await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+            if chunk:
+                chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        body = b"".join(chunks)
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        return await self.app(scope, replay, send)
+
+
+app.add_middleware(_PayloadLimitMiddleware)
 
 
 @app.middleware("http")
@@ -273,7 +357,7 @@ class WheelhouseAuditRequest(BaseModel):
     repository: str | None = None
     lock_file: str | None = None
     requirements_file: str | None = None
-    timeout: float = 10.0
+    timeout: float = Field(default=10.0, gt=0, le=300)
 
 
 class DependencyFreshnessRequest(BaseModel):
@@ -408,7 +492,7 @@ def health() -> dict[str, str]:
 @app.get("/api/code/environment")
 def repository_environment(repository: str, client: Request) -> dict:
     _require_local(client)
-    repo = Path(repository).expanduser().resolve()
+    repo = _validate_repository_dir(repository)
     try:
         return detect_repository_environment(repo)
     except (ValueError, OSError) as exc:
@@ -559,6 +643,7 @@ def start_coding_job(request: CodingTaskRequest, client: Request) -> dict:
 def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
                             client: Request) -> dict[str, str]:
     _require_local(client)
+    _validate_session_id(session_id)
     repository = Path(request.repository).expanduser().resolve()
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
@@ -573,7 +658,7 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
 @app.get("/api/code/workspaces/audit", response_model=list[WorkspaceAuditItem])
 def audit_workspaces(repository: str, client: Request, head_ref: str = "HEAD") -> list[dict]:
     _require_local(client)
-    repo = Path(repository).expanduser().resolve()
+    repo = _validate_repository_dir(repository)
     try:
         return _CODING_WORKSPACES.audit(repo, head_ref=head_ref)
     except (ValueError, OSError, WorktreeError) as exc:
@@ -584,7 +669,7 @@ def audit_workspaces(repository: str, client: Request, head_ref: str = "HEAD") -
 @app.post("/api/code/workspaces/prune", response_model=WorkspacePruneResponse)
 def prune_workspaces(request: WorkspacePruneRequest, client: Request) -> dict:
     _require_local(client)
-    repo = Path(request.repository).expanduser().resolve()
+    repo = _validate_repository_dir(request.repository)
     try:
         return _CODING_WORKSPACES.prune(
             repo,
@@ -605,7 +690,9 @@ def audit_workspaces_storage(
     head_ref: str = "HEAD",
 ) -> dict:
     _require_local(client)
-    repo = Path(repository).expanduser().resolve()
+    repo = _validate_repository_dir(repository)
+    if quota_bytes is not None and quota_bytes < 0:
+        raise HTTPException(status_code=400, detail="quota_bytes must be non-negative")
     try:
         manager = _storage_workspace_manager()
         return manager.audit_storage(repo, quota_bytes=quota_bytes, head_ref=head_ref)
@@ -617,6 +704,7 @@ def audit_workspaces_storage(
 def revert_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
                             client: Request) -> RevertResult:
     _require_local(client)
+    _validate_session_id(session_id)
     repository = Path(request.repository).expanduser().resolve()
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
@@ -631,6 +719,7 @@ def revert_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
 @app.get("/api/code/workspaces/{session_id}/diff", response_model=CodingDiffResponse)
 def coding_workspace_diff(session_id: str, repository: str, client: Request) -> dict:
     _require_local(client)
+    _validate_session_id(session_id)
     try:
         workspace = _CODING_WORKSPACES.get(Path(repository).expanduser().resolve(), session_id)
         return workspace_diff(workspace)
@@ -645,6 +734,7 @@ def commit_coding_workspace(
     session_id: str, request: CodingCommitRequest, client: Request
 ) -> CommitResult:
     _require_local(client)
+    _validate_session_id(session_id)
     repository = Path(request.repository).expanduser().resolve()
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
@@ -669,6 +759,7 @@ def create_coding_pr(
     session_id: str, request: CodingPRRequest, client: Request
 ) -> PRResult:
     _require_local(client)
+    _validate_session_id(session_id)
     repository = Path(request.repository).expanduser().resolve()
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
@@ -706,6 +797,7 @@ def code_workspace_validate_regression(
     client: Request,
 ) -> RegressionValidationReport:
     _require_local(client)
+    _validate_session_id(session_id)
     raw_repo = Path(body.repository)
     legacy_roots = (
         (_coding_session_root(raw_repo.resolve()),)
@@ -741,8 +833,7 @@ def code_workspace_get_regression(
     client: Request,
 ) -> RegressionValidationReport:
     _require_local(client)
-    if not re.fullmatch(r"[A-Za-z0-9]{1,64}", session_id):
-        raise HTTPException(status_code=400, detail="Invalid session ID")
+    _validate_session_id(session_id)
     try:
         repo = _CODING_WORKSPACES.validate_repository(Path(repository))
         session_root = _CODING_WORKSPACES.session_root(
@@ -764,14 +855,15 @@ def code_workspace_get_regression(
         return RegressionValidationReport.model_validate(latest)
     except (ValueError, TypeError) as exc:
         raise HTTPException(
-            status_code=500, detail="Corrupted regression validation record"
+            status_code=422, detail="Corrupted regression validation record"
         ) from exc
 
 
 @app.get("/api/code/jobs", response_model=list[CodingJobResponse])
 def coding_jobs(repository: str, client: Request) -> list[dict]:
     _require_local(client)
-    return _CODING_JOBS.list_jobs(Path(repository).expanduser().resolve())
+    repo = _validate_repository_dir(repository, must_be_git=False)
+    return _CODING_JOBS.list_jobs(repo)
 
 
 @app.get("/api/code/jobs/{job_id}", response_model=CodingJobResponse)
