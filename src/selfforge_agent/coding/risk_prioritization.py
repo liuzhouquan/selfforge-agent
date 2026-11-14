@@ -91,6 +91,8 @@ def prioritize_risks(
     top_k: int = 5,
 ) -> list[PrioritizedRisk]:
     """Score and rank added-line risk hypotheses from diff and review findings."""
+    if not isinstance(top_k, int) or top_k < 1 or top_k > 100:
+        raise ValueError("top_k must be an integer between 1 and 100")
     added_lines: dict[tuple[str, int], str] = {}
     for file in context.files:
         if not file.path.endswith(".py"):
