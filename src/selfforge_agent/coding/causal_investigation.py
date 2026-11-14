@@ -12,6 +12,18 @@ from selfforge_agent.models import TestResult
 _TRACEBACK_FRAME = re.compile(r'File\s+"([^"]+)",\s+line\s+(\d+)')
 _PYTEST_LOCATION = re.compile(r'([^\s:]+\.py):(\d+):')
 
+MAX_INVESTIGATION_TEXT_BYTES = 64 * 1024
+MAX_COMBINED_TEXT_BYTES = 128 * 1024
+
+
+def _truncate_text(text: str | None, max_bytes: int = MAX_INVESTIGATION_TEXT_BYTES) -> str:
+    if not text:
+        return ""
+    encoded = text[:max_bytes].encode("utf-8", errors="replace")
+    if len(text) <= max_bytes and len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
 
 class CausalInvestigation(BaseModel):
     target: RiskTarget | None = None
@@ -41,6 +53,13 @@ def investigate_causality(
             confidence="none",
             explanation="No risk target specified for causal investigation",
         )
+    if type(target.line_number) is not int or target.line_number < 1:
+        return CausalInvestigation(
+            target=target,
+            causally_linked=False,
+            confidence="none",
+            explanation=f"Invalid target line number: {target.line_number}",
+        )
     if head_test is None or head_test.status != "failed" or head_test.failed == 0:
         return CausalInvestigation(
             target=target,
@@ -49,13 +68,16 @@ def investigate_causality(
             explanation="Head test did not exhibit assertion or failure regression",
         )
 
-    # Collect failure texts
-    texts = [head_test.stdout, head_test.stderr]
-    for detail in head_test.failure_details:
-        texts.append(detail.message)
-        texts.append(detail.detail)
+    # Collect failure texts with bounded sizing to prevent DoS
+    texts = [_truncate_text(head_test.stdout), _truncate_text(head_test.stderr)]
+    for detail in head_test.failure_details[:50]:
+        texts.append(_truncate_text(detail.message, 4096))
+        texts.append(_truncate_text(detail.detail, 4096))
 
     combined_text = "\n".join(texts)
+    encoded_comb = combined_text.encode("utf-8", errors="replace")
+    if len(encoded_comb) > MAX_COMBINED_TEXT_BYTES:
+        combined_text = encoded_comb[:MAX_COMBINED_TEXT_BYTES].decode("utf-8", errors="ignore")
 
     # Extract stack frames and locations
     frames: list[tuple[str, int]] = []
@@ -76,12 +98,12 @@ def investigate_causality(
     target_name = _normalize_path(target.file_path)
     target_stem = Path(target.file_path).stem
 
-    observed: list[str] = [f"{f}:{l}" for f, l in frames]
+    observed: list[str] = [f"{f}:{l}" for f, l in frames[:100]]
     direct_line_match = False
     module_match = False
     best_line = None
 
-    for frame_file, frame_line in frames:
+    for frame_file, frame_line in frames[:100]:
         frame_path = _normalize_path(frame_file)
         if frame_path == target_name or frame_path.endswith("/" + target_name):
             module_match = True

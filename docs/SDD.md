@@ -126,6 +126,7 @@ flowchart LR
 | 16 | [SF-VERIF-01](#sf-verif-01) | Merged | Codex（审查整合） | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
 | 17 | [SF-ENV-08](#sf-env-08) | In Review | Antigravity | SF-ENV-07（Merged） | [PR #74](https://github.com/liuzhouquan/selfforge-agent/pull/74)：依赖输入与锁文件安全加固：平台条件标记 fail-closed 拒绝、PEP 503 包名规范化与非阻塞/无符链安全读取 |
 | 18 | [SF-EVAL-10](#sf-eval-10) | In Review | Antigravity | SF-EVAL-09（Merged） | [PR #75](https://github.com/liuzhouquan/selfforge-agent/pull/75)：评测执行器与基准测试安全加固：未绑定状态防御、非阻塞常规文件读取、测试拷贝防FIFO阻塞与原子工件安装 |
+| 19 | [SF-TEST-05](#sf-test-05) | In Review | Antigravity | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -849,6 +850,38 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #75 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43580248549（R1 CI） / 无
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：提交 Commit H 并推送到 origin/feat/sf-eval-10，等待 R2 CI 运行完成并确认通过，随后交付。
+```
+
+### SF-TEST-05
+
+**目标：** 在差分测试生成与因果推断执行流中贯彻 fail-closed 与无特权安全隔离准则。在 `test_generation.py` 中引入 `_write_test_artifact`，以 `O_CREAT | O_EXCL | O_NOFOLLOW` 模式原子安装候选测试工件并强校验目录符号链接，严防目标符号链接穿透与文件覆写漏洞；在 `_observation` 中采用 `O_NOFOLLOW | O_NONBLOCK` 非阻塞安全读取常规文件，对符号链接与 FIFO 管道安全跳过，防止进程永久挂起；在 `_parse_test` 中捕获 `(RecursionError, MemoryError, TypeError)` 等畸形异常，严防深层嵌套 AST 导致服务崩溃，并禁止顶层非声明可执行语句以防模块导入时执行恶意副作用；在 `causal_investigation.py` 的 `investigate_causality` 中对不可信测试输出实施有界切片防护（单流 64KB，总长 128KB），并强校验 `target.line_number` 为有限正数；在 `risk_prioritization.py` 中强校验 `top_k` 为合法正整数（1–100），消除负切片漏洞。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/coding/test_generation.py`、`src/selfforge_agent/coding/causal_investigation.py`、`src/selfforge_agent/coding/risk_prioritization.py` 及专项测试 `tests/test_test_generation_safety.py`；保持既有差分评估、模型交互契约与回归测试接口完全兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-TEST-05-A1 | `_write_test_artifact` 及 `DifferentialTestGenerator.run` 安装测试工件时，遇到目标符号链接、已存在文件或逃逸父目录时显式拒绝，并以原子排他方式写盘 | `tests/test_test_generation_safety.py` 测试工件防符链与原子写盘测试 | E1 |
+| SF-TEST-05-A2 | `_parse_test` 解析模型测试代码时受控捕获 `RecursionError`/`MemoryError`/`TypeError`，并显式拒绝顶层非声明可执行语句与无断言函数 | `tests/test_test_generation_safety.py` AST 安全边界与递归防御测试 | E2 |
+| SF-TEST-05-A3 | `_observation` 安全忽略符号链接与 FIFO 特殊文件，不阻塞进程；`investigate_causality` 对超大日志有界切片并在非法行号时安全降级；`prioritize_risks` 校验 `top_k` | `tests/test_test_generation_safety.py` 非阻塞观察与因果推断边界测试 | E3 |
+| SF-TEST-05-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-TEST-05-A1 | `tests/test_test_generation_safety.py::test_write_test_artifact_rejects_symlink_and_existing_files`、`tests/test_test_generation_safety.py::test_write_test_artifact_rejects_escaping_parent_directory`、`tests/test_test_generation_safety.py::test_write_test_artifact_successfully_creates_file` | 本地 `pytest -v tests/test_test_generation_safety.py`；GitHub Actions `Unit tests` | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) |
+| E2 | SF-TEST-05-A2 | `tests/test_test_generation_safety.py::test_parse_test_rejects_top_level_executable_statements`、`tests/test_test_generation_safety.py::test_parse_test_catches_uncontrolled_exceptions_gracefully` | 本地 `pytest -v tests/test_test_generation_safety.py`；GitHub Actions `Unit tests` | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) |
+| E3 | SF-TEST-05-A3 | `tests/test_test_generation_safety.py::test_observation_skips_symlinks_and_fifos`、`tests/test_test_generation_safety.py::test_investigate_causality_bounds_massive_failure_output`、`tests/test_test_generation_safety.py::test_investigate_causality_rejects_invalid_line_number`、`tests/test_test_generation_safety.py::test_prioritize_risks_validates_top_k` | 本地 `pytest -v tests/test_test_generation_safety.py`；GitHub Actions `Unit tests` | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) |
+| E4 | SF-TEST-05-A4 | `tests/test_test_generation_safety.py::test_remaining_budget_rejects_non_finite_deadline` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -q`（789 passed）；GitHub Actions Lint / SDD contract check / Unit tests (789 passed) / Docker integration tests (15 passed) | `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`；passed；CI [Run #43584658362](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) 全绿 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-test-05`；Worktree=`selfforge-sf-test-05`；PR=[#76](https://github.com/liuzhouquan/selfforge-agent/pull/76)；Source=`9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`。实现差分测试生成工件隔离、AST 递归异常防御与有界因果推断（源码提交 `9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e`，[R1 CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362) 全绿）；本状态提交仅更新文档，最终 head `H` CI 待回填。
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-test-05 (worktree: selfforge-sf-test-05) / 已验证源码 9ac02f43bb2fffcb3383a4fbefad2cb70f2f3f9e；后续对账仅文档
+已完成验收与证据 ID：SF-TEST-05-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；已通过 GitHub Actions R1 CI（Lint、SDD 契约、789 个单元测试全绿、15 个 Docker 集成测试全绿）
+PR / 准确 head CI / merge SHA（有则填）：PR #76 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43584658362（R1 CI） / 无
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：提交 Commit H 并推送到 origin/feat/sf-test-05，等待 R2 CI 运行完成并确认通过，随后交付。
 ```
 
 ## 5. 验收追踪与执行记录格式
