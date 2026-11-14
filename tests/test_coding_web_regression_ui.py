@@ -929,3 +929,223 @@ def test_regression_responses_cannot_survive_invalidation(invalidate: str, rejec
     outcome = _run_app_js_scenario(scenario)
     assert outcome['hidden'] is True
     assert outcome['statusUnchanged'] is True
+
+
+def test_web_ui_restores_persisted_regression_report_on_job_render() -> None:
+    scenario = r"""
+    const savedReport = {
+      status: "confirmed",
+      reason: "base_failed_repaired_passed",
+      session_id: "sess_durable",
+      base_sha: "1111222233334444",
+      workspace_sha256: "a".repeat(64),
+      test_sha256: "b".repeat(64),
+      base_result: {
+        status: "failed",
+        exit_code: 1,
+        duration_seconds: 12.5,
+        passed: 0,
+        failed: 1,
+        errors: 0,
+        skipped: 0,
+      },
+      repaired_result: {
+        status: "passed",
+        exit_code: 0,
+        duration_seconds: 10.2,
+        passed: 1,
+        failed: 0,
+        errors: 0,
+        skipped: 0,
+      },
+    };
+
+    let requestedUrl = null;
+    setFetchHandler(async (url) => {
+      if (url.includes("/regression?")) {
+        requestedUrl = url;
+        return {
+          ok: true,
+          status: 200,
+          async json() { return savedReport; },
+        };
+      }
+      return { ok: true, status: 200, async json() { return { files: [], omitted_files: 0 }; } };
+    });
+
+    renderCodingJob({
+      job_id: "job-durable",
+      session_id: "sess_durable",
+      repository: "/repo/demo",
+      workspace_path: "/repo/demo/wt",
+      branch: "selfforge/sess_durable",
+      base_sha: "1111222233334444",
+      sandbox: "docker",
+      state: "completed",
+      answer: "Done fix",
+      steps: 3,
+      tools_used: 2,
+      can_resume: true,
+      verification_passed: true,
+      trace: [],
+    });
+
+    await flushMicrotasks();
+
+    return {
+      requestedUrl,
+      resultHidden: $("coding-regression-result").hidden,
+      resultText: $("coding-regression-result").textContent,
+      statusHidden: $("coding-regression-status").hidden,
+      statusText: $("coding-regression-status").textContent,
+    };
+    """
+    outcome = _run_app_js_scenario(scenario)
+    assert outcome["requestedUrl"] is not None
+    assert "/api/code/workspaces/sess_durable/regression" in str(outcome["requestedUrl"])
+    assert outcome["resultHidden"] is False
+    assert "已确认修复" in str(outcome["resultText"]) or "confirmed" in str(outcome["resultText"])
+    assert "已恢复" in str(outcome["statusText"])
+
+
+def test_web_ui_durable_regression_404_resets_panel_cleanly() -> None:
+    scenario = r"""
+    let requestedUrl = null;
+    setFetchHandler(async (url) => {
+      if (url.includes("/regression?")) {
+        requestedUrl = url;
+        return {
+          ok: false,
+          status: 404,
+          async json() { return { detail: "No regression validation record found" }; },
+        };
+      }
+      return { ok: true, status: 200, async json() { return { files: [], omitted_files: 0 }; } };
+    });
+
+    renderCodingJob({
+      job_id: "job-norec",
+      session_id: "sess_norec",
+      repository: "/repo/demo",
+      workspace_path: "/repo/demo/wt",
+      branch: "selfforge/sess_norec",
+      base_sha: "1111222233334444",
+      sandbox: "docker",
+      state: "unverified",
+      answer: "Done fix",
+      steps: 1,
+      tools_used: 1,
+      can_resume: true,
+      verification_passed: false,
+      trace: [],
+    });
+
+    await flushMicrotasks();
+
+    return {
+      requestedUrl,
+      resultHidden: $("coding-regression-result").hidden,
+      statusHidden: $("coding-regression-status").hidden,
+    };
+    """
+    outcome = _run_app_js_scenario(scenario)
+    assert outcome["requestedUrl"] is not None
+    assert outcome["resultHidden"] is True
+
+
+def test_web_ui_direct_mode_skips_durable_regression_query_and_commit_invalidates() -> None:
+    scenario = r"""
+    const calls = [];
+    setFetchHandler(async (url) => {
+      calls.push(url);
+      if (url.includes("/regression?")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              status: "confirmed",
+              reason: "base_failed_repaired_passed",
+              session_id: "sess_com",
+              base_sha: "1111222233334444",
+              workspace_sha256: "a".repeat(64),
+              test_sha256: "b".repeat(64),
+              base_result: null,
+              repaired_result: null,
+            };
+          },
+        };
+      }
+      if (url.includes("/commit")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              session_id: "sess_com",
+              branch: "selfforge/sess_com",
+              commit_sha: "9999888877776666",
+              message: "test commit",
+              files_committed: ["app.py"],
+            };
+          },
+        };
+      }
+      return { ok: true, status: 200, async json() { return { files: [], omitted_files: 0 }; } };
+    });
+
+    // 1. Direct mode has branch: null -> should NOT call /regression
+    renderCodingJob({
+      job_id: "job-direct",
+      session_id: "sess_direct",
+      repository: "/repo/demo",
+      workspace_path: "/repo/demo",
+      branch: null,
+      base_sha: "1111222233334444",
+      sandbox: "docker",
+      state: "completed",
+      answer: "Done direct",
+      steps: 1,
+      tools_used: 1,
+      can_resume: false,
+      verification_passed: true,
+      trace: [],
+    });
+    await flushMicrotasks();
+    const callsAfterDirect = calls.filter((c) => c.includes("/regression?")).length;
+
+    // 2. Worktree mode with branch -> restores report
+    renderCodingJob({
+      job_id: "job-com",
+      session_id: "sess_com",
+      repository: "/repo/demo",
+      workspace_path: "/repo/demo/wt",
+      branch: "selfforge/sess_com",
+      base_sha: "1111222233334444",
+      sandbox: "docker",
+      state: "completed",
+      answer: "Done com",
+      steps: 1,
+      tools_used: 1,
+      can_resume: true,
+      verification_passed: true,
+      trace: [],
+    });
+    await flushMicrotasks();
+    const resultVisibleBeforeCommit = !$("coding-regression-result").hidden;
+
+    // 3. Submitting commit resets regression panel
+    $("coding-commit-msg").value = "Commit changes";
+    await $("coding-commit-form").dispatchEventAsync({ type: "submit" });
+    const resultHiddenAfterCommit = $("coding-regression-result").hidden;
+
+    return {
+      callsAfterDirect,
+      resultVisibleBeforeCommit,
+      resultHiddenAfterCommit,
+    };
+    """
+    outcome = _run_app_js_scenario(scenario)
+    assert outcome["callsAfterDirect"] == 0
+    assert outcome["resultVisibleBeforeCommit"] is True
+    assert outcome["resultHiddenAfterCommit"] is True

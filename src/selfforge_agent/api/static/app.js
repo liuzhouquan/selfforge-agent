@@ -16,6 +16,7 @@ let codingDiffJobId = null;
 let codingRegressionRunning = false;
 let codingRegressionGeneration = 0;
 let codingRegressionJobId = null;
+let codingRegressionLoaded = false;
 let codingGovernanceBoundRepo = "";
 let codingWsGovGeneration = 0;
 let codingWsGovRunning = false;
@@ -114,6 +115,7 @@ function refreshCodingAvailability() {
 function resetCodingRegressionState(statusMessage = "") {
   codingRegressionGeneration += 1;
   codingRegressionRunning = false;
+  codingRegressionLoaded = false;
   $("coding-regression-result").hidden = true;
   $("coding-regression-result").replaceChildren();
   if (statusMessage) {
@@ -122,6 +124,33 @@ function resetCodingRegressionState(statusMessage = "") {
   } else {
     $("coding-regression-status").textContent = "";
     $("coding-regression-status").hidden = true;
+  }
+}
+
+async function loadDurableRegressionReport(job) {
+  if (!job || !job.branch || !job.session_id || !job.repository) return;
+  const requestJobId = job.job_id;
+  const requestSession = job.session_id;
+  const requestRepo = job.repository;
+  const requestGeneration = ++codingRegressionGeneration;
+  const isCurrent = () => requestGeneration === codingRegressionGeneration &&
+    requestJobId === activeCodingJob && requestSession === currentCodingSession;
+
+  try {
+    const res = await fetch(
+      `/api/code/workspaces/${encodeURIComponent(requestSession)}/regression?repository=${encodeURIComponent(requestRepo)}`
+    );
+    if (!isCurrent()) return;
+    if (res.status === 200) {
+      const report = await res.json();
+      if (!isCurrent()) return;
+      renderCodingRegressionReport(report);
+      const statusEl = $("coding-regression-status");
+      statusEl.textContent = `已恢复持久化回归验证记录：${regressionStatusLabel(report.status)}（独立 Docker 验证结果）。`;
+      statusEl.hidden = false;
+    }
+  } catch (_err) {
+    // Silently ignore network or aborted errors
   }
 }
 
@@ -225,9 +254,14 @@ function renderCodingJob(job) {
   currentCodingSandbox = job.sandbox || "docker";
   currentCodingSandboxRaw = job.sandbox || null;
   codingJobRunning = ["queued", "running"].includes(job.state);
-  if (codingRegressionJobId !== job.job_id) {
+  const jobChanged = codingRegressionJobId !== job.job_id;
+  if (jobChanged) {
     codingRegressionJobId = job.job_id;
     resetCodingRegressionState();
+  }
+  if (job.branch && !codingJobRunning && (jobChanged || !codingRegressionLoaded)) {
+    codingRegressionLoaded = true;
+    loadDurableRegressionReport(job);
   }
   const labels = {
     queued: "等待运行", running: "正在执行", completed: "已验证完成",
@@ -577,6 +611,8 @@ $("coding-commit-form").addEventListener("submit", async (event) => {
     $("coding-commit-status").textContent = `提交成功：${res.commit_sha.slice(0, 10)}（${res.files_committed.length} 个文件）`;
     $("coding-commit-status").hidden = false;
     $("coding-commit-msg").value = "";
+    resetCodingRegressionState();
+    refreshCodingRegressionAvailability();
     loadCodingDiff();
   } catch (err) {
     $("coding-commit-status").textContent = `提交失败：${err.message}`;
