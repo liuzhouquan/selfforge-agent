@@ -129,7 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
-| 22 | [SF-PROV-02](#sf-prov-02) | In Progress | Antigravity | 无 | 模型供应商配置与 HTTP 传输安全加固：SSRF 协议限制与本地文件读取杜绝、CRLF 响应头注入防御、配置读取防符链/FIFO阻塞、进程锁加固 |
+| 22 | [SF-PROV-02](#sf-prov-02) | In Review | Antigravity | 无 | [PR #79](https://github.com/liuzhouquan/selfforge-agent/pull/79)：模型供应商配置与 HTTP 传输安全加固：SSRF 协议限制与本地文件读取杜绝、CRLF 响应头注入防御、配置读取防符链/FIFO阻塞、进程锁加固 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -999,21 +999,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-PROV-02-A1 | `request_json` 强制校验 URL Scheme 为 `https` 或本地回环 `http`，严格拒绝 `file:` 等非安全协议以杜绝本地文件读取与 SSRF 风险；校验 `api_key` 格式杜绝 `\r`、`\n`、`\x00` CRLF 响应头注入；校验 `url` 主机名与端口号（1–65535）有效性 | `tests/test_model_http_security.py` 协议白名单、文件读取阻断、CRLF 注入与 URL 结构测试 | 未验证 |
-| SF-PROV-02-A2 | `request_json` 严格校验 `timeout` 为有限正数且不超过 300 秒（阻断 `NaN`/`inf`/非正数/布尔值绕过），校验 `max_bytes` 为正整数且不超过 16 MiB（拒绝布尔值/浮点数）；在读取流中严格按剩余截止时间与字节预算收敛 | `tests/test_model_http_security.py` 超时与字节上限有界边界测试 | 未验证 |
-| SF-PROV-02-A3 | `providers.py` 的配置读取 `_settings` 采用 `O_RDONLY`、`O_NOFOLLOW`、`O_NONBLOCK` 打开并校验 `S_ISREG`，拒绝符号链接、FIFO 管道与特殊设备，防止进程挂起与符链逃逸，限制单次读取上限 64 KiB；进程锁 `_settings_lock` 与临时写入强制采用 `O_NOFOLLOW` 排他建锁与无符链原子发布 | `tests/test_model_http_security.py` 符号链接、FIFO管道、文件锁与持久化隔离测试 | 未验证 |
-| SF-PROV-02-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证 |
+| SF-PROV-02-A1 | `request_json` 强制校验 URL Scheme 为 `https` 或本地回环 `http`，严格拒绝 `file:` 等非安全协议以杜绝本地文件读取与 SSRF 风险；校验 `api_key` 格式杜绝 `\r`、`\n`、`\x00` CRLF 响应头注入；校验 `url` 主机名与端口号（1–65535）有效性 | `tests/test_model_http_security.py` 协议白名单、文件读取阻断、CRLF 注入与 URL 结构测试 | E1 |
+| SF-PROV-02-A2 | `request_json` 严格校验 `timeout` 为有限正数且不超过 300 秒（阻断 `NaN`/`inf`/非正数/布尔值绕过），校验 `max_bytes` 为正整数且不超过 16 MiB（拒绝布尔值/浮点数）；在读取流中严格按剩余截止时间与字节预算收敛 | `tests/test_model_http_security.py` 超时与字节上限有界边界测试 | E2 |
+| SF-PROV-02-A3 | `providers.py` 的配置读取 `_settings` 采用 `O_RDONLY`、`O_NOFOLLOW`、`O_NONBLOCK` 打开并校验 `S_ISREG`，拒绝符号链接、FIFO 管道与特殊设备，防止进程挂起与符链逃逸，限制单次读取上限 64 KiB；进程锁 `_settings_lock` 与临时写入强制采用 `O_NOFOLLOW` 排他建锁与无符链原子发布 | `tests/test_model_http_security.py` 符号链接、FIFO管道、文件锁与持久化隔离测试 | E3 |
+| SF-PROV-02-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=142032483838dc85458022a843e9803b9bc8bf86；Branch=feat/sf-prov-02；Worktree=selfforge-sf-prov-02。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-PROV-02-A1 | `tests/test_model_http_security.py::test_request_json_rejects_non_http_schemes_and_prevents_file_leak`、`tests/test_model_http_security.py::test_request_json_rejects_crlf_and_null_bytes_in_api_key`、`tests/test_model_http_security.py::test_request_json_validates_url_hostname_and_port`、`tests/test_model_http_security.py::test_validate_base_url_port_and_control_chars` | 本地 `pytest -v tests/test_model_http_security.py` 与 GitHub Actions CI | 源码 SHA `1aa85f67776a3c7d2e985bcf4b37ea8d227abfb9`；passed；CI [R1 43605412502](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43605412502) success |
+| E2 | SF-PROV-02-A2 | `tests/test_model_http_security.py::test_request_json_rejects_invalid_timeout_and_max_bytes` | 本地 `pytest -v tests/test_model_http_security.py` 与 GitHub Actions CI | 源码 SHA `1aa85f67776a3c7d2e985bcf4b37ea8d227abfb9`；passed；CI [R1 43605412502](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43605412502) success |
+| E3 | SF-PROV-02-A3 | `tests/test_model_http_security.py::test_providers_settings_rejects_symlink_and_fifo`、`tests/test_model_http_security.py::test_providers_settings_lock_rejects_symlink`、`tests/test_model_http_security.py::test_providers_save_settings_rejects_symlink_parent` | 本地 `pytest -v tests/test_model_http_security.py` 与 GitHub Actions CI | 源码 SHA `1aa85f67776a3c7d2e985bcf4b37ea8d227abfb9`；passed；CI [R1 43605412502](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43605412502) success |
+| E4 | SF-PROV-02-A4 | `tests/test_model_http_security.py::test_validate_base_url_port_and_control_chars` | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、`pytest -q -m "not integration"` 与 GitHub Actions CI（含 Docker 集成） | 源码 SHA `1aa85f67776a3c7d2e985bcf4b37ea8d227abfb9`；本地 871 passed, 15 deselected；CI [R1 43605412502](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43605412502) success |
+
+执行记录（Owner/状态以上表为准）：Base=`142032483838dc85458022a843e9803b9bc8bf86`；Branch=`feat/sf-prov-02`；Worktree=`selfforge-sf-prov-02`；PR=[#79](https://github.com/liuzhouquan/selfforge-agent/pull/79)。先运行 TDD 红灯复现（8 failed），随后在 model_http.py 与 providers.py 中实现 URL scheme 限制与文件读取杜绝、CRLF 响应头注入防御、配置读取与文件锁防符链/FIFO 阻塞安全加固；在源码提交 `1aa85f67776a3c7d2e985bcf4b37ea8d227abfb9` 通过本地全量 871 项单测与 GitHub Actions CI `Run #43605412502`（含 Docker 集成）；本状态提交仅修改文档。
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：142032483838dc85458022a843e9803b9bc8bf86 / feat/sf-prov-02 (worktree: selfforge-sf-prov-02) / 待提交
-已完成验收与证据 ID：未验证（初始实现完成）
-未完成 / 环境限制 / 未提交内容归属：本分支实现与专项测试完成，全量测试套件通过；待开 PR 与 CI 验证
-PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：142032483838dc85458022a843e9803b9bc8bf86 / feat/sf-prov-02 (worktree: selfforge-sf-prov-02) / 源码 1aa85f67776a3c7d2e985bcf4b37ea8d227abfb9；当前仅文档更新
+已完成验收与证据 ID：SF-PROV-02-A1..A4（E1、E2、E3、E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；对账文档归 Antigravity；真 Docker 完整测试由 CI 验证；不调用外部付费模型
+PR / 准确 head CI / merge SHA（有则填）：PR #79 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43605412502 / 无
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无
-下一步：创建 PR，观察 R1 CI，通过后更新 SDD 为 In Review 并提交 Commit H。
+下一步：等待 PR #79 审查合并，合并后在后续整合或对账中闭合 merge SHA。
 ```
 
 ## 5. 验收追踪与执行记录格式
