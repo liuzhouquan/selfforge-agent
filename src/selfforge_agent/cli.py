@@ -640,7 +640,8 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(str(exc))
         manager = CodingWorkspaceManager()
         try:
-            if args.output and args.action in {"remove", "revert", "commit", "pr", "prune"}:
+            if (args.output and args.action in {"remove", "revert", "commit", "pr", "prune"}
+                    and (args.session_id or args.action == "prune")):
                 # Keep reports outside trees the action may delete or change after evidence checks.
                 affected = (manager.root if args.action == "prune" else
                             manager.get(args.repo, args.session_id).path)

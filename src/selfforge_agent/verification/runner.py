@@ -61,6 +61,8 @@ def _test_target(repository: Path, test_path: str, timeout: float) -> tuple[Path
     target = (repo / test_path).resolve()
     if not target.is_relative_to(repo) or not target.exists():
         raise ValueError("test_path must exist inside the repository")
+    if any(_is_protected(part) for part in target.relative_to(repo).parts):
+        raise ValueError("test_path resolves to a protected path")
     if not (target.is_file() or target.is_dir()):
         raise ValueError("test_path must be a regular file or directory")
     return repo, target

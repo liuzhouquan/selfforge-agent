@@ -103,3 +103,20 @@ def test_read_junit_file_rejects_symlinks_fifos_and_directories(tmp_path: Path) 
         finally:
             fifo_xml.unlink(missing_ok=True)
 
+
+@pytest.mark.parametrize("protected", [".selfforge", ".env", ".env.private"])
+def test_runner_rejects_alias_into_protected_directory(tmp_path: Path, protected: str) -> None:
+    secret = tmp_path / protected
+    secret.mkdir()
+    (secret / "test_secret.py").write_text("def test_secret(): pass\n")
+    (tmp_path / "public").symlink_to(secret, target_is_directory=True)
+    with pytest.raises(ValueError, match="protected"):
+        TestRunner().run(tmp_path, trusted=True, test_path="public/test_secret.py", timeout=5)
+
+
+def test_junit_total_count_is_bounded_across_suites() -> None:
+    evidence = parse_junit(
+        b'<testsuites><testsuite tests="100000"/><testsuite tests="100000"/></testsuites>', False,
+    )
+    assert evidence.error is not None
+    assert evidence.counts["passed"] == 0

@@ -209,12 +209,12 @@ function regressionReasonLabel(reason) {
   })[reason] || reason;
 }
 
-function renderRegressionRunCard(title, summary) {
+function renderRegressionRunCard(title, summary, historical = false) {
   const card = element("div", "coding-regression-card");
   const heading = element("strong", "", title);
   card.append(heading);
   if (!summary) {
-    card.append(element("p", "", "未运行"));
+    card.append(element("p", "", historical ? "历史运行明细不可恢复" : "未运行"));
     return card;
   }
   const exitText = summary.exit_code === null || summary.exit_code === undefined ? "-" : summary.exit_code;
@@ -234,8 +234,8 @@ function renderCodingRegressionReport(report, historical = false) {
   );
   const grid = element("div", "coding-regression-grid");
   grid.append(
-    renderRegressionRunCard("Base 基线快照", report.base_result),
-    renderRegressionRunCard(historical ? "历史工作区快照（需重新验证）" : "当前工作区快照", report.repaired_result),
+    renderRegressionRunCard("Base 基线快照", report.base_result, historical),
+    renderRegressionRunCard(historical ? "历史工作区快照（需重新验证）" : "当前工作区快照", report.repaired_result, historical),
   );
   const hashes = element(
     "p",

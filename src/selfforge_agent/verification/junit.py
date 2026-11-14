@@ -40,6 +40,7 @@ def parse_junit(xml: bytes | None, timed_out: bool) -> JUnitEvidence:
         suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
         if not suites:
             raise ValueError("No testsuite element")
+        total_tests = 0
         for suite in suites:
             # pytest emits flat suites. Do not double-count nested aggregate totals.
             if suite.findall(".//testsuite"):
@@ -49,7 +50,8 @@ def parse_junit(xml: bytes | None, timed_out: bool) -> JUnitEvidence:
             )
             if min(total, failed, errors, skipped) < 0 or failed + errors + skipped > total:
                 raise ValueError("Inconsistent testsuite counts")
-            if max(total, failed, errors, skipped) > MAX_TEST_COUNT:
+            total_tests += total
+            if total_tests > MAX_TEST_COUNT:
                 raise ValueError(f"Test count exceeds maximum limit ({MAX_TEST_COUNT})")
             if ((suite.findall("testcase/failure") and failed == 0)
                     or (suite.findall("testcase/error") and errors == 0)):
