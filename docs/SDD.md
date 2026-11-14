@@ -124,6 +124,7 @@ flowchart LR
 | 14 | [SF-RUN-07](#sf-run-07) | Merged | Codex（审查整合） | 无 | [PR #71](https://github.com/liuzhouquan/selfforge-agent/pull/71)：ToolRegistry 搜索预算上限中断与截断通知、文件读取非普通文件防御（FIFO/目录）与编辑/测试边界防御 |
 | 15 | [SF-WS-08](#sf-ws-08) | Merged | Codex（审查整合） | 无 | [PR #72](https://github.com/liuzhouquan/selfforge-agent/pull/72)：WorkspaceDiff 与 Delivery 安全加固：未跟踪符号链接目录隔离、不可读文件安全回退与未跟踪断链/目录符号链接安全清理 |
 | 16 | [SF-VERIF-01](#sf-verif-01) | Merged | Codex（审查整合） | 无 | [PR #73](https://github.com/liuzhouquan/selfforge-agent/pull/73)：验证执行器与 JUnit 解析安全加固：有限正超时校验、非普通文件（FIFO/设备）与受保护路径防御、深层递归容错与无符链穿透测试工件读取 |
+| 17 | [SF-EVAL-10](#sf-eval-10) | In Progress | Antigravity | SF-EVAL-09（Merged） | 评测执行器与基准测试安全加固：未绑定状态防御、非阻塞常规文件读取、测试拷贝防FIFO阻塞与原子工件安装 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -783,6 +784,31 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #73 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43552476659（最终组合；各源 PR 见审查记录） / af31537e72f39aeccf98fb9149edb51787d4bcaa
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填 PR #73 交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-EVAL-10
+
+**目标：** 在基准测试与评测执行器中贯彻 fail-closed 与防挂起隔离准则。在 `benchmark._run_once` 中强化未绑定会话保护，初始化 `session = None` 与全量度量变量，捕获环境或检出异常并受控映射为 `harness_error:<ExcName>`，杜绝未绑定 `session` 导致的 `UnboundLocalError`；在 `load_suite` 与 `_preflight` 中实施有界非阻塞常规文件安全读取，设定清单文件上限（2MB）与 holdout 上限（1MB），对 FIFO、特殊文件及符号链接坚决拒绝；在 `_verification_copy` 中引入特殊文件忽略过滤器，安全剔除 FIFO 命名管道、套接字与设备节点，杜绝 `copytree` 在外部遗留文件上挂起；在 `_install_holdout` 中通过 `O_CREAT | O_EXCL | O_NOFOLLOW` 实行原子安装并校验目录符号链接，防止测试文件覆写与符链穿透；在 `_tool_trace` 中增加事件字典类型检查，提升遥测安全性。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/runtime/benchmark.py` 及专项测试 `tests/test_benchmark_hardening.py`；不破坏既有评测指标、清单格式与测试执行流程。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-EVAL-10-A1 | `_run_once` 在 `_checkout` 或初始化失败时受控捕获并返回 `harness_error`，不抛出 `UnboundLocalError: session`，度量与成本安全回退 | `tests/test_benchmark_hardening.py` 未初始化检出异常防御测试 | 未验证 |
+| SF-EVAL-10-A2 | `load_suite` 与 `_preflight` 读取清单与 holdout 时，对 FIFO、目录、特殊文件或符号链接 fail-closed 抛出 `ValueError`，且严格限制清单（2MB）与测试（1MB）文件大小 | `tests/test_benchmark_hardening.py` 非阻塞安全读取与上限测试 | 未验证 |
+| SF-EVAL-10-A3 | `_verification_copy` 遇到工作区遗留的 FIFO 等特殊文件时自动安全忽略并完成常规拷贝，不阻塞进程；`_install_holdout` 遇到目标符号链接原子拒绝 | `tests/test_benchmark_hardening.py` 特殊文件防挂起与原子安装测试 | 未验证 |
+| SF-EVAL-10-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | 未验证 |
+
+执行记录（Owner/状态以上表为准）：Base=`68e56fb3ffb61439b00a90a81586d983af33a601`；Branch=`feat/sf-eval-10`；Worktree=`selfforge-sf-eval-10`；PR=-；Source=-。
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：68e56fb3ffb61439b00a90a81586d983af33a601 / feat/sf-eval-10 (worktree: selfforge-sf-eval-10) / 开发中
+已完成验收与证据 ID：待验证（初始开发阶段）
+未完成 / 环境限制 / 未提交内容归属：代码与专项测试已完成，等待提交 Commit S 与 CI 验证
+PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：完成 Commit S 提交并在 GitHub 创建 PR，等待 R1 CI 通过后更新 SDD 为 In Review 并提交 Commit H。
 ```
 
 ## 5. 验收追踪与执行记录格式
