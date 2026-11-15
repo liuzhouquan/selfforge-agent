@@ -129,6 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
+| 22 | [SF-RISK-01](#sf-risk-01) | In Progress | Antigravity | 无 | PR待建：PR风险优先级排序与RiskTarget契约边界加固：上下文与发现类型Fail-Closed校验、扫描深度与代码行有界防御、PrioritizedRisk模式与空字节防御、确定性排序与有效转换 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -988,6 +989,29 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43600944896（最终组合；各源 PR 见审查记录） / 843a3d5d88a08dd1f2b6ab8d1751f89ed30fa543
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填 PR #78 交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动运行付费模型测量。
+```
+
+### SF-RISK-01
+
+**目标：** 在 `selfforge_agent.coding.risk_prioritization` PR 风险优先级排序模块与 `PrioritizedRisk` 契约模型中贯彻 fail-closed、输入防御与资源有界防御。`prioritize_risks` 严格校验 `context` 参数必须为 `PRContext` 实例，拒绝 `None`、字典、字符串等非受控类型（抛出受控 `TypeError`，避免未受控 `AttributeError` 泄漏）；`findings` 参数严格校验必须为 `None` 或 `Finding` 实例列表，拒绝非列表类型及包含非 `Finding` 元素的序列；对 `context.files` 施加最大扫描文件上限（1,000 文件 `MAX_SCAN_FILES`），对全量累积新增代码行施加内存与扫描行数上限（10,000 行 `MAX_ADDED_LINES`），对审查发现施加扫描上限（1,000 条 `MAX_FINDINGS`），阻断超大 PR 或失控 Diff 导致的拒绝服务（DoS）；`PrioritizedRisk` 契约模型严格加固字段长度边界（`file_path <= 500`、`line_number >= 1`、`severity <= 50`、`category <= 100`、`description <= 1000`、`evidence <= 2000`、`rationale <= 500`），禁止任何字符串字段包含空字节 `\0`，强制 `score` 为有限数值（拒绝 `NaN` / `inf`），并在新增行证据超出 2,000 字符时安全截断，确保 `to_risk_target()` 转换为 `RiskTarget` 时绝对安全且不会触发 Pydantic `ValidationError`；保持 `top_k` 严格 fail-closed 校验（1 至 100 整数，拒绝布尔值与非整型），并保持确定性排序规则（按分值降序、文件升序、行号升序、分类升序），以及连续整数排序排名（1..k）。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/coding/risk_prioritization.py` 及专项安全测试 `tests/test_risk_prioritization_security.py`；保持外部调用接口（`PrioritizedRisk`、`prioritize_risks`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-RISK-01-A1 | `prioritize_risks` 严格校验 `context` 为 `PRContext` 实例、`findings` 为 `Finding` 列表或 `None`，非法类型均以 `TypeError` 受控拒绝 | `tests/test_risk_prioritization_security.py` 上下文与审查发现参数类型校验测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-RISK-01-A2 | `PrioritizedRisk` 严格加固字符串长度边界、拒绝空字节 `\0` 与非有限 `score`，确保 `to_risk_target()` 安全转换不抛 `ValidationError` | `tests/test_risk_prioritization_security.py` 模型契约边界、空字节防御、分值有限性与目标转换安全测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-RISK-01-A3 | 对 `context.files`（1,000）、累积新增行（10,000）与发现列表（1,000）施加有界防御，超长行证据安全截断，非 Python 文件与畸形路径安全跳过 | `tests/test_risk_prioritization_security.py` 扫描上限、证据截断与路径防御测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-RISK-01-A4 | `top_k` 严格保持 1–100 整数 fail-closed 校验；排序结果满足确定性决胜规则与连续排名；全量非集成测试与静态检查通过 | `tests/test_risk_prioritization_security.py`、`tests/test_risk_prioritization.py`、`tests/test_test_generation.py` 与静态/单元测试命令 | 未验证（In Progress，代码与测试已就绪） |
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-risk-01 (worktree: selfforge-sf-risk-01) / 开发中
+已完成验收与证据 ID：待验证（A1–A4 对应 E1–E4）
+未完成 / 环境限制 / 未提交内容归属：代码与测试实现完成，正在执行全量回归与 SDD 检查；归属于 Antigravity
+PR / 准确 head CI / merge SHA（有则填）：待开 PR / 待运行 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：运行 check_sdd.py 与全量测试，提交 Commit S 并创建 PR。
 ```
 
 ## 5. 验收追踪与执行记录格式
