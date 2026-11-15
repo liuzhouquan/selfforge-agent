@@ -129,7 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
-| 22 | [SF-CTX-01](#sf-ctx-01) | In Progress | Codex（审查整合） | 无 | 模型上下文管理器与结构化压缩防御加固（`estimate_tokens` / `estimate_message_tokens` / `_recent_interactions` / `ContextManager`） |
+| 22 | [SF-CTX-01](#sf-ctx-01) | In Review | Codex（审查整合） | 无 | [PR #90](https://github.com/liuzhouquan/selfforge-agent/pull/90)：模型上下文管理器与结构化压缩防御加固（`estimate_tokens` / `estimate_message_tokens` / `_recent_interactions` / `ContextManager`） |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1001,19 +1001,26 @@ PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-CTX-01-A1 | `estimate_tokens` 与 `estimate_message_tokens` 输入防御与畸形容错：`None` 返回 0，非 `str`/非 `dict` 抛出 `TypeError`，容错畸形 `tool_calls` 与非 JSON 参数 | `tests/test_context_security.py::test_estimate_tokens_input_validation`、`tests/test_context_security.py::test_estimate_message_tokens_fail_closed` | 未验证（In Progress，代码与测试已就绪） |
-| SF-CTX-01-A2 | `_recent_interactions` 边界安全与空序列防御：缺少 user 指令安全返回 `[]`，阻止 `max()` 空序列异常，非 dict 消息与非法 tool_calls 安全过滤并保持完整配对 | `tests/test_context_security.py::test_recent_interactions_without_user_message_returns_empty`、`tests/test_context_security.py::test_recent_interactions_with_malformed_messages_returns_empty`、`tests/test_context_security.py::test_recent_interactions_invalid_limits` | 未验证（In Progress，代码与测试已就绪） |
-| SF-CTX-01-A3 | `ContextManager` 预算类型守门与有界参数防御：构造函数严格校验 `token_budget` 为 `>= 500` 整数，拒绝 `bool`/`float`/`NaN`；`compact` 严格校验 `messages`、`reserve_tokens` 与 `preserve_recent_turns` | `tests/test_context_security.py::test_context_manager_init_type_defense`、`tests/test_context_security.py::test_context_manager_estimate_input_defense`、`tests/test_context_security.py::test_context_manager_compact_input_defense` | 未验证（In Progress，代码与测试已就绪） |
-| SF-CTX-01-A4 | 紧凑预算迭代减半与历史摘要结构化保护：压缩过程中允许摘要上限减半直至 0，消除 `allowed > 50` 截断盲区；旧摘要前缀合并去重，保护系统指令与全部用户任务 | `tests/test_context_security.py::test_compact_iterative_halving_under_tight_budget`、`tests/test_context_security.py::test_compact_handles_malformed_intermediate_messages`、`tests/test_context.py::test_compaction_keeps_every_user_instruction_across_resume` | 未验证（In Progress，代码与测试已就绪） |
+| SF-CTX-01-A1 | `estimate_tokens` 与 `estimate_message_tokens` 输入防御与畸形容错：`None` 返回 0，非 `str`/非 `dict` 抛出 `TypeError`，容错畸形 `tool_calls` 与非 JSON 参数 | `tests/test_context_security.py::test_estimate_tokens_input_validation`、`tests/test_context_security.py::test_estimate_message_tokens_fail_closed` | E1 |
+| SF-CTX-01-A2 | `_recent_interactions` 边界安全与空序列防御：缺少 user 指令安全返回 `[]`，阻止 `max()` 空序列异常，非 dict 消息与非法 tool_calls 安全过滤并保持完整配对 | `tests/test_context_security.py::test_recent_interactions_without_user_message_returns_empty`、`tests/test_context_security.py::test_recent_interactions_with_malformed_messages_returns_empty`、`tests/test_context_security.py::test_recent_interactions_invalid_limits` | E2 |
+| SF-CTX-01-A3 | `ContextManager` 预算类型守门与有界参数防御：构造函数严格校验 `token_budget` 为 `>= 500` 整数，拒绝 `bool`/`float`/`NaN`；`compact` 严格校验 `messages`、`reserve_tokens` 与 `preserve_recent_turns` | `tests/test_context_security.py::test_context_manager_init_type_defense`、`tests/test_context_security.py::test_context_manager_estimate_input_defense`、`tests/test_context_security.py::test_context_manager_compact_input_defense` | E3 |
+| SF-CTX-01-A4 | 紧凑预算迭代减半与历史摘要结构化保护：压缩过程中允许摘要上限减半直至 0，消除 `allowed > 50` 截断盲区；旧摘要前缀合并去重，保护系统指令与全部用户任务 | `tests/test_context_security.py::test_compact_iterative_halving_under_tight_budget`、`tests/test_context_security.py::test_compact_handles_malformed_intermediate_messages`、`tests/test_context.py::test_compaction_keeps_every_user_instruction_across_resume` | E4 |
+
+| 记录 | 验收 ID | 验证代码节点 / 检查项 | 命令 / 证据源 | 验证结果 / 提交 SHA |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CTX-01-A1 | `tests/test_context_security.py::test_estimate_tokens_input_validation`、`tests/test_context_security.py::test_estimate_message_tokens_fail_closed` | `pytest -v tests/test_context_security.py`；GitHub Actions CI `Unit tests` | `b948f3b0948fd41e1b68ac3087c491715fc9373f`；passed；CI [R1 43738473135](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43738473135) |
+| E2 | SF-CTX-01-A2 | `tests/test_context_security.py::test_recent_interactions_without_user_message_returns_empty`、`tests/test_context_security.py::test_recent_interactions_with_malformed_messages_returns_empty`、`tests/test_context_security.py::test_recent_interactions_invalid_limits` | `pytest -v tests/test_context_security.py`；GitHub Actions CI `Unit tests` | `b948f3b0948fd41e1b68ac3087c491715fc9373f`；passed；CI [R1 43738473135](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43738473135) |
+| E3 | SF-CTX-01-A3 | `tests/test_context_security.py::test_context_manager_init_type_defense`、`tests/test_context_security.py::test_context_manager_estimate_input_defense`、`tests/test_context_security.py::test_context_manager_compact_input_defense` | `pytest -v tests/test_context_security.py`；GitHub Actions CI `Unit tests` | `b948f3b0948fd41e1b68ac3087c491715fc9373f`；passed；CI [R1 43738473135](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43738473135) |
+| E4 | SF-CTX-01-A4 | `tests/test_context_security.py::test_compact_iterative_halving_under_tight_budget`、`tests/test_context_security.py::test_compact_handles_malformed_intermediate_messages`、`tests/test_context.py::test_compaction_keeps_every_user_instruction_across_resume` | `pytest -v tests/test_context_security.py tests/test_context.py`；GitHub Actions CI `Unit tests` | `b948f3b0948fd41e1b68ac3087c491715fc9373f`；passed；CI [R1 43738473135](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43738473135) |
 
 ```text
-Owner / 状态：Codex（审查整合） / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-ctx-01 (worktree: selfforge-sf-ctx-01) / 待提交
-已完成验收与证据 ID：未验证（待提交后形成 Commit S）
-未完成 / 环境限制 / 未提交内容归属：代码与测试已就绪，等待提交与 CI 验证
-PR / 准确 head CI / merge SHA（有则填）：待开 PR / 待执行 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：提交 Commit S 并开启 PR #90，等待 R1 CI 通过。
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-ctx-01 (worktree: selfforge-sf-ctx-01) / b948f3b0948fd41e1b68ac3087c491715fc9373f
+已完成验收与证据 ID：SF-CTX-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码与安全加固已提交；真实 CI 全量通过；无模型密钥依赖
+PR / 准确 head CI / merge SHA（有则填）：PR #90 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43738473135 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；等待 PR 审查与合并
+下一步：监控 R2 CI 并在合并后回填 merge SHA 与对账记录。
 ```
 
 ## 5. 验收追踪与执行记录格式
