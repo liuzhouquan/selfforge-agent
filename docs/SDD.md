@@ -129,6 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
+| 22 | [SF-MODEL-01](#sf-model-01) | In Progress | Antigravity | 无 | 编码模型客户端安全加固：有限正超时校验、Base URL与凭据防御、输入观测类型与有界负载防御、Markdown代码块剥离与CodeEdit边界校验 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -988,6 +989,29 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43600944896（最终组合；各源 PR 见审查记录） / 843a3d5d88a08dd1f2b6ab8d1751f89ed30fa543
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填 PR #78 交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动运行付费模型测量。
+```
+
+### SF-MODEL-01
+
+**目标：** 在 `selfforge_agent.coding.model_client` 编码模型客户端中贯彻 fail-closed、输入防御与资源有界防御。`OpenAICompatibleCodingModel` 与 `FallbackCodingModel` 对 `timeout` 强校验有限正数（阻断 `NaN`/`inf`/`<=0`/`bool`/非数值类型）；`base_url` 严格校验方案（仅允许 HTTPS 或本地 HTTP `localhost`/`127.0.0.1`/`::1`），拒绝凭据（username/password）、查询参数（query）与片段（fragment），非法或空远程 API key fail-closed 报错；`propose` 严格防御不可信输入，校验 `observation` 必须为 `RepairObservation` 实例（阻断非预期对象/字典/畸形输入），并对观测序列化有效负载施加尺寸上限（最大 2 MiB `MAX_OBSERVATION_PAYLOAD_BYTES`），防范超限有效负载引发内存与网络 DoS；模型输出解析捕获截断状态（`finish_reason="length"`）并映射为受控 `ModelError`，自动容错 LLM 返回的 Markdown 代码块（````json ... ````）清洗提取有效 JSON；对解析出的 `CodeEdit` 施加严格边界校验：`path` 拒绝空字节 `\0`、绝对路径与 `..` 路径穿越分段且限制长度（<=1024 字符 `MAX_PATH_CHARS`），`old_text`、`new_text`（<=1,000,000 字符 `MAX_TEXT_CHARS`）与 `rationale`（<=100,000 字符 `MAX_RATIONALE_CHARS`）施加有界长度约束；异常统一映射为受控 `ModelError`，绝不泄露未受控 500/异常。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/coding/model_client.py` 及专项安全测试 `tests/test_coding_model_client_security.py`；保持外部调用接口（`OpenAICompatibleCodingModel`、`FallbackCodingModel`、`CodingModel`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-MODEL-01-A1 | `OpenAICompatibleCodingModel` 与 `FallbackCodingModel` 对 `timeout` 强校验有限正数（阻断 `NaN`/`inf`/`<=0`/`bool`/非数值类型）；`base_url` 严格校验方案（仅允许 HTTPS 或本地 HTTP `localhost`/`127.0.0.1`/`::1`），拒绝凭据（username/password）、查询参数（query）与片段（fragment），非法或空远程 API key fail-closed 报错 | `tests/test_coding_model_client_security.py` 超时校验、Base URL 凭据与远程密钥校验测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-MODEL-01-A2 | `propose` 严格防御不可信输入，校验 `observation` 必须为 `RepairObservation` 实例（阻断非预期对象/字典/畸形输入）；对观测序列化有效负载施加尺寸上限（最大 2 MiB），防止超限有效负载引发内存与网络 DoS | `tests/test_coding_model_client_security.py` 观测输入类型校验与有界有效负载测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-MODEL-01-A3 | 对模型响应截断状态（`finish_reason="length"`）显式映射为受控 `ModelError`；容错 LLM 返回的 Markdown 代码块（````json ... ````），自动剥离标记提取有效 JSON；对非字典、缺失 choice/message 以及畸形输出统一映射为受控 `ModelError`，绝不泄露未受控 500/异常 | `tests/test_coding_model_client_security.py` 截断响应、Markdown 代码块清洗与畸形输出映射测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-MODEL-01-A4 | 对解析出的 `CodeEdit` 施加严格边界校验：`path` 拒绝空字节 `\0`、绝对路径与 `..` 路径穿越分段且限制长度（<=1024 字符）；`old_text`、`new_text`、`rationale` 施加长度约束；静态检查 `ruff check .`、文档检查 `scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_coding_model_client_security.py`、`tests/test_repair_agent.py` 与全套静态/单元测试命令 | 未验证（In Progress，代码与测试已就绪） |
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-model-01 (worktree: selfforge-sf-model-01) / 开发中
+已完成验收与证据 ID：待验证（A1–A4 对应 E1–E4）
+未完成 / 环境限制 / 未提交内容归属：代码与测试实现完成，正在执行全量回归与 SDD 检查；归属于 Antigravity
+PR / 准确 head CI / merge SHA（有则填）：待开 PR / 待运行 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：运行 check_sdd.py 与全量测试，提交 Commit S 并创建 PR。
 ```
 
 ## 5. 验收追踪与执行记录格式
