@@ -1,9 +1,17 @@
 """Small deterministic review baseline, deliberately labeled heuristic."""
 
+from __future__ import annotations
+
 import re
 from typing import Protocol
 
 from selfforge_agent.models import ChangeKind, Finding, PRContext, VerificationStatus
+
+MAX_REVIEW_FILES = 200
+MAX_FILE_HUNKS = 500
+MAX_LINE_LENGTH = 10_000
+MAX_BASELINE_FINDINGS = 500
+MAX_LINE_NUMBER = 10_000_000
 
 
 class ReviewAgent(Protocol):
@@ -30,14 +38,28 @@ _PATTERNS = (
 
 class BaselineReviewer:
     def review(self, context: PRContext) -> list[Finding]:
+        if not isinstance(context, PRContext):
+            raise TypeError("context must be a valid PRContext instance")
+
         findings: list[Finding] = []
-        for changed in context.files:
-            for hunk in changed.hunks:
+        seen: set[tuple[str, int, str]] = set()
+
+        for changed in context.files[:MAX_REVIEW_FILES]:
+            for hunk in changed.hunks[:MAX_FILE_HUNKS]:
                 for line in hunk.lines:
                     if line.kind != ChangeKind.added or line.new_line is None:
                         continue
+                    if not (1 <= line.new_line <= MAX_LINE_NUMBER):
+                        continue
+
+                    # Bounded content for regex matching and evidence representation
+                    content = line.content[:MAX_LINE_LENGTH]
                     for pattern, severity, category, description in _PATTERNS:
-                        if pattern.search(line.content):
+                        if pattern.search(content):
+                            key = (changed.path, line.new_line, category)
+                            if key in seen:
+                                continue
+                            seen.add(key)
                             findings.append(
                                 Finding(
                                     file_path=changed.path,
@@ -45,8 +67,10 @@ class BaselineReviewer:
                                     severity=severity,
                                     category=category,
                                     description=description,
-                                    evidence=line.content.strip(),
+                                    evidence=content.strip() or "<blank added line>",
                                     verification_status=VerificationStatus.suspected,
                                 )
                             )
+                            if len(findings) >= MAX_BASELINE_FINDINGS:
+                                return findings
         return findings

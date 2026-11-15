@@ -129,6 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
+| 22 | [SF-REV-01](#sf-rev-01) | In Progress | Antigravity | 无 | 代码审查引擎安全加固：规则基线有界防御、模型审查输入/输出防御与执行隔离 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -988,6 +989,29 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43600944896（最终组合；各源 PR 见审查记录） / 843a3d5d88a08dd1f2b6ab8d1751f89ed30fa543
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填 PR #78 交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动运行付费模型测量。
+```
+
+### SF-REV-01
+
+**目标：** 在 `selfforge_agent.review` 与 `selfforge_agent.service` 中贯彻 fail-closed、输入防御与资源有界防御。`BaselineReviewer` 严格校验 `PRContext` 类型，对扫描文件数（最大 200）、单文件 hunk 数（最大 500）、行内容长度（最大 10,000 字符）与总 findings 数量（最大 500）施加有界防御，避免超大 diff 或超长行导致正则回溯与内存溢出；对 `line.new_line` 数值施加合法正整数校验（1 至 10,000,000），对空空白行安全提供 `"<blank added line>"` 兜底 evidence 以免破坏 `Finding` 校验，并对重复 findings 自动去重；`ProviderReviewer` 严格校验 `provider` 配置（非空 API Key、合法 HTTP/HTTPS base_url）与 `timeout` 有限正数（排除 `NaN`/`inf`/非正数/布尔绕过），收集 prompt 代码时限制最大文件数（100）、最大行数（200）与单行字符上限（1000），深度防御模型返回 JSON 的 findings 数量（最大 8）与属性约束，并将返回文件/行号严格限定在 diff 的真实 `added` 行集合内；`ReviewService` 强制校验有限正超时、防止 `test_path` 路径穿越与控制字符注入，并受控记录审查异常至 `report.errors`。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/review/baseline.py`、`src/selfforge_agent/review/deepseek.py`、`src/selfforge_agent/service.py` 及专项测试 `tests/test_review_engine_security.py`；保持外部调用接口（`BaselineReviewer.review`、`ProviderReviewer.review`、`ProviderReviewer.review_with_usage`、`ReviewService.review`、`ReviewService.review_context`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-REV-01-A1 | `BaselineReviewer` 传入非法 `context` 时抛出受控 `TypeError`，扫描时对文件数（200）、hunk 数（500）、单行字符（10,000）与 findings 上限（500）施加有界截断，杜绝 DoS | `tests/test_review_engine_security.py` 规则基线输入类型与有界扫描测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-REV-01-A2 | `BaselineReviewer` 针对空白新增行安全兜底生成非空 evidence（`"<blank added line>"`），对合法行号（1 至 10,000,000）执行校验，并对相同 `(file_path, line_number, category)` 自动去重 | `tests/test_review_engine_security.py` 空白行兜底与重复结果去重测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-REV-01-A3 | `ProviderReviewer` 构造时严格校验有效 Provider 配置与有限正超时（拦截 `NaN`/`inf`/布尔等绕过），Prompt 收集时对文件数、行数与单行长度有界截断，对模型返回结果强制执行属性有界校验、上限约束（最多 8 项）与 diff `added` 行严格归属校验 | `tests/test_review_engine_security.py` 模型审查配置校验、输入有界与输出白名单防御测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-REV-01-A4 | `ReviewService` 强制校验有限正超时、阻断 `test_path` 路径穿越段与控制字符，受控记录审查器异常至 `report.errors`；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_review_engine_security.py`、`tests/test_git_review.py` 与全套静态/单元测试命令 | 未验证（In Progress，代码与测试已就绪） |
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-rev-01 (worktree: selfforge-sf-rev-01) / 14203249e58444780422567ce98606217ea1ba36
+已完成验收与证据 ID：代码与专项测试已就绪，待提交与 CI 验证
+未完成 / 环境限制 / 未提交内容归属：等待提交 Commit S 并开启 PR 运行 CI
+PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：提交 Commit S 并推送远端，开启 PR 运行 R1 CI。
 ```
 
 ## 5. 验收追踪与执行记录格式
