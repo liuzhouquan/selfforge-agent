@@ -129,6 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
+| 22 | [SF-GH-01](#sf-gh-01) | In Progress | Antigravity | 无 | GitHub PR 抓取与检出安全加固：URL 严格正则与选项防注入、变更文件路径防穿越与状态规范化、工作区软链接防御、命令输出有界防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -988,6 +989,29 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43600944896（最终组合；各源 PR 见审查记录） / 843a3d5d88a08dd1f2b6ab8d1751f89ed30fa543
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填 PR #78 交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动运行付费模型测量。
+```
+
+### SF-GH-01
+
+**目标：** 在 GitHub PR 读取与检出集成模块（`src/selfforge_agent/integrations/github_pr.py`）中贯彻输入防御（Fail-Closed）、跨层规范化与未受控异常收敛原则。严格校验 `parse_pr_url` 中的 owner 与 repository 命名规则，杜绝连字符开头（防范 `gh repo clone` 选项注入）、点路径穿越（`..` / `.` 阻断 API 路径穿越）与非法字符；在 `load_pr` 中对变更文件路径执行路径穿越（`..`）、绝对路径及控制字符/空字符校验，并将文件状态严格映射并收敛至有效 Git 状态代码集合（`{"A", "D", "M", "R", "C"}`）；在 `checkout_pr` 中对 `workspace_root` 强制执行常规目录与符号链接排斥检查，杜绝符号链接根目录逃逸；在 `_run` 与 `_api` 中增加有限超时与最大 10 MiB 命令输出有界防御，并拦截以 `-` 开头的非法 API 端点。
+
+**范围/入口：** 改动 `src/selfforge_agent/integrations/github_pr.py` 并新增专项测试 `tests/test_github_pr_security.py`；保持与既有调用方（`app.py`、`test_github_web.py`）向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-GH-01-A1 | `parse_pr_url` 严格校验 GitHub PR URL 结构、owner 与 repository 格式（排斥连字符前缀、路径穿越点及控制字符），校验 PR 编号为正整数；遇到非法输入 fail-closed 抛出 `GitHubPRError` | `tests/test_github_pr_security.py` URL 结构、选项防注入与格式防御测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-GH-01-A2 | `load_pr` 严格校验变更文件路径，排斥绝对路径、路径穿越（`..`）与控制字符；将变更文件状态严格收敛至标准代码（`A`/`D`/`M`/`R`/`C`）并拒绝非法状态；排斥畸形或缺失字段的元数据 | `tests/test_github_pr_security.py` 文件路径防穿越、状态收敛与元数据防御测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-GH-01-A3 | `checkout_pr` 强制校验 `workspace_root` 为已存在非符号链接目录（拒绝符号链接逃逸或非目录），确保目标检出路径不发生预占冲突与符号链接越权；失败清理不跟随符号链接 | `tests/test_github_pr_security.py` 工作区根目录符号链接与常规文件隔离测试 | 未验证（In Progress，代码与测试已就绪） |
+| SF-GH-01-A4 | `_run` 校验有限正超时并限制最大命令输出不超过 10 MiB；`_api` 拦截选项注入端点；本地全量测试与静态检查全部通过 | `tests/test_github_pr_security.py` 命令有界防御测试，本地命令矩阵与 CI | 未验证（In Progress，代码与测试已就绪） |
+
+```text
+Owner / 状态：Antigravity / In Progress
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-gh-01 (worktree: selfforge-sf-gh-01) / 源码与专项测试就绪，准备提交 Commit S
+已完成验收与证据 ID：A1–A4 待 Commit S 生成与 R1 CI 验证后回填 E1–E4
+未完成 / 环境限制 / 未提交内容归属：正在本地验证全量测试套件
+PR / 准确 head CI / merge SHA（有则填）：无（待创建 PR）
+仍在运行的本任务进程或 CI（无则写无）：本地测试运行中
+下一步：提交 Commit S 并推送远端分支，创建 PR 并监控 R1 CI。
 ```
 
 ## 5. 验收追踪与执行记录格式
