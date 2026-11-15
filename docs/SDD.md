@@ -129,7 +129,7 @@ flowchart LR
 | 19 | [SF-TEST-05](#sf-test-05) | Merged | Codex（审查整合） | SF-TEST-04（Merged） | [PR #76](https://github.com/liuzhouquan/selfforge-agent/pull/76)：差分测试生成与因果推断安全加固：测试工件原子写盘防符链穿透、AST 深层递归与畸形异常防御、观察读取防 FIFO 挂起与有界因果推断日志防御 |
 | 20 | [SF-API-01](#sf-api-01) | Merged | Codex（审查整合） | 无 | [PR #77](https://github.com/liuzhouquan/selfforge-agent/pull/77)：Web Coding API 与会话管理安全加固：请求体大小防御（413）、会话 ID 路径穿越防御、DurableCancel 防符链与有界作业记录读取 |
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
-| 22 | [SF-CTRL-01](#sf-ctrl-01) | In Progress | Antigravity | 无 | 运行时控制流与瞬态指导安全加固：工具循环检测防御、编辑失败循环防护、上下文压力评估与预算通知有界防御 |
+| 22 | [SF-CTRL-01](#sf-ctrl-01) | In Review | Antigravity | 无 | [PR #85](https://github.com/liuzhouquan/selfforge-agent/pull/85)：运行时控制流与瞬态指导安全加固：工具循环检测防御、编辑失败循环防护、上下文压力评估与预算通知有界防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -999,19 +999,26 @@ PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-CTRL-01-A1 | `_canonical_args` 传入超大字符串（>64 KiB）、含空字节/控制字符或深层嵌套递归结构时，安全截断与受控容错，阻断 DoS 与解析崩溃 | `tests/test_runtime_control_security.py` 工具参数有界截断、字符清洗与递归容错测试 | 未验证（In Progress，代码与测试已就绪） |
-| SF-CTRL-01-A2 | `detect_tool_loop` 传入非列表/非字典元素或非法重复阈值（`bool`/非正数）时安全受控，对大历史施加 1,000 条有界扫描并忽略畸形工具调用 | `tests/test_runtime_control_security.py` 工具循环检测输入类型、阈值容错与有界扫描测试 | 未验证（In Progress，代码与测试已就绪） |
-| SF-CTRL-01-A3 | `detect_edit_failure_loop` 规范化编辑路径穿越分段（折叠 `foo/../app.py` 与 `./app.py`）、过滤空字节路径并对跟踪路径数（256）施加有界约束 | `tests/test_runtime_control_security.py` 编辑失败路径规范化、空字节过滤与状态有界测试 | 未验证（In Progress，代码与测试已就绪） |
-| SF-CTRL-01-A4 | `evaluate_context_pressure` 严格校验非负整数与合法水位；`budget_notice` 校验有限非负秒数（排除 `NaN`/`inf`/布尔绕过）并对路径/工具名有界截断；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_runtime_control_security.py`、`tests/test_runtime_budget.py` 与全套静态/单元测试命令 | 未验证（In Progress，代码与测试已就绪） |
+| SF-CTRL-01-A1 | `_canonical_args` 传入超大字符串（>64 KiB）、含空字节/控制字符或深层嵌套递归结构时，安全截断与受控容错，阻断 DoS 与解析崩溃 | `tests/test_runtime_control_security.py` 工具参数有界截断、字符清洗与递归容错测试 | E1 |
+| SF-CTRL-01-A2 | `detect_tool_loop` 传入非列表/非字典元素或非法重复阈值（`bool`/非正数）时安全受控，对大历史施加 1,000 条有界扫描并忽略畸形工具调用 | `tests/test_runtime_control_security.py` 工具循环检测输入类型、阈值容错与有界扫描测试 | E2 |
+| SF-CTRL-01-A3 | `detect_edit_failure_loop` 规范化编辑路径穿越分段（折叠 `foo/../app.py` 与 `./app.py`）、过滤空字节路径并对跟踪路径数（256）施加有界约束 | `tests/test_runtime_control_security.py` 编辑失败路径规范化、空字节过滤与状态有界测试 | E3 |
+| SF-CTRL-01-A4 | `evaluate_context_pressure` 严格校验非负整数与合法水位；`budget_notice` 校验有限非负秒数（排除 `NaN`/`inf`/布尔绕过）并对路径/工具名有界截断；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_runtime_control_security.py`、`tests/test_runtime_budget.py` 与全套静态/单元测试命令 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CTRL-01-A1 | `tests/test_runtime_control_security.py::test_canonical_args_defense` | 本地 `pytest -v tests/test_runtime_control_security.py`；GitHub Actions CI `Unit tests` | `5a420854af2421f953f2179750c5926ad34a3b15`；passed；CI [R1 43670652358](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43670652358) |
+| E2 | SF-CTRL-01-A2 | `tests/test_runtime_control_security.py::test_detect_tool_loop_defense`、`tests/test_runtime_tool_loop.py::test_detect_tool_loop_identical_consecutive_calls` | 本地 `pytest -v tests/test_runtime_control_security.py`；GitHub Actions CI `Unit tests` | `5a420854af2421f953f2179750c5926ad34a3b15`；passed；CI [R1 43670652358](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43670652358) |
+| E3 | SF-CTRL-01-A3 | `tests/test_runtime_control_security.py::test_detect_edit_failure_loop_defense`、`tests/test_runtime_edit_guidance.py::test_detect_edit_failure_loop_triggers_after_consecutive_failures` | 本地 `pytest -v tests/test_runtime_control_security.py`；GitHub Actions CI `Unit tests` | `5a420854af2421f953f2179750c5926ad34a3b15`；passed；CI [R1 43670652358](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43670652358) |
+| E4 | SF-CTRL-01-A4 | `tests/test_runtime_control_security.py::test_evaluate_context_pressure_defense`、`tests/test_runtime_control_security.py::test_budget_notice_defense`、`tests/test_runtime_budget.py::*`、`tests/test_runtime_token_guidance.py::*` | 本地 `pytest -v`、`ruff check .`、`python scripts/check_sdd.py`；GitHub Actions CI `Unit tests` 与 `Docker integration tests` | `5a420854af2421f953f2179750c5926ad34a3b15`；passed；CI [R1 43670652358](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43670652358) |
 
 ```text
-Owner / 状态：Antigravity / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-ctrl-01 (worktree: selfforge-sf-ctrl-01) / 14203249e58444780422567ce98606217ea1ba36
-已完成验收与证据 ID：代码与专项测试已就绪，待提交与 CI 验证
-未完成 / 环境限制 / 未提交内容归属：等待提交 Commit S 并开启 PR 运行 CI
-PR / 准确 head CI / merge SHA（有则填）：无 / 无 / 无
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-ctrl-01 (worktree: selfforge-sf-ctrl-01) / 5a420854af2421f953f2179750c5926ad34a3b15
+已完成验收与证据 ID：SF-CTRL-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；测试全绿，R1 CI 通过
+PR / 准确 head CI / merge SHA（有则填）：PR #85 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43670652358 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
-下一步：提交 Commit S 并推送远端，开启 PR 运行 R1 CI。
+下一步：等待审查与合并 PR #85。
 ```
 
 ## 5. 验收追踪与执行记录格式
