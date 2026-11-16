@@ -1,15 +1,94 @@
 """Small bounded JSON HTTP transport for configured model providers."""
 
+from __future__ import annotations
+
+import ipaddress
 import json
+import math
 from time import monotonic
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class ProviderHTTPError(ValueError):
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def _validate_model_url(url: str) -> None:
+    if not isinstance(url, str) or not url.strip() or "\x00" in url:
+        raise ValueError("Invalid URL: must be a non-empty string without null bytes")
+    if any(char.isspace() for char in url):
+        raise ValueError("Invalid URL: must not contain whitespace")
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid URL structure: {exc}") from exc
+    if not parts.scheme:
+        raise ValueError("Invalid URL: missing scheme")
+    if parts.scheme not in {"https", "http"}:
+        raise ValueError(f"Disallowed scheme {parts.scheme!r}; must be HTTPS or loopback HTTP")
+    if not parts.hostname:
+        raise ValueError("Invalid URL: missing hostname")
+    if parts.username or parts.password:
+        raise ValueError("Invalid URL: credentials in URL are not allowed")
+
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid URL port: {exc}") from exc
+    if port is not None and (port < 1 or port > 65535):
+        raise ValueError(f"Invalid URL port {port}; must be between 1 and 65535")
+
+    if parts.scheme == "http":
+        try:
+            is_loopback = ipaddress.ip_address(parts.hostname).is_loopback
+        except ValueError:
+            is_loopback = parts.hostname in {"localhost", "localhost.localdomain"}
+        if not is_loopback:
+            raise ValueError("HTTP scheme is only permitted for localhost/loopback addresses")
+
+
+def _validate_api_key(api_key: str) -> None:
+    if not isinstance(api_key, str):
+        raise TypeError("API key must be a string")
+    if any(c in api_key for c in ("\r", "\n", "\x00")):
+        raise ValueError("API key must not contain newline, carriage return, or null bytes")
+    if len(api_key) > 4096:
+        raise ValueError("API key exceeds maximum length of 4096 characters")
+
+
+class _RestrictedRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_model_url(newurl)
+        old, new = urlsplit(req.full_url), urlsplit(newurl)
+        def origin(parts):
+            return (parts.scheme, parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+        if origin(old) != origin(new):
+            raise ProviderHTTPError("Cross-origin provider redirect is not allowed")
+        deadline = getattr(req, "_provider_deadline", None)
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise ProviderHTTPError("Provider redirect timed out")
+            # urllib's redirect dispatcher opens the next request using req.timeout.
+            req.timeout = remaining
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and deadline is not None:
+            redirected._provider_deadline = deadline
+        return redirected
+
+
+_OPENER = build_opener(_RestrictedRedirectHandler())
+
+
+def _safe_urlopen(request: Request, timeout: float):
+    return _OPENER.open(request, timeout=timeout)
+
+
+urlopen = _safe_urlopen
 
 
 def request_json(
@@ -20,8 +99,15 @@ def request_json(
     timeout: float = 20,
     max_bytes: int = 131_072,
 ) -> dict[str, object]:
-    if timeout <= 0 or max_bytes <= 0:
-        raise ValueError("A positive timeout and response limit are required")
+    _validate_model_url(url)
+    _validate_api_key(api_key)
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or timeout <= 0 or timeout > 300 or not math.isfinite(timeout)):
+        raise ValueError("timeout must be a finite positive number not exceeding 300 seconds")
+    if (isinstance(max_bytes, bool) or not isinstance(max_bytes, int)
+            or max_bytes <= 0 or max_bytes > 16 * 1024 * 1024):
+        raise ValueError("max_bytes must be a positive integer not exceeding 16 MiB")
+
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     data = None
     if payload is not None:
@@ -29,6 +115,7 @@ def request_json(
         data = json.dumps(payload).encode("utf-8")
     request = Request(url, data=data, headers=headers, method="POST" if data else "GET")
     deadline = monotonic() + timeout
+    request._provider_deadline = deadline
     try:
         with urlopen(request, timeout=timeout) as response:
             chunks: list[bytes] = []
@@ -57,7 +144,7 @@ def request_json(
         raise ProviderHTTPError(f"Provider request failed: {exc}") from exc
     try:
         result = json.loads(b"".join(chunks))
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
         raise ProviderHTTPError("Provider returned invalid JSON") from exc
     if not isinstance(result, dict):
         raise ProviderHTTPError("Provider returned a non-object JSON response")
