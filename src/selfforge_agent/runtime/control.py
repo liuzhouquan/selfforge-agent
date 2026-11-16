@@ -1,25 +1,83 @@
 """Transient budget feedback and tool loop detection for the shared Coding loop."""
 
+from __future__ import annotations
+
 import json
-from pathlib import Path
+import math
+import posixpath
 from typing import Any
 
 READ_ONLY_TOOLS = frozenset({"read_file", "search_code"})
 WRITE_TOOLS = frozenset({"edit_file", "bash"})
 
+MAX_ARG_BYTES = 65_536  # 64 KiB
+MAX_MESSAGES_SCAN = 1_000
+MAX_TRACKED_PATHS = 256
+MAX_NOTICE_PATH_CHARS = 256
+MAX_NOTICE_TOOL_CHARS = 64
+
+
+def _within_argument_budget(value: Any) -> bool:
+    pending = [value]
+    seen = set()
+    remaining = MAX_ARG_BYTES
+    while pending:
+        item = pending.pop()
+        remaining -= 1
+        if remaining < 0:
+            return False
+        if isinstance(item, str):
+            if len(item) > remaining:
+                return False
+            remaining -= len(item.encode("utf-8", errors="replace"))
+        elif isinstance(item, (dict, list)):
+            if id(item) in seen or len(item) > remaining:
+                return False
+            seen.add(id(item))
+            if isinstance(item, dict):
+                if any(not isinstance(key, str) for key in item):
+                    return False
+                pending.extend(item.keys())
+                pending.extend(item.values())
+            else:
+                pending.extend(item)
+        elif type(item) is int:
+            if item.bit_length() > MAX_ARG_BYTES * 3:
+                return False
+        elif item is not None and type(item) not in (bool, float):
+            return False
+    return remaining >= 0
+
 
 def _canonical_args(args: Any) -> tuple[str, dict[str, Any]]:
     if isinstance(args, str):
+        prefix = args[:MAX_ARG_BYTES + 1].encode("utf-8", errors="replace")
+        clean = prefix[:MAX_ARG_BYTES].decode("utf-8", errors="ignore").replace("\x00", "")
+        if len(args) > MAX_ARG_BYTES or len(prefix) > MAX_ARG_BYTES or "\x00" in args:
+            return clean, {}
         try:
-            parsed = json.loads(args)
-            if isinstance(parsed, dict):
-                return json.dumps(parsed, sort_keys=True), parsed
-        except (ValueError, TypeError):
-            pass
-        return args, {}
-    if isinstance(args, dict):
-        return json.dumps(args, sort_keys=True), args
-    return str(args), {}
+            parsed = json.loads(clean)
+        except (ValueError, TypeError, RecursionError):
+            return clean, {}
+    else:
+        parsed = args
+    if not isinstance(parsed, dict):
+        return "<invalid tool arguments>", {}
+    if not _within_argument_budget(parsed):
+        return "<oversized or invalid tool arguments>", {}
+    chunks = []
+    size = 0
+    try:
+        for chunk in json.JSONEncoder(sort_keys=True).iterencode(parsed):
+            room = MAX_ARG_BYTES - size
+            chunks.append(chunk[:room])
+            if len(chunk) > room:
+                return "".join(chunks), {}
+            size += len(chunk)
+        canonical = "".join(chunks)
+        return canonical, json.loads(canonical)
+    except (ValueError, TypeError, RecursionError):
+        return "<invalid tool arguments>", {}
 
 
 def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str, Any] | None:
@@ -31,13 +89,22 @@ def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str,
     (same tool name and canonical arguments) at least `min_repeats` times in the
     current unedited phase, returns a dictionary describing the loop.
     """
-    if not messages:
+    if not isinstance(messages, list) or not messages:
         return None
+
+    if (
+        not isinstance(min_repeats, int)
+        or isinstance(min_repeats, bool)
+        or min_repeats < 1
+    ):
+        min_repeats = 2
 
     counts: dict[tuple[str, str], int] = {}
     last_assistant_calls: list[tuple[str, str, dict[str, Any]]] = []
 
-    for msg in messages:
+    valid_messages = [m for m in messages[-MAX_MESSAGES_SCAN:] if isinstance(m, dict)]
+
+    for msg in valid_messages:
         role = msg.get("role")
         if role == "user":
             counts.clear()
@@ -45,14 +112,21 @@ def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str,
         if role != "assistant":
             continue
         calls = msg.get("tool_calls") or []
-        if not calls:
+        if not isinstance(calls, list) or not calls:
             last_assistant_calls = []
             continue
 
         turn_calls: list[tuple[str, str, dict[str, Any]]] = []
         for call in calls:
-            fn = call.get("function") or {}
-            name = fn.get("name", "")
+            if (not isinstance(call, dict)
+                    or ("id" in call and not isinstance(call["id"], str))):
+                continue
+            fn = call.get("function")
+            if not isinstance(fn, dict):
+                continue
+            name = fn.get("name")
+            if not isinstance(name, str):
+                continue
             raw_args = fn.get("arguments", {})
             canon_str, parsed_dict = _canonical_args(raw_args)
 
@@ -87,12 +161,17 @@ def _find_tool_content(
     call_idx: int,
     tool_responses_by_id: dict[str, str],
 ) -> str:
+    if not isinstance(call, dict) or not isinstance(messages, list):
+        return ""
     call_id = call.get("id")
-    if call_id and call_id in tool_responses_by_id:
+    if isinstance(call_id, str) and call_id in tool_responses_by_id:
         return tool_responses_by_id[call_id]
     offset = 0
-    for i in range(msg_idx + 1, len(messages)):
+    lookahead = min(len(messages), msg_idx + 100)
+    for i in range(msg_idx + 1, lookahead):
         m = messages[i]
+        if not isinstance(m, dict):
+            continue
         if m.get("role") == "tool":
             if offset == call_idx:
                 return str(m.get("content") or "")
@@ -116,20 +195,29 @@ def detect_edit_failure_loop(
     Returns a dict with 'path' and 'count' if the most recent turn's failed edits
     contain a path whose consecutive failure count has reached min_failures.
     """
-    if not messages:
+    if not isinstance(messages, list) or not messages:
         return None
 
+    if (
+        not isinstance(min_failures, int)
+        or isinstance(min_failures, bool)
+        or min_failures < 1
+    ):
+        min_failures = 2
+
     tool_responses_by_id: dict[str, str] = {}
-    for msg in messages:
+    valid_messages = [m for m in messages[-MAX_MESSAGES_SCAN:] if isinstance(m, dict)]
+
+    for msg in valid_messages:
         if msg.get("role") == "tool":
             cid = msg.get("tool_call_id")
-            if cid:
+            if cid and isinstance(cid, str):
                 tool_responses_by_id[cid] = str(msg.get("content") or "")
 
     failure_counts: dict[str, int] = {}
     last_turn_failed: list[str] = []
 
-    for idx, msg in enumerate(messages):
+    for idx, msg in enumerate(valid_messages):
         role = msg.get("role")
         if role == "user":
             failure_counts.clear()
@@ -139,23 +227,36 @@ def detect_edit_failure_loop(
             continue
 
         calls = msg.get("tool_calls") or []
-        if not calls:
+        if not isinstance(calls, list) or not calls:
             last_turn_failed = []
             continue
 
         current_turn_failed: list[str] = []
         for call_idx, call in enumerate(calls):
-            fn = call.get("function") or {}
-            name = fn.get("name", "")
+            if (not isinstance(call, dict)
+                    or ("id" in call and not isinstance(call["id"], str))):
+                continue
+            fn = call.get("function")
+            if not isinstance(fn, dict):
+                continue
+            name = fn.get("name")
+            if not isinstance(name, str):
+                continue
             raw_args = fn.get("arguments", {})
             _, parsed_args = _canonical_args(raw_args)
             raw_path = parsed_args.get("path")
-            if not raw_path or not isinstance(raw_path, str):
+            if not raw_path or not isinstance(raw_path, str) or "\x00" in raw_path:
                 continue
-            norm_path = Path(raw_path).as_posix()
+            clean_path = raw_path.strip().replace("\\", "/")
+            if not clean_path:
+                continue
+            norm_path = posixpath.normpath(clean_path)
 
-            content = _find_tool_content(call, messages, idx, call_idx, tool_responses_by_id)
+            content = _find_tool_content(call, valid_messages, idx, call_idx, tool_responses_by_id)
             is_error = content.startswith(("Tool error", "Action rejected", "Error:"))
+
+            if len(failure_counts) >= MAX_TRACKED_PATHS:
+                failure_counts.clear()
 
             if name == "edit_file":
                 if is_error:
@@ -194,16 +295,41 @@ def evaluate_context_pressure(
     Returns a dict with context pressure metrics if usage exceeds high_watermark
     or if compaction was active, else None.
     """
-    if token_budget <= 0:
+    if (
+        not isinstance(estimated_tokens, int)
+        or isinstance(estimated_tokens, bool)
+        or estimated_tokens < 0
+    ):
         return None
-    ratio = estimated_tokens / token_budget
+
+    if (
+        not isinstance(token_budget, int)
+        or isinstance(token_budget, bool)
+        or token_budget <= 0
+    ):
+        return None
+
+    if (
+        not isinstance(high_watermark, (int, float))
+        or isinstance(high_watermark, bool)
+        or not (0 < high_watermark <= 1.0)
+        or not math.isfinite(high_watermark)
+    ):
+        high_watermark = 0.75
+
+    try:
+        ratio = estimated_tokens / token_budget
+    except OverflowError:
+        return None
+    if not math.isfinite(ratio):
+        return None
     if ratio >= high_watermark or was_compacted:
         return {
             "estimated_tokens": estimated_tokens,
             "token_budget": token_budget,
             "ratio": round(ratio, 3),
             "percent": int(ratio * 100),
-            "was_compacted": was_compacted,
+            "was_compacted": bool(was_compacted),
             "high_pressure": ratio >= high_watermark,
         }
     return None
@@ -220,17 +346,31 @@ def budget_notice(
     context_info: dict | None = None,
 ) -> dict:
     """Describe actual runtime state, without adding turns or granting evidence."""
+    if not isinstance(step, int) or isinstance(step, bool) or step < 1:
+        step = 1
+    if not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps < 1:
+        max_steps = 1
+
     remaining_turns = max_steps - step + 1
+
+    try:
+        valid_seconds = (type(remaining_seconds) in (int, float) and remaining_seconds >= 0
+                         and math.isfinite(remaining_seconds))
+    except OverflowError:
+        valid_seconds = False
+    sec_int = int(remaining_seconds) if valid_seconds else 0
+
     content = (
         "Runtime budget (generated for this turn):\n"
         f"Turn {step}/{max_steps}; {remaining_turns} model turn(s) left including this one "
-        f"and your final answer; {max(0, int(remaining_seconds))} seconds left.\n"
+        f"and your final answer; {sec_int} seconds left.\n"
         "Current post-write run_tests evidence: "
         + ("passed." if tests_passed else "missing.")
         + " A successful bash command is not run_tests verification.\n"
     )
     if tool_loop:
-        tool_name = tool_loop.get("tool", "read-only")
+        raw_tool_name = tool_loop.get("tool", "read-only")
+        tool_name = str(raw_tool_name)[:MAX_NOTICE_TOOL_CHARS]
         count = tool_loop.get("count", 2)
         content += (
             f"Repeated read-only tool call detected: you have called '{tool_name}' "
@@ -238,7 +378,8 @@ def budget_notice(
             "Avoid duplicate lookups and proceed with required edits (edit_file) or verification (run_tests).\n"
         )
     if edit_failure and not (remaining_turns == 1 and tests_passed):
-        path = edit_failure.get("path", "")
+        raw_path = edit_failure.get("path", "")
+        path = str(raw_path)[:MAX_NOTICE_PATH_CHARS]
         count = edit_failure.get("count", 2)
         content += (
             f"Consecutive edit failures on '{path}' ({count} times). "
@@ -289,7 +430,7 @@ def budget_notice(
             "final answer. Do not use bash for testing; only run_tests establishes verification. "
             "Report missing verification honestly."
         )
-    elif remaining_turns <= 3 or remaining_seconds <= 45:
+    elif remaining_turns <= 3 or sec_int <= 45:
         content += (
             "Budget is nearly exhausted. Avoid optional exploration. "
             "If requirements are satisfied and verification passed, give your final answer now. "
