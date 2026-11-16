@@ -134,6 +134,7 @@ flowchart LR
 | 24 | [SF-PRICE-01](#sf-price-01) | In Review | Antigravity | 无 | [PR #81](https://github.com/liuzhouquan/selfforge-agent/pull/81)：模型费率卡与成本估算安全加固：JSON 反序列化深度防御、Token 计数严格类型与非负校验、货币代码规范化、浮点溢出安全回退 |
 | 25 | [SF-GH-01](#sf-gh-01) | In Review | Antigravity | 无 | [PR #82](https://github.com/liuzhouquan/selfforge-agent/pull/82)：GitHub PR 抓取与检出安全加固：URL 严格正则与选项防注入、变更文件路径防穿越与状态规范化、工作区软链接防御、命令输出有界防御 |
 | 26 | [SF-CORE-01](#sf-core-01) | In Review | Antigravity | 无 | [PR #83](https://github.com/liuzhouquan/selfforge-agent/pull/83)：Git 差异上下文与补丁解析安全加固：仓库路径软链接防御、差异解包受控映射、补丁与行号有界防 DoS |
+| 27 | [SF-REV-01](#sf-rev-01) | In Review | Antigravity | 无 | [PR #84](https://github.com/liuzhouquan/selfforge-agent/pull/84)：代码审查引擎安全加固：规则基线有界防御、模型审查输入/输出防御与执行隔离 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1147,6 +1148,36 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #83 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43663583620 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查与合并 PR #83。
+```
+
+### SF-REV-01
+
+**目标：** 在 `selfforge_agent.review` 与 `selfforge_agent.service` 中贯彻 fail-closed、输入防御与资源有界防御。`BaselineReviewer` 严格校验 `PRContext` 类型，对扫描文件数（最大 200）、单文件 hunk 数（最大 500）、行内容长度（最大 10,000 字符）与总 findings 数量（最大 500）施加有界防御，避免超大 diff 或超长行导致正则回溯与内存溢出；对 `line.new_line` 数值施加合法正整数校验（1 至 10,000,000），对空空白行安全提供 `"<blank added line>"` 兜底 evidence 以免破坏 `Finding` 校验，并对重复 findings 自动去重；`ProviderReviewer` 严格校验 `provider` 配置（非空 API Key、合法 HTTP/HTTPS base_url）与 `timeout` 有限正数（排除 `NaN`/`inf`/非正数/布尔绕过），收集 prompt 代码时限制最大文件数（100）、最大行数（200）与单行字符上限（1000），深度防御模型返回 JSON 的 findings 数量（最大 8）与属性约束，并将返回文件/行号严格限定在 diff 的真实 `added` 行集合内；`ReviewService` 强制校验有限正超时、防止 `test_path` 路径穿越与控制字符注入，并受控记录审查异常至 `report.errors`。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/review/baseline.py`、`src/selfforge_agent/review/deepseek.py`、`src/selfforge_agent/service.py` 及专项测试 `tests/test_review_engine_security.py`；保持外部调用接口（`BaselineReviewer.review`、`ProviderReviewer.review`、`ProviderReviewer.review_with_usage`、`ReviewService.review`、`ReviewService.review_context`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-REV-01-A1 | `BaselineReviewer` 传入非法 `context` 时抛出受控 `TypeError`，扫描时对文件数（200）、hunk 数（500）、单行字符（10,000）与 findings 上限（500）施加有界截断，杜绝 DoS | `tests/test_review_engine_security.py` 规则基线输入类型与有界扫描测试 | E1 |
+| SF-REV-01-A2 | `BaselineReviewer` 针对空白新增行安全兜底生成非空 evidence（`"<blank added line>"`），对合法行号（1 至 10,000,000）执行校验，并对相同 `(file_path, line_number, category)` 自动去重 | `tests/test_review_engine_security.py` 空白行兜底与重复结果去重测试 | E2 |
+| SF-REV-01-A3 | `ProviderReviewer` 构造时严格校验有效 Provider 配置与有限正超时（拦截 `NaN`/`inf`/布尔等绕过），Prompt 收集时对文件数、行数与单行长度有界截断，对模型返回结果强制执行属性有界校验、上限约束（最多 8 项）与 diff `added` 行严格归属校验 | `tests/test_review_engine_security.py` 模型审查配置校验、输入有界与输出白名单防御测试 | E3 |
+| SF-REV-01-A4 | `ReviewService` 强制校验有限正超时、阻断 `test_path` 路径穿越段与控制字符，受控记录审查器异常至 `report.errors`；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_review_engine_security.py`、`tests/test_git_review.py` 与全套静态/单元测试命令 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-REV-01-A1 | `tests/test_review_engine_security.py::test_baseline_reviewer_rejects_invalid_context`、`tests/test_review_engine_security.py::test_baseline_reviewer_bounds_line_length_and_findings` | 本地 `pytest -v tests/test_review_engine_security.py`；GitHub Actions CI `Unit tests` | `8df31241608d1dbdbb95966d3c890e3324240269`；passed；CI [R1 43667895730](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43667895730) |
+| E2 | SF-REV-01-A2 | `tests/test_review_engine_security.py::test_baseline_reviewer_handles_blank_evidence_and_deduplicates` | 本地 `pytest -v tests/test_review_engine_security.py`；GitHub Actions CI `Unit tests` | `8df31241608d1dbdbb95966d3c890e3324240269`；passed；CI [R1 43667895730](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43667895730) |
+| E3 | SF-REV-01-A3 | `tests/test_review_engine_security.py::test_provider_reviewer_validates_timeout_and_config`、`tests/test_review_engine_security.py::test_provider_reviewer_bounds_prompt_and_defends_output` | 本地 `pytest -v tests/test_review_engine_security.py`；GitHub Actions CI `Unit tests` | `8df31241608d1dbdbb95966d3c890e3324240269`；passed；CI [R1 43667895730](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43667895730) |
+| E4 | SF-REV-01-A4 | `tests/test_review_engine_security.py::test_review_service_input_defense_and_error_handling`、`tests/test_git_review.py::test_diff_hunks_and_heuristic`、`tests/test_provider_compatibility.py::test_claude_review_and_repair_omit_unsupported_json_object`、`tests/test_github_web.py::test_deepseek_findings_must_point_to_added_lines` | 本地 `pytest -v`、`ruff check .`、`python scripts/check_sdd.py`；GitHub Actions CI `Unit tests` 与 `Docker integration tests` | `8df31241608d1dbdbb95966d3c890e3324240269`；passed；CI [R1 43667895730](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43667895730) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-rev-01 (worktree: selfforge-sf-rev-01) / 8df31241608d1dbdbb95966d3c890e3324240269
+已完成验收与证据 ID：SF-REV-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；测试全绿，R1 CI 通过
+PR / 准确 head CI / merge SHA（有则填）：PR #84 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43667895730 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #84。
 ```
 
 ## 5. 验收追踪与执行记录格式
