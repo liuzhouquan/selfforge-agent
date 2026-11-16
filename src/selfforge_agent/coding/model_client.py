@@ -15,6 +15,7 @@ from selfforge_agent.providers import (
     TokenUsage,
     json_object_options,
     token_usage_from_response,
+    validate_base_url,
 )
 
 MAX_OBSERVATION_PAYLOAD_BYTES = 2 * 1024 * 1024  # 2 MiB
@@ -42,6 +43,8 @@ def _validate_finite_positive_timeout(timeout: object) -> float:
 def _extract_json_payload(raw: str) -> str:
     """Extract JSON payload from raw model text, stripping markdown code fences if present."""
     trimmed = raw.strip()
+    if trimmed.startswith("{"):
+        return trimmed
     if "```" in trimmed:
         fence_start = trimmed.find("```")
         content_start = trimmed.find("\n", fence_start)
@@ -63,7 +66,7 @@ def _validate_code_edit(edit: CodeEdit) -> CodeEdit:
     if os.path.isabs(edit.path) or edit.path.startswith("/"):
         raise ModelError("Edit path must be a relative path")
     norm = os.path.normpath(edit.path)
-    if norm == ".." or norm.startswith("../") or "/../" in edit.path or edit.path.startswith("../"):
+    if norm in {".", ".."} or ".." in edit.path.split("/"):
         raise ModelError("Edit path must not contain directory traversal")
     if len(edit.path) > MAX_PATH_CHARS:
         raise ModelError(f"Edit path exceeds maximum length of {MAX_PATH_CHARS} characters")
@@ -90,6 +93,7 @@ class OpenAICompatibleCodingModel:
             raise TypeError("API key must be a string")
         self.timeout = _validate_finite_positive_timeout(timeout)
 
+        base_url = validate_base_url(base_url)
         parsed = urlsplit(base_url)
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Model base URL must not contain credentials, query, or fragment")
@@ -137,9 +141,9 @@ class OpenAICompatibleCodingModel:
         self.last_usage = None
         try:
             response = request_json(self.url, self.api_key, payload=payload, timeout=self.timeout)
-            self.last_usage = token_usage_from_response(response)
             if not isinstance(response, dict):
                 raise ModelError("Provider response is not a JSON object")
+            self.last_usage = token_usage_from_response(response)
             choices = response.get("choices")
             if not isinstance(choices, list) or not choices:
                 raise ModelError("Provider response missing choices")

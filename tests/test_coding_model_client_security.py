@@ -263,3 +263,42 @@ def test_fallback_coding_model_fail_closed_validation() -> None:
     router = FallbackCodingModel([provider])
     with pytest.raises((TypeError, ModelError)):
         router.propose("invalid observation")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("response", [None, [], 7, "not-an-object"])
+def test_non_object_response_is_validated_before_usage(monkeypatch, response) -> None:
+    client = OpenAICompatibleCodingModel(model="fixture", base_url="http://localhost:8080")
+    observation = RepairObservation(task="fix", attempt=1, files=[], failing_test_output="fail")
+    monkeypatch.setattr("selfforge_agent.coding.model_client.request_json", lambda *_a, **_k: response)
+    with pytest.raises(ModelError):
+        client.propose(observation)
+    assert client.usage_history == [None]
+
+
+def test_json_string_values_containing_fences_are_not_treated_as_outer_markdown(monkeypatch) -> None:
+    import json
+
+    edit = {"path": "module.py", "old_text": "```python", "new_text": "```python3", "rationale": "update docstring"}
+    response = {"choices": [{"message": {"content": json.dumps(edit, indent=2)}}]}
+    monkeypatch.setattr("selfforge_agent.coding.model_client.request_json", lambda *_a, **_k: response)
+    client = OpenAICompatibleCodingModel(model="fixture", base_url="http://localhost:8080")
+    observation = RepairObservation(task="fix", attempt=1, files=[], failing_test_output="fail")
+    assert client.propose(observation).model_dump() == edit
+
+
+@pytest.mark.parametrize("path", ["dir/..", "."])
+def test_edit_path_cannot_resolve_to_directory_or_trailing_parent(monkeypatch, path) -> None:
+    import json
+
+    response = {"choices": [{"message": {"content": json.dumps({
+        "path": path, "old_text": "a", "new_text": "b", "rationale": "fixture"})}}]}
+    monkeypatch.setattr("selfforge_agent.coding.model_client.request_json", lambda *_a, **_k: response)
+    client = OpenAICompatibleCodingModel(model="fixture", base_url="http://localhost:8080")
+    with pytest.raises(ModelError):
+        client.propose(RepairObservation(task="fix", attempt=1, files=[], failing_test_output="fail"))
+
+
+@pytest.mark.parametrize("url", ["http://localhost:bad/v1", "https://bad host/v1"])
+def test_constructor_reuses_transport_url_validation(url) -> None:
+    with pytest.raises(ValueError):
+        OpenAICompatibleCodingModel(model="fixture", base_url=url, api_key="fixture-key")
