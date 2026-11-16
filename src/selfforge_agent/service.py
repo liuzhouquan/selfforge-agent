@@ -29,7 +29,7 @@ class ReviewService:
 
         try:
             findings = self.reviewer.review(context)
-        except (ValueError, TypeError, KeyError, IndexError, RuntimeError, OSError) as exc:
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError, RuntimeError, OSError) as exc:
             errors.append(f"Review engine failed: {exc}")
 
         return EvidenceReport(

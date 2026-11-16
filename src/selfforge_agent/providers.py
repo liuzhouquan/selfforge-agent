@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from selfforge_agent.integrations.model_http import ProviderHTTPError, request_json
 
@@ -220,9 +220,9 @@ class ProviderStatus(BaseModel):
 
 
 class TokenUsage(BaseModel):
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
+    prompt_tokens: int = Field(strict=True)
+    completion_tokens: int = Field(strict=True)
+    total_tokens: int = Field(strict=True)
 
 
 class ModelAttempt(BaseModel):

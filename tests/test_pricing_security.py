@@ -193,3 +193,15 @@ def test_formatter_handles_integer_too_large_for_float_conversion() -> None:
     value = SimpleNamespace(prompt_cost_usd=10**1000, completion_cost_usd=1,
                             total_cost_usd=10**1000, currency="USD")
     assert format_monetary_cost(value) == "uncalibrated"
+
+
+@pytest.mark.parametrize("field,value", [("prompt_tokens", True), ("completion_tokens", "5"), ("total_tokens", 15.0)])
+def test_malformed_usage_history_cannot_establish_calibrated_cost(tmp_path, configured_rates, field, value) -> None:
+    from selfforge_agent.runtime.session import SessionStore
+
+    usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, field: value}
+    session = SessionStore(tmp_path)
+    session.trace("model_call", provider="deepseek", model="deepseek-chat", usage=usage)
+    metrics = session.token_metrics()
+    assert metrics["usage_complete"] is False
+    assert metrics["cost"] is None

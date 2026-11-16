@@ -91,7 +91,7 @@ class ProviderReviewer:
             for (path, number), text in list(added.items())[:MAX_PROMPT_LINES]
         ]
         user_content = json.dumps(lines, ensure_ascii=False)
-        while len(user_content) > MAX_PROMPT_BYTES and lines:
+        while len(user_content.encode("utf-8")) > MAX_PROMPT_BYTES and lines:
             lines.pop()
             user_content = json.dumps(lines, ensure_ascii=False)
 
@@ -122,10 +122,13 @@ class ProviderReviewer:
                 payload=payload,
                 timeout=self.timeout,
             )
+            if not isinstance(response, dict):
+                raise DeepSeekReviewError("Model response must be an object")
             usage = token_usage_from_response(response)
-            if not isinstance(response, dict) or "choices" not in response or not response["choices"]:
-                raise DeepSeekReviewError("Model response missing choices array", usage=usage)
-            choice = response["choices"][0]
+            choices = response.get("choices")
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                raise DeepSeekReviewError("Model response missing valid choices array", usage=usage)
+            choice = choices[0]
             if choice.get("finish_reason") == "length":
                 raise DeepSeekReviewError("Model response was truncated", usage=usage)
             message = choice.get("message")

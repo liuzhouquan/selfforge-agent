@@ -226,3 +226,42 @@ def test_review_service_input_defense_and_error_handling() -> None:
                 "1" * 40,
                 timeout=bad_to,  # type: ignore[arg-type]
             )
+
+
+@pytest.mark.parametrize("choices", [[None], [7], "bad", {"first": {}}, [], [{"message": None}]])
+def test_malformed_choice_shapes_produce_error_reports(monkeypatch, choices) -> None:
+    cfg = ProviderConfig("deepseek", "fixture", "fixture-key", "fixture", "https://example.com/v1", "")
+    context = _make_context([ChangedFile(path="app.py", status="M", hunks=[
+        DiffHunk(header="@@ -0,0 +1 @@", old_start=0, new_start=1,
+                 lines=[DiffLine(kind="added", content="eval('x')", new_line=1)])])])
+    monkeypatch.setattr("selfforge_agent.review.deepseek.request_json", lambda *_args, **_kwargs: {"choices": choices})
+    report = ReviewService(reviewer=ProviderReviewer(cfg)).review_context(context)
+    assert report.execution_status == "error"
+    assert report.findings == [] and report.errors
+
+
+def test_provider_prompt_limit_counts_utf8_bytes(monkeypatch) -> None:
+    import json
+
+    from selfforge_agent.review import deepseek
+
+    cfg = ProviderConfig("deepseek", "fixture", "fixture-key", "fixture", "https://example.com/v1", "")
+    context = _make_context([ChangedFile(path="app.py", status="M", hunks=[
+        DiffHunk(header="@@ -0,0 +1,20 @@", old_start=0, new_start=1,
+                 lines=[DiffLine(kind="added", content="中" * 1000, new_line=n) for n in range(1, 21)])])])
+    sent = []
+
+    def reply(*_args, **kwargs):
+        sent.append(kwargs["payload"])
+        return {"choices": [{"message": {"content": json.dumps({"findings": []})}}]}
+
+    monkeypatch.setattr(deepseek, "request_json", reply)
+    ProviderReviewer(cfg).review(context)
+    assert len(sent[0]["messages"][1]["content"].encode("utf-8")) <= deepseek.MAX_PROMPT_BYTES
+
+
+def test_review_service_records_attribute_failure() -> None:
+    reviewer = MagicMock()
+    reviewer.review.side_effect = AttributeError("malformed engine state")
+    report = ReviewService(reviewer=reviewer).review_context(_make_context([]))
+    assert report.execution_status == "error" and report.errors
