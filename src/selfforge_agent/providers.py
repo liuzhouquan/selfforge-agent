@@ -88,16 +88,14 @@ def _settings() -> dict[str, dict[str, str]]:
             raise ValueError("Provider settings must be a regular file, not a FIFO, device, or directory")
         if st.st_size > 64 * 1024:
             raise ValueError("Provider settings file exceeds 64 KiB size limit")
-        with os.fdopen(fd, "rb") as handle:
-            content = handle.read(64 * 1024 + 1)
-            if len(content) > 64 * 1024:
-                raise ValueError("Provider settings file exceeds 64 KiB size limit")
+        handle = os.fdopen(fd, "rb")
     except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+        os.close(fd)
         raise
+    with handle:
+        content = handle.read(64 * 1024 + 1)
+        if len(content) > 64 * 1024:
+            raise ValueError("Provider settings file exceeds 64 KiB size limit")
 
     try:
         data = json.loads(content.decode("utf-8"))

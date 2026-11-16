@@ -230,3 +230,38 @@ def test_redirect_chain_uses_one_absolute_deadline(monkeypatch: pytest.MonkeyPat
     clock[0] = 6.0
     with pytest.raises(model_http.ProviderHTTPError, match="timed out"):
         handler.redirect_request(redirected, None, 302, "Found", {}, "https://provider.example/third")
+
+
+def test_settings_read_error_does_not_close_reused_descriptor(tmp_path, monkeypatch):
+    settings = tmp_path / "settings.json"
+    settings.write_text('{}')
+    monkeypatch.setenv("SELFFORGE_PROVIDER_CONFIG_PATH", str(settings))
+    original_fdopen = os.fdopen
+    replacement = []
+
+    class FailingReader:
+        def __init__(self, fd, mode):
+            self.file = original_fdopen(fd, mode)
+
+        def __enter__(self):
+            return self
+
+        def read(self, _limit):
+            raise OSError("fixture read failure")
+
+        def __exit__(self, *_args):
+            self.file.close()
+            replacement.append(os.open(tmp_path / "sentinel", os.O_CREAT | os.O_RDWR, 0o600))
+
+    monkeypatch.setattr(providers.os, "fdopen", FailingReader)
+    try:
+        with pytest.raises((OSError, ValueError)):
+            providers._settings()
+        assert replacement
+        os.fstat(replacement[0])
+    finally:
+        for fd in replacement:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
