@@ -1004,13 +1004,13 @@ PR / 准确 head CI / merge SHA（有则填）：PR #78 / https://github.com/liu
 
 ### SF-PROV-02
 
-**目标：** 在 `selfforge_agent.integrations.model_http` 与 `selfforge_agent.providers` 中贯彻 fail-closed 与安全隔离防御。在 `model_http.py` 的 `request_json` 中严格限制 URL Scheme 为 `https` 或本地回环 `http`（仅限 `localhost`、`127.0.0.1`、`[::1]`），严格拒绝 `file:`、`ftp:`、`gopher:` 等任意非安全协议，彻底杜绝本地任意文件读取与 SSRF 风险；校验 `api_key` 格式，杜绝 `\r`、`\n`、`\x00` 等换行/空字符 CRLF 响应头注入；校验 `url` 主机名与端口号（1–65535）有效性；严格校验 `timeout` 为有限正数（1 至 300 秒，阻断 `NaN`/`inf`/非正数/布尔值绕过），校验 `max_bytes` 为正整数且不超过 16 MiB；在 `providers.py` 中，配置读取 `_settings` 采用 `O_RDONLY`、`O_NOFOLLOW`、`O_NONBLOCK` 打开并校验 `S_ISREG`，拒绝符号链接、FIFO 管道与特殊设备，限制读取上限 64 KiB；进程锁 `_settings_lock` 强制检查并采用 `O_NOFOLLOW` 排他建锁防符链穿透；`save_provider_settings` 校验父目录与路径非符号链接。
+**目标：** 在 `selfforge_agent.integrations.model_http` 与 `selfforge_agent.providers` 中贯彻 fail-closed 与安全隔离防御。在 `model_http.py` 的 `request_json` 中严格限制 URL Scheme 为 `https` 或本地回环 `http`（`is_loopback` IP、`localhost`、`localhost.localdomain`），严格拒绝 `file:`、`ftp:`、`gopher:` 等任意非安全协议，阻止非 HTTP 协议读取、非回环明文 HTTP 和跨源重定向；HTTPS 目标未做地址/DNS 隔离，不宣称全面 SSRF 防护；校验 `api_key` 格式，杜绝 `\r`、`\n`、`\x00` 等换行/空字符 CRLF 响应头注入；校验 `url` 主机名与端口号（1–65535）有效性；严格校验 `timeout` 为有限正数（大于 0 且不超过 300 秒，阻断 `NaN`/`inf`/非正数/布尔值绕过），校验 `max_bytes` 为正整数且不超过 16 MiB；在 `providers.py` 中，配置读取 `_settings` 采用 `O_RDONLY`、`O_NOFOLLOW`、`O_NONBLOCK` 打开并校验 `S_ISREG`，拒绝符号链接、FIFO 管道与特殊设备，限制读取上限 64 KiB；进程锁 `_settings_lock` 强制检查并采用 `O_NOFOLLOW` 排他建锁防符链穿透；`save_provider_settings` 校验父目录与路径非符号链接。
 
 **范围/入口：** 仅改动 `src/selfforge_agent/integrations/model_http.py`、`src/selfforge_agent/providers.py` 及专项测试 `tests/test_model_http_security.py`；不改动外部模型提供商接口契约与会话模型调度逻辑。
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-PROV-02-A1 | `request_json` 强制校验 URL Scheme 为 `https` 或本地回环 `http`，严格拒绝 `file:` 等非安全协议以杜绝本地文件读取与 SSRF 风险；校验 `api_key` 格式杜绝 `\r`、`\n`、`\x00` CRLF 响应头注入；校验 `url` 主机名与端口号（1–65535）有效性 | `tests/test_model_http_security.py` 协议白名单、文件读取阻断、CRLF 注入与 URL 结构测试 | E5（本轮复验） |
+| SF-PROV-02-A1 | `request_json` 强制校验 URL Scheme 为 `https` 或本地回环 `http`，严格拒绝 `file:` 等非安全协议以阻止非 HTTP 协议读取；拒绝非回环明文 HTTP 和跨源重定向，不宣称目标地址/DNS 隔离；校验 `api_key` 格式杜绝 `\r`、`\n`、`\x00` CRLF 响应头注入；校验 `url` 主机名与端口号（1–65535）有效性 | `tests/test_model_http_security.py` 协议白名单、文件读取阻断、CRLF 注入与 URL 结构测试 | E5（本轮复验） |
 | SF-PROV-02-A2 | `request_json` 严格校验 `timeout` 为有限正数且不超过 300 秒（阻断 `NaN`/`inf`/非正数/布尔值绕过），校验 `max_bytes` 为正整数且不超过 16 MiB（拒绝布尔值/浮点数）；在读取流中严格按剩余截止时间与字节预算收敛 | `tests/test_model_http_security.py` 超时与字节上限有界边界测试 | E6（本轮复验） |
 | SF-PROV-02-A3 | `providers.py` 的配置读取 `_settings` 采用 `O_RDONLY`、`O_NOFOLLOW`、`O_NONBLOCK` 打开并校验 `S_ISREG`，拒绝符号链接、FIFO 管道与特殊设备，防止进程挂起与符链逃逸，限制单次读取上限 64 KiB；进程锁 `_settings_lock` 与临时写入强制采用 `O_NOFOLLOW` 排他建锁与无符链原子发布 | `tests/test_model_http_security.py` 符号链接、FIFO管道、文件锁与持久化隔离测试 | E7（本轮复验） |
 | SF-PROV-02-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | 本地命令矩阵与 CI | E8（本轮复验） |

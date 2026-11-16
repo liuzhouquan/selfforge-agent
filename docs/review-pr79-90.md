@@ -4,7 +4,7 @@
 
 ## Standards
 
-独立 Standards 审查与最终复核未发现剩余可复现阻断，未新增判断性 smell 建议。修复遵循 [AGENTS.md](../AGENTS.md)、[工程不变量](./engineering-invariants.md)与[开发验证门槛](./development.md#verification-gates)。
+最终文档复核收敛了原规格过强的 SSRF 表述：仅保证协议、回环明文 HTTP 和跨源重定向限制，未实现目标地址/DNS 隔离。独立 Standards 审查与最终复核未发现剩余可复现阻断，未新增判断性 smell 建议。修复遵循 [AGENTS.md](../AGENTS.md)、[工程不变量](./engineering-invariants.md)与[开发验证门槛](./development.md#verification-gates)。
 
 - #80/#83/#87 原输出限制在完整捕获后才生效；复用 `core/process.py`，对 stdout/stderr 在执行期间分别限额，截止时间覆盖管道 EOF 和等待，清理拥有的进程组。真实生产进程在越界后不能继续创建标记；子进程持有管道也受限。
 - #79 配置读异常存在双重 close；明确 FD 所有权转交，真实复用编号的另一个文件描述符保持打开。该最终复核修复 `7aab9c9` 随 #90 的完整组合交付。
