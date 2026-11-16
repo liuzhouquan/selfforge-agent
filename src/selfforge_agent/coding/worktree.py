@@ -1,14 +1,13 @@
 """Temporary detached Git worktrees for base, head, and repair checks."""
 
 import math
-import os
-import selectors
-import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
+
+from selfforge_agent.core.process import run_bounded
 
 MAX_ARG_CHARS = 65_536  # 64 KiB
 MAX_GIT_OUTPUT_BYTES = 10 * 1024 * 1024  # 10 MiB
@@ -71,22 +70,18 @@ def git(repo: Path, *args: str, deadline: float | None = None) -> str:
         timeout = 30.0
 
     try:
-        result = subprocess.run(
-            ["git", "-C", str(repo_path), *clean_args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
+        result = run_bounded(
+            ["git", "-C", str(repo_path), *clean_args], timeout=timeout,
+            max_bytes=MAX_GIT_OUTPUT_BYTES,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, TimeoutError) as exc:
         raise WorktreeError(f"Git worktree operation failed: {exc}") from exc
-
-    if len(result.stdout.encode("utf-8")) > MAX_GIT_OUTPUT_BYTES:
+    if result.stdout_limited or result.stderr_limited:
         raise WorktreeError(f"Git output exceeded maximum limit of {MAX_GIT_OUTPUT_BYTES} bytes")
-
     if result.returncode:
-        raise WorktreeError(result.stderr.strip() or "Git worktree operation failed")
-    return result.stdout
+        raise WorktreeError(result.stderr.decode("utf-8", errors="replace").strip()
+                            or "Git worktree operation failed")
+    return result.stdout.decode("utf-8")
 
 
 def git_bounded(
@@ -114,65 +109,20 @@ def git_bounded(
         raise TimeoutError("Git operation budget exhausted")
 
     try:
-        process = subprocess.Popen(
-            ["git", "-C", str(repo_path), *clean_args],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        result = run_bounded(
+            ["git", "-C", str(repo_path), *clean_args], timeout=min(3600, remaining),
+            max_bytes=max_bytes, stderr_bytes=4096,
         )
-    except OSError as exc:
+    except (OSError, TimeoutError) as exc:
         raise WorktreeError(f"Git worktree operation failed: {exc}") from exc
-
-    output = bytearray()
-    error = bytearray()
-    truncated = False
-    try:
-        assert process.stdout is not None and process.stderr is not None
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            selector.register(process.stderr, selectors.EVENT_READ)
-            while selector.get_map():
-                rem = effective_deadline - monotonic()
-                if rem <= 0:
-                    raise WorktreeError("Git worktree operation timed out")
-                ready = selector.select(rem)
-                if not ready:
-                    raise WorktreeError("Git worktree operation timed out")
-                for key, _ in ready:
-                    chunk = os.read(key.fileobj.fileno(), 8192)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                    elif key.fileobj is process.stdout:
-                        room = max_bytes - len(output)
-                        output.extend(chunk[:room])
-                        if len(chunk) > room:
-                            truncated = True
-                            break
-                    else:
-                        error.extend(chunk[:max(0, 4096 - len(error))])
-                if truncated:
-                    break
-        if truncated:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=1)
-        else:
-            wait_budget = max(0.0, effective_deadline - monotonic())
-            process.wait(timeout=wait_budget)
-            if process.returncode:
-                raise WorktreeError(
-                    error.decode("utf-8", errors="replace").strip() or "Git worktree operation failed"
-                )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise WorktreeError(f"Git worktree operation failed: {exc}") from exc
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
-        if process.stdout is not None:
-            process.stdout.close()
-        if process.stderr is not None:
-            process.stderr.close()
-    return output.decode("utf-8", errors="replace" if truncated else "strict"), truncated
+    if result.stderr_limited:
+        raise WorktreeError("Git error output exceeded maximum limit")
+    if result.returncode and not result.stdout_limited:
+        raise WorktreeError(result.stderr.decode("utf-8", errors="replace").strip()
+                            or "Git worktree operation failed")
+    return result.stdout.decode(
+        "utf-8", errors="replace" if result.stdout_limited else "strict"
+    ), result.stdout_limited
 
 
 @contextmanager
@@ -240,6 +190,7 @@ def detached_worktree(
         added = True
         yield dest
     finally:
+        body_failed = sys.exc_info()[0] is not None
         if added or (not existed and dest.exists()):
             try:
                 git(repo_path, "worktree", "remove", "--force", str(dest), deadline=deadline)
@@ -248,5 +199,5 @@ def detached_worktree(
                     git(repo_path, "worktree", "prune", deadline=deadline)
                 except (WorktreeError, OSError, TimeoutError):
                     pass
-                if sys.exc_info()[0] is None:
+                if not body_failed:
                     raise

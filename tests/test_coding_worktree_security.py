@@ -156,3 +156,37 @@ def test_detached_worktree_lifecycle_and_cleanup_fault_tolerance(test_git_repo: 
         raise CustomCallerError("caller error must not be suppressed")
 
     assert not dest.exists()
+
+
+def test_cleanup_failure_is_visible_after_successful_body(test_git_repo, tmp_path, monkeypatch):
+    import selfforge_agent.coding.worktree as module
+
+    def fake_git(_repo, *args, **kwargs):
+        if args[:2] == ("worktree", "add"):
+            return ""
+        raise WorktreeError("cleanup failed")
+
+    monkeypatch.setattr(module, "git", fake_git)
+    with pytest.raises(WorktreeError, match="cleanup failed"), detached_worktree(
+        test_git_repo, "HEAD", tmp_path / "owned"
+    ):
+        pass
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_git_stops_output_producer_at_limit(test_git_repo, tmp_path, monkeypatch, stream):
+    import selfforge_agent.coding.worktree as module
+
+    marker = tmp_path / "producer-finished"
+    script = tmp_path / "git"
+    script.write_text(
+        "#!/usr/bin/env python3\nimport os,time\n"
+        f"os.write({1 if stream == 'stdout' else 2}, b'x'*1000000)\n"
+        f"open({str(marker)!r}, 'w').close()\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + ":" + __import__('os').environ['PATH'])
+    monkeypatch.setattr(module, "MAX_GIT_OUTPUT_BYTES", 1024)
+    with pytest.raises(WorktreeError):
+        git(test_git_repo, "status")
+    assert not marker.exists()
