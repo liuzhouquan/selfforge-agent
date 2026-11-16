@@ -139,6 +139,7 @@ flowchart LR
 | 29 | [SF-MODEL-01](#sf-model-01) | In Review | Antigravity | 无 | [PR #86](https://github.com/liuzhouquan/selfforge-agent/pull/86)：编码模型客户端安全加固：有限正超时校验、Base URL与凭据防御、输入观测类型与有界负载防御、Markdown代码块剥离与CodeEdit边界校验 |
 | 30 | [SF-WT-01](#sf-wt-01) | In Review | Antigravity | 无 | [PR #87](https://github.com/liuzhouquan/selfforge-agent/pull/87)：Git worktree与临时分支执行安全加固：子进程执行与有界读取防御、修订与参数注入防御、目标路径与符号链接隔离防御、清理容错与工作区元数据修剪 |
 | 31 | [SF-RISK-01](#sf-risk-01) | In Review | Antigravity | 无 | [PR #88](https://github.com/liuzhouquan/selfforge-agent/pull/88)：PR风险优先级排序与RiskTarget契约边界加固：上下文与发现类型Fail-Closed校验、扫描深度与代码行有界防御、PrioritizedRisk模式与空字节防御、确定性排序与有效转换 |
+| 32 | [SF-FPR-01](#sf-fpr-01) | In Review | Antigravity | 无 | [PR #89](https://github.com/liuzhouquan/selfforge-agent/pull/89)：工作区快照指纹哈希安全加固：root输入防御与斜杠绕过软链接防御、有限正数deadline与cancel状态机对齐、目录递归自循环防御、非普通文件与负大小防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1302,6 +1303,36 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #88 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43721461904 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查与合并 PR #88。
+```
+
+### SF-FPR-01
+
+**目标：** 在 `selfforge_agent.runtime.fingerprint` 工作区快照指纹哈希模块中贯彻 fail-closed、输入防御与资源有界防御。`workspace_fingerprint` 严格校验 `root` 参数类型必须为 `Path` 或 `str`（自动规范化为 `Path`），拒绝 `None`、数值、列表等非法类型并抛出受控 `TypeError`，杜绝未捕获 `AttributeError` 泄漏；严格拒绝包含空字节 `\0` 的路径并抛出受控 `ValueError`；对 `root` 路径清洗末尾斜杠（`/`），彻底阻断通过末尾斜杠强制目录解析绕过 `O_NOFOLLOW` 的符号链接根目录漏洞，当 `root` 为符号链接时严格 fail-closed 抛出 `WorkspaceSnapshotError`；严格校验 `deadline` 参数为有限数值（排除 `bool`、`NaN`、`inf` 及非数值类型并抛出受控 `TypeError` / `ValueError`），阻断 `NaN` 绕过超时判定导致挂起；超时（`deadline <= now`）严格抛出 `TimeoutError("Workspace fingerprint timed out")`；严格校验 `cancel` 参数为 `threading.Event` 实例或 `None`（拒绝非法类型抛出 `TypeError`），并在取消事件置位时立即响应中断；在有界深度遍历（`MAX_SNAPSHOT_DEPTH = 128`）基础上增加祖先路径设备与 inode 追踪（`ancestor_dirs`），一旦检测到目录递归自循环（bind mount / 循环链接）立即 fail-closed 抛出 `WorkspaceSnapshotError("Workspace fingerprint detected directory cycle")`；严格阻断非普通文件（FIFO、字符/块设备、套接字等）以及并发替换为非普通文件的挂起风险，非阻塞读取（`O_NONBLOCK`）并拒绝负数文件大小（`st_size < 0`），防范字节统计溢出与挂起 DoS。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/runtime/fingerprint.py` 及专项安全测试 `tests/test_workspace_fingerprint_security.py`；保持外部调用接口（`workspace_fingerprint`、`WorkspaceSnapshotError`、`MAX_SNAPSHOT_DEPTH`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-FPR-01-A1 | `workspace_fingerprint` 严格校验 `root` 为 `Path` 或 `str`，拒绝非法类型（`TypeError`）与空字节（`ValueError`），彻底阻断末尾斜杠符号链接根目录绕过 | `tests/test_workspace_fingerprint_security.py` 路径类型、空字节与末尾斜杠符号链接根目录防御测试 | E1 |
+| SF-FPR-01-A2 | `deadline` 严格校验有限数值（拦截 `NaN`/`inf`/布尔），超时严格抛出 `TimeoutError`；`cancel` 严格校验 `Event` 实例并在置位时立即响应中断 | `tests/test_workspace_fingerprint_security.py` 截止时间有限性与取消事件类型状态机测试 | E2 |
+| SF-FPR-01-A3 | 祖先目录设备与 inode 集合追踪防御目录自循环（bind mount / 循环链接）；非普通文件与负数文件大小严格 fail-closed 拒绝 | `tests/test_workspace_fingerprint_security.py` 目录递归自循环与负数文件大小防御测试 | E3 |
+| SF-FPR-01-A4 | 保证内容哈希确定性、排除项过滤、并发修改感知与向后兼容性；全量回归套件与静态合规通过 | `tests/test_workspace_fingerprint_security.py`、`tests/test_workspace_fingerprint.py`、`tests/test_workspace_delivery.py` 与静态/单元测试命令 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-FPR-01-A1 | `tests/test_workspace_fingerprint_security.py::test_workspace_fingerprint_rejects_invalid_root_type`、`tests/test_workspace_fingerprint_security.py::test_workspace_fingerprint_supports_str_and_rejects_null_bytes`、`tests/test_workspace_fingerprint_security.py::test_workspace_fingerprint_rejects_symlink_root_even_with_trailing_slash` | 本地 `pytest -v tests/test_workspace_fingerprint_security.py`；GitHub Actions CI `Unit tests` | `7e24533354b9fbf17f4310dd8f71fd7195f09461`；passed；CI [R1 43735305134](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43735305134) |
+| E2 | SF-FPR-01-A2 | `tests/test_workspace_fingerprint_security.py::test_workspace_fingerprint_validates_deadline`、`tests/test_workspace_fingerprint_security.py::test_workspace_fingerprint_validates_cancel_type` | 本地 `pytest -v tests/test_workspace_fingerprint_security.py`；GitHub Actions CI `Unit tests` | `7e24533354b9fbf17f4310dd8f71fd7195f09461`；passed；CI [R1 43735305134](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43735305134) |
+| E3 | SF-FPR-01-A3 | `tests/test_workspace_fingerprint_security.py::test_workspace_fingerprint_detects_directory_cycle`、`tests/test_workspace_fingerprint_security.py::test_workspace_fingerprint_rejects_negative_file_size` | 本地 `pytest -v tests/test_workspace_fingerprint_security.py`；GitHub Actions CI `Unit tests` | `7e24533354b9fbf17f4310dd8f71fd7195f09461`；passed；CI [R1 43735305134](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43735305134) |
+| E4 | SF-FPR-01-A4 | `tests/test_workspace_fingerprint.py::test_snapshot_is_content_based_and_bound_to_workspace`、`tests/test_workspace_fingerprint.py::test_private_and_generated_files_are_excluded`、`tests/test_workspace_evidence.py::test_unreadable_snapshot_revokes_saved_evidence`、`tests/test_workspace_delivery.py::test_commit_workspace_success_and_protected_file_exclusion` | 本地 `pytest -v`、`ruff check .`、`python scripts/check_sdd.py`；GitHub Actions CI `Unit tests` 与 `Docker integration tests` | `7e24533354b9fbf17f4310dd8f71fd7195f09461`；passed；CI [R1 43735305134](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43735305134) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-fpr-01 (worktree: selfforge-sf-fpr-01) / 7e24533354b9fbf17f4310dd8f71fd7195f09461
+已完成验收与证据 ID：SF-FPR-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；测试全绿，R1 CI 通过
+PR / 准确 head CI / merge SHA（有则填）：PR #89 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43735305134 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #89。
 ```
 
 ## 5. 验收追踪与执行记录格式
