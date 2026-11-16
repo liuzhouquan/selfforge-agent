@@ -1,24 +1,55 @@
 """Automatic PR risk prioritization for targeted test generation."""
 
+import math
 import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from selfforge_agent.coding.models import RiskTarget
 from selfforge_agent.models import ChangeKind, Finding, PRContext
 from selfforge_agent.review.baseline import BaselineReviewer
 
+MAX_SCAN_FILES = 1_000
+MAX_SCAN_HUNKS = 1_000
+MAX_SCAN_LINES = 10_000
+MAX_ADDED_LINES = 10_000
+MAX_FINDINGS = 1_000
+MAX_EVIDENCE_CHARS = 2_000
+
+__all__ = [
+    "MAX_ADDED_LINES",
+    "MAX_EVIDENCE_CHARS",
+    "MAX_FINDINGS",
+    "MAX_SCAN_FILES",
+    "PrioritizedRisk",
+    "prioritize_risks",
+]
+
 
 class PrioritizedRisk(BaseModel):
-    file_path: str = Field(min_length=1)
+    file_path: str = Field(min_length=1, max_length=500)
     line_number: int = Field(ge=1)
-    severity: str
-    category: str
-    description: str
-    evidence: str
+    severity: str = Field(min_length=1, max_length=50)
+    category: str = Field(default="", max_length=100)
+    description: str = Field(min_length=1, max_length=1_000)
+    evidence: str = Field(min_length=1, max_length=2_000)
     score: float
     rank: int = Field(ge=1)
-    rationale: str
+    rationale: str = Field(default="", max_length=500)
+
+    @field_validator("file_path", "severity", "category", "description", "evidence", "rationale")
+    @classmethod
+    def _validate_no_null_bytes(cls, value: str) -> str:
+        if "\0" in value:
+            raise ValueError("null byte is not allowed")
+        return value
+
+    @field_validator("score")
+    @classmethod
+    def _validate_score_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("score must be a finite number")
+        return float(value)
 
     def to_risk_target(self) -> RiskTarget:
         return RiskTarget(
@@ -82,7 +113,26 @@ def _score_candidate(severity: str, category: str, evidence: str) -> tuple[float
     rationale = f"severity={severity} ({base:.0f}pts) + category={category} ({cat_bonus:.0f}pts)"
     if code_bonus:
         rationale += f" + code_heuristics ({code_bonus:+.0f}pts)"
-    return total, rationale
+    return total, rationale[:500]
+
+
+def _bounded_context(context: PRContext) -> PRContext:
+    files = []
+    remaining_lines = MAX_SCAN_LINES
+    remaining_hunks = MAX_SCAN_HUNKS
+    for file in context.files[:MAX_SCAN_FILES]:
+        hunks = []
+        for hunk in file.hunks[:remaining_hunks]:
+            lines = hunk.lines[:remaining_lines]
+            hunks.append(hunk.model_copy(update={"lines": lines}))
+            remaining_hunks -= 1
+            remaining_lines -= len(lines)
+            if remaining_lines == 0 or remaining_hunks == 0:
+                break
+        files.append(file.model_copy(update={"hunks": hunks}))
+        if remaining_lines == 0 or remaining_hunks == 0:
+            break
+    return context.model_copy(update={"files": files})
 
 
 def prioritize_risks(
@@ -91,17 +141,36 @@ def prioritize_risks(
     top_k: int = 5,
 ) -> list[PrioritizedRisk]:
     """Score and rank added-line risk hypotheses from diff and review findings."""
+    if not isinstance(context, PRContext):
+        raise TypeError("context must be a PRContext instance")
     if type(top_k) is not int or top_k < 1 or top_k > 100:
         raise ValueError("top_k must be an integer between 1 and 100")
+    if findings is not None:
+        if not isinstance(findings, list):
+            raise TypeError("findings must be a list of Finding instances or None")
+        for f in findings:
+            if not isinstance(f, Finding):
+                raise TypeError("findings must contain only Finding instances")
+
+    context = _bounded_context(context)
     added_lines: dict[tuple[str, int], str] = {}
-    for file in context.files:
-        if not file.path.endswith(".py"):
+    for file in context.files[:MAX_SCAN_FILES]:
+        if not isinstance(file.path, str) or not file.path.endswith(".py"):
+            continue
+        if "\0" in file.path or len(file.path) > 500:
             continue
         for hunk in file.hunks:
             for line in hunk.lines:
-                if line.kind == ChangeKind.added and line.new_line is not None:
-                    content = line.content.strip() or "<blank added line>"
+                if line.kind == ChangeKind.added and isinstance(line.new_line, int) and line.new_line >= 1:
+                    raw_content = line.content.replace("\0", "").strip() or "<blank added line>"
+                    content = raw_content[:MAX_EVIDENCE_CHARS]
                     added_lines[(file.path, line.new_line)] = content
+                    if len(added_lines) >= MAX_ADDED_LINES:
+                        break
+            if len(added_lines) >= MAX_ADDED_LINES:
+                break
+        if len(added_lines) >= MAX_ADDED_LINES:
+            break
 
     if not added_lines:
         return []
@@ -109,13 +178,23 @@ def prioritize_risks(
     candidates: list[tuple[str, int, str, str, str, str]] = []
     # (file_path, line_number, severity, category, description, evidence)
 
-    active_findings = findings if findings is not None else BaselineReviewer().review(context)
+    active_findings: list[Finding]
+    if findings is not None:
+        active_findings = findings[:MAX_FINDINGS]
+    else:
+        active_findings = BaselineReviewer().review(context)[:MAX_FINDINGS]
+
     for f in active_findings:
+        if not isinstance(f.file_path, str) or not isinstance(f.line_number, int):
+            continue
         key = (f.file_path, f.line_number)
         if key in added_lines:
+            sev = (f.severity or "medium").replace("\0", "")[:50] or "medium"
+            cat = (f.category or "review-finding").replace("\0", "")[:100]
+            desc = (f.description or "Review finding").replace("\0", "")[:1000] or "Review finding"
             candidates.append((
-                f.file_path, f.line_number, f.severity, f.category,
-                f.description, added_lines[key],
+                f.file_path, f.line_number, sev, cat,
+                desc, added_lines[key],
             ))
 
     # If no review findings matched added lines, scan diff added lines with risk heuristics
@@ -162,7 +241,7 @@ def prioritize_risks(
             evidence=evidence,
             score=score,
             rank=rank,
-            rationale=rationale,
+            rationale=rationale[:500],
         ))
 
     return results
