@@ -141,6 +141,7 @@ flowchart LR
 | 31 | [SF-RISK-01](#sf-risk-01) | Merged | Codex（审查整合） | 无 | [PR #88](https://github.com/liuzhouquan/selfforge-agent/pull/88)：PR风险优先级排序与RiskTarget契约边界加固：上下文与发现类型Fail-Closed校验、扫描深度与代码行有界防御、PrioritizedRisk模式与空字节防御、确定性排序与有效转换 |
 | 32 | [SF-FPR-01](#sf-fpr-01) | Merged | Codex（审查整合） | 无 | [PR #89](https://github.com/liuzhouquan/selfforge-agent/pull/89)：工作区快照指纹哈希安全加固：root输入防御与斜杠绕过软链接防御、有限正数deadline与cancel状态机对齐、目录递归自循环防御、非普通文件与负大小防御 |
 | 33 | [SF-CTX-01](#sf-ctx-01) | Merged | Codex（审查整合） | 无 | [PR #90](https://github.com/liuzhouquan/selfforge-agent/pull/90)：模型上下文管理器与结构化压缩防御加固（`estimate_tokens` / `estimate_message_tokens` / `_recent_interactions` / `ContextManager`） |
+| 34 | [SF-REPAIR-01](#sf-repair-01) | In Review | Codex | SF-CORE-01 / SF-REV-01（Merged） | [PR #92](https://github.com/liuzhouquan/selfforge-agent/pull/92)：RepairAgent 修复循环与参数边界防御加固：构造与任务守门、变更源安全提取、编辑异常隔离与遥测状态机对齐 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1462,6 +1463,40 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #90 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43793394572（最终组合；各源 PR 见审查记录） / 224a147e6abe6810edafb6bab0bb91f2dd89b663
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填十二个 PR 的交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动运行付费模型测量。
+```
+
+### SF-REPAIR-01
+
+**目标：** 加固修复循环代理（RepairAgent）的构造与运行参数边界校验、变更源文件提取安全防御、模型交互与提议异常隔离、以及遥测状态机与会话指标精准对齐。
+
+**范围/入口：** `src/selfforge_agent/coding/agent.py`（`RepairAgent`、`_editable_files`、`_safe_patch`、`_test_output`）、`src/selfforge_agent/cli.py`、`src/selfforge_agent/api/app.py`；新增专项安全测试 `tests/test_repair_agent_security.py`。
+
+**行为：** `RepairAgent.__init__` 对 `model` 严格校验存在且具备可调用的 `propose` 方法，对 `runner` 校验具备可调用的 `run` 方法，对 `session` 校验具备 `record_status` 与 `trace` 方法，杜绝非法对象透传；`RepairAgent.run` 对 `trusted` 严格校验为布尔值，对 `task` 校验为不超过 100,000 字节的非空字符串，对 `max_attempts` 严格校验为 `1 <= int <= 3`（拒绝 `bool`、`float` 与非法数值），对 `timeout` 校验为不超过 3600 秒的有限正数（拒绝 `bool`、非正数、`NaN`、`inf`），对 `test_path` 严格校验相对路径与无路径穿越（拒绝绝对路径、`..` 与空字节），对 `base` 与 `head` 严格校验非空且无控制字符与注入前缀（拒绝以 `-` 开头、空字节与换行），对 `repository` 校验为存在的常规目录；`_editable_files` 严格校验变更路径位于工作区根目录下、排查目录软链接穿透、排查非普通文件（FIFO/设备）、并在文件读取与属性获取时捕获 `(OSError, UnicodeError, ValueError)`，对重复路径做去重保证有界；`_test_output` 稳健处理 `stdout` 或 `stderr` 为 `None` 的场景，安全截断最后 8000 字符；`_safe_patch` 捕获 git 命令执行异常与空白检查失败并受控映射为 `EditRejected`；修复循环中对模型返回的 `edit` 严格校验非空、具备必要属性且属性均为字符串，对模型提议畸形、`AttributeError`、`TypeError` 及 runner 异常执行隔离并受控反馈，确保修复循环稳健继续或优雅终止；`finally` 块中稳健提取模型调用记录，防御未受控结构与负数 Token，保证 `report.status` 与 `session.record_status` 在成功（verified）、未解决（unresolved）、无定论（inconclusive）与异常（error）全路径下严格对齐。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-REPAIR-01-A1 | `RepairAgent.__init__` 与 `run` 入参类型防御与越界校验：`model`、`runner`、`session` 严格类型防护；`task`（<=100KB 非空字符串）、`max_attempts`（1..3 整数）、`timeout`（有限正数 <=3600）、`test_path`（相对目录防穿越）、`trusted`、`base`/`head`（防注入与控制符）、`repository`（目录有效性）严格参数守门 | `tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_init_rejects_none_or_invalid_model`、`tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_run_rejects_non_string_task`、`tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_run_rejects_invalid_max_attempts`、`tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_run_rejects_invalid_timeout` | E1 |
+| SF-REPAIR-01-A2 | 变更源文件提取与安全补丁防御：`_editable_files` 严格限定在工作区根内，过滤绝对路径与 `..` 越界，隔离目录软链接穿透与非普通文件，稳健处理 OSError 并去重；`_test_output` 与 `_safe_patch` 防御 NoneType 拼接崩溃与 Git 执行异常 | `tests/test_repair_agent_security.py::TestSafeSourceAndPatchDefense::test_test_output_handles_none_stdout_or_stderr`、`tests/test_repair_agent_security.py::TestSafeSourceAndPatchDefense::test_editable_files_filters_absolute_and_traversal_paths`、`tests/test_repair_agent_security.py::TestSafeSourceAndPatchDefense::test_editable_files_filters_symlink_directories` | E2 |
+| SF-REPAIR-01-A3 | 修复循环与模型交互异常隔离：模型提议为 `None`、缺少必要属性或属性非字符串时受控隔离并反馈至下一轮尝试，防御未受控 `AttributeError`/`TypeError` 崩溃；runner 执行崩溃与返回 None 受控隔离为错误状态 | `tests/test_repair_agent_security.py::TestModelInteractionAndRepairLoopIsolation::test_repair_loop_handles_none_edit`、`tests/test_repair_agent_security.py::TestModelInteractionAndRepairLoopIsolation::test_repair_loop_handles_malformed_edit_object`、`tests/test_repair_agent_security.py::TestModelInteractionAndRepairLoopIsolation::test_repair_loop_handles_runner_exception` | E3 |
+| SF-REPAIR-01-A4 | 遥测状态机对齐与指标安全汇聚：在 verified、unresolved、inconclusive 与 error 全路径下，`report.status` 与 `session.record_status` 严格对齐；`finally` 块防御畸形 attempts 记录、负数 Token 与计费估算异常，保证安全完成 | `tests/test_repair_agent_security.py::TestTelemetryAndStatusAlignment::test_finally_handles_malformed_model_attempts`、`tests/test_repair_agent_security.py::TestTelemetryAndStatusAlignment::test_finally_handles_corrupted_token_usage`、`tests/test_repair_agent_security.py::TestTelemetryAndStatusAlignment::test_session_status_aligned_across_all_outcomes` | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-REPAIR-01-A1 | `tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_init_rejects_none_or_invalid_model`、`tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_run_rejects_non_string_task`、`tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_run_rejects_invalid_max_attempts`、`tests/test_repair_agent_security.py::TestRepairAgentInitAndParameterDefense::test_run_rejects_invalid_timeout` | 本地 `pytest -v tests/test_repair_agent_security.py`；GitHub CI `Unit tests` | `7a4360c7a523a9d5d59a72fa344d95fe71424b91`；passed；CI [Run #43829092185](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43829092185) |
+| E2 | SF-REPAIR-01-A2 | `tests/test_repair_agent_security.py::TestSafeSourceAndPatchDefense::test_test_output_handles_none_stdout_or_stderr`、`tests/test_repair_agent_security.py::TestSafeSourceAndPatchDefense::test_editable_files_filters_absolute_and_traversal_paths`、`tests/test_repair_agent_security.py::TestSafeSourceAndPatchDefense::test_editable_files_filters_symlink_directories` | 本地 `pytest -v tests/test_repair_agent_security.py`；GitHub CI `Unit tests` | `7a4360c7a523a9d5d59a72fa344d95fe71424b91`；passed；CI [Run #43829092185](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43829092185) |
+| E3 | SF-REPAIR-01-A3 | `tests/test_repair_agent_security.py::TestModelInteractionAndRepairLoopIsolation::test_repair_loop_handles_none_edit`、`tests/test_repair_agent_security.py::TestModelInteractionAndRepairLoopIsolation::test_repair_loop_handles_malformed_edit_object`、`tests/test_repair_agent_security.py::TestModelInteractionAndRepairLoopIsolation::test_repair_loop_handles_runner_exception` | 本地 `pytest -v tests/test_repair_agent_security.py`；GitHub CI `Unit tests` | `7a4360c7a523a9d5d59a72fa344d95fe71424b91`；passed；CI [Run #43829092185](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43829092185) |
+| E4 | SF-REPAIR-01-A4 | `tests/test_repair_agent_security.py::TestTelemetryAndStatusAlignment::test_finally_handles_malformed_model_attempts`、`tests/test_repair_agent_security.py::TestTelemetryAndStatusAlignment::test_finally_handles_corrupted_token_usage`、`tests/test_repair_agent_security.py::TestTelemetryAndStatusAlignment::test_session_status_aligned_across_all_outcomes` | 本地 `pytest -v tests/test_repair_agent_security.py`；GitHub CI `Unit tests` | `7a4360c7a523a9d5d59a72fa344d95fe71424b91`；passed；CI [Run #43829092185](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43829092185) |
+
+执行记录（Owner/状态以上表为准）：Base=`c5cbeffe332964d08b712036919873aeb1e13f46`；Branch=`feat/sf-repair-01`；Worktree=`selfforge-sf-repair-01`；PR=[#92](https://github.com/liuzhouquan/selfforge-agent/pull/92)。实现 RepairAgent 构造与运行参数强校验、源码提取与安全补丁防御、模型提议畸形容错与循环隔离、遥测指标与会话终止状态机对齐。源码提交 `7a4360c7a523a9d5d59a72fa344d95fe71424b91`，CI [Run #43829092185](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43829092185) 全绿通过。
+
+```text
+Owner / 状态：Codex / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeffe332964d08b712036919873aeb1e13f46 / feat/sf-repair-01 (worktree: selfforge-sf-repair-01) / 源码提交 7a4360c7a523a9d5d59a72fa344d95fe71424b91
+已完成验收与证据 ID：SF-REPAIR-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交冲突；CI 全绿；等待审查与合并
+PR / 准确 head CI / merge SHA（有则填）：PR #92 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43829092185 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #92 审查合入主线
 ```
 
 ## 5. 验收追踪与执行记录格式
