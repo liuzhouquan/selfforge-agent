@@ -136,6 +136,7 @@ flowchart LR
 | 26 | [SF-CORE-01](#sf-core-01) | In Review | Antigravity | 无 | [PR #83](https://github.com/liuzhouquan/selfforge-agent/pull/83)：Git 差异上下文与补丁解析安全加固：仓库路径软链接防御、差异解包受控映射、补丁与行号有界防 DoS |
 | 27 | [SF-REV-01](#sf-rev-01) | In Review | Antigravity | 无 | [PR #84](https://github.com/liuzhouquan/selfforge-agent/pull/84)：代码审查引擎安全加固：规则基线有界防御、模型审查输入/输出防御与执行隔离 |
 | 28 | [SF-CTRL-01](#sf-ctrl-01) | In Review | Antigravity | 无 | [PR #85](https://github.com/liuzhouquan/selfforge-agent/pull/85)：运行时控制流与瞬态指导安全加固：工具循环检测防御、编辑失败循环防护、上下文压力评估与预算通知有界防御 |
+| 29 | [SF-MODEL-01](#sf-model-01) | In Review | Antigravity | 无 | [PR #86](https://github.com/liuzhouquan/selfforge-agent/pull/86)：编码模型客户端安全加固：有限正超时校验、Base URL与凭据防御、输入观测类型与有界负载防御、Markdown代码块剥离与CodeEdit边界校验 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1209,6 +1210,36 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #85 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43670652358 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查与合并 PR #85。
+```
+
+### SF-MODEL-01
+
+**目标：** 在 `selfforge_agent.coding.model_client` 编码模型客户端中贯彻 fail-closed、输入防御与资源有界防御。`OpenAICompatibleCodingModel` 与 `FallbackCodingModel` 对 `timeout` 强校验有限正数（阻断 `NaN`/`inf`/`<=0`/`bool`/非数值类型）；`base_url` 严格校验方案（仅允许 HTTPS 或本地 HTTP `localhost`/`127.0.0.1`/`::1`），拒绝凭据（username/password）、查询参数（query）与片段（fragment），非法或空远程 API key fail-closed 报错；`propose` 严格防御不可信输入，校验 `observation` 必须为 `RepairObservation` 实例（阻断非预期对象/字典/畸形输入），并对观测序列化有效负载施加尺寸上限（最大 2 MiB `MAX_OBSERVATION_PAYLOAD_BYTES`），防范超限有效负载引发内存与网络 DoS；模型输出解析捕获截断状态（`finish_reason="length"`）并映射为受控 `ModelError`，自动容错 LLM 返回的 Markdown 代码块（````json ... ````）清洗提取有效 JSON；对解析出的 `CodeEdit` 施加严格边界校验：`path` 拒绝空字节 `\0`、绝对路径与 `..` 路径穿越分段且限制长度（<=1024 字符 `MAX_PATH_CHARS`），`old_text`、`new_text`（<=1,000,000 字符 `MAX_TEXT_CHARS`）与 `rationale`（<=100,000 字符 `MAX_RATIONALE_CHARS`）施加有界长度约束；异常统一映射为受控 `ModelError`，绝不泄露未受控 500/异常。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/coding/model_client.py` 及专项安全测试 `tests/test_coding_model_client_security.py`；保持外部调用接口（`OpenAICompatibleCodingModel`、`FallbackCodingModel`、`CodingModel`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-MODEL-01-A1 | `OpenAICompatibleCodingModel` 与 `FallbackCodingModel` 对 `timeout` 强校验有限正数（阻断 `NaN`/`inf`/`<=0`/`bool`/非数值类型）；`base_url` 严格校验方案（仅允许 HTTPS 或本地 HTTP `localhost`/`127.0.0.1`/`::1`），拒绝凭据（username/password）、查询参数（query）与片段（fragment），非法或空远程 API key fail-closed 报错 | `tests/test_coding_model_client_security.py` 超时校验、Base URL 凭据与远程密钥校验测试 | E1 |
+| SF-MODEL-01-A2 | `propose` 严格防御不可信输入，校验 `observation` 必须为 `RepairObservation` 实例（阻断非预期对象/字典/畸形输入）；对观测序列化有效负载施加尺寸上限（最大 2 MiB），防止超限有效负载引发内存与网络 DoS | `tests/test_coding_model_client_security.py` 观测输入类型校验与有界有效负载测试 | E2 |
+| SF-MODEL-01-A3 | 对模型响应截断状态（`finish_reason="length"`）显式映射为受控 `ModelError`；容错 LLM 返回的 Markdown 代码块（````json ... ````），自动剥离标记提取有效 JSON；对非字典、缺失 choice/message 以及畸形输出统一映射为受控 `ModelError`，绝不泄露未受控 500/异常 | `tests/test_coding_model_client_security.py` 截断响应、Markdown 代码块清洗与畸形输出映射测试 | E3 |
+| SF-MODEL-01-A4 | 对解析出的 `CodeEdit` 施加严格边界校验：`path` 拒绝空字节 `\0`、绝对路径与 `..` 路径穿越分段且限制长度（<=1024 字符）；`old_text`、`new_text`、`rationale` 施加长度约束；静态检查 `ruff check .`、文档检查 `scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_coding_model_client_security.py`、`tests/test_repair_agent.py` 与全套静态/单元测试命令 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-MODEL-01-A1 | `tests/test_coding_model_client_security.py::test_coding_model_timeout_validation`、`tests/test_coding_model_client_security.py::test_coding_model_base_url_and_credentials_validation` | 本地 `pytest -v tests/test_coding_model_client_security.py`；GitHub Actions CI `Unit tests` | `1aef15179027db19bf4b3094da968be6014064b8`；passed；CI [R1 43708232832](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43708232832) |
+| E2 | SF-MODEL-01-A2 | `tests/test_coding_model_client_security.py::test_coding_model_observation_input_defense` | 本地 `pytest -v tests/test_coding_model_client_security.py`；GitHub Actions CI `Unit tests` | `1aef15179027db19bf4b3094da968be6014064b8`；passed；CI [R1 43708232832](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43708232832) |
+| E3 | SF-MODEL-01-A3 | `tests/test_coding_model_client_security.py::test_coding_model_handles_finish_reason_length`、`tests/test_coding_model_client_security.py::test_coding_model_strips_markdown_code_fences`、`tests/test_coding_model_client_security.py::test_coding_model_extracts_json_with_surrounding_commentary`、`tests/test_coding_model_client_security.py::test_coding_model_malformed_response_handling` | 本地 `pytest -v tests/test_coding_model_client_security.py`；GitHub Actions CI `Unit tests` | `1aef15179027db19bf4b3094da968be6014064b8`；passed；CI [R1 43708232832](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43708232832) |
+| E4 | SF-MODEL-01-A4 | `tests/test_coding_model_client_security.py::test_coding_model_defensive_bounds_on_code_edit`、`tests/test_coding_model_client_security.py::test_fallback_coding_model_fail_closed_validation`、`tests/test_repair_agent.py::test_model_client_parses_validated_edit`、`tests/test_repair_agent.py::test_model_client_rejects_invalid_json`、`tests/test_repair_agent.py::test_coding_model_switches_provider_after_failure` | 本地 `pytest -v`、`ruff check .`、`python scripts/check_sdd.py`；GitHub Actions CI `Unit tests` 与 `Docker integration tests` | `1aef15179027db19bf4b3094da968be6014064b8`；passed；CI [R1 43708232832](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43708232832) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-model-01 (worktree: selfforge-sf-model-01) / 1aef15179027db19bf4b3094da968be6014064b8
+已完成验收与证据 ID：SF-MODEL-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；测试全绿，R1 CI 通过
+PR / 准确 head CI / merge SHA（有则填）：PR #86 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43708232832 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #86。
 ```
 
 ## 5. 验收追踪与执行记录格式
