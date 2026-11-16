@@ -138,6 +138,7 @@ flowchart LR
 | 28 | [SF-CTRL-01](#sf-ctrl-01) | In Review | Antigravity | 无 | [PR #85](https://github.com/liuzhouquan/selfforge-agent/pull/85)：运行时控制流与瞬态指导安全加固：工具循环检测防御、编辑失败循环防护、上下文压力评估与预算通知有界防御 |
 | 29 | [SF-MODEL-01](#sf-model-01) | In Review | Antigravity | 无 | [PR #86](https://github.com/liuzhouquan/selfforge-agent/pull/86)：编码模型客户端安全加固：有限正超时校验、Base URL与凭据防御、输入观测类型与有界负载防御、Markdown代码块剥离与CodeEdit边界校验 |
 | 30 | [SF-WT-01](#sf-wt-01) | In Review | Antigravity | 无 | [PR #87](https://github.com/liuzhouquan/selfforge-agent/pull/87)：Git worktree与临时分支执行安全加固：子进程执行与有界读取防御、修订与参数注入防御、目标路径与符号链接隔离防御、清理容错与工作区元数据修剪 |
+| 31 | [SF-RISK-01](#sf-risk-01) | In Review | Antigravity | 无 | [PR #88](https://github.com/liuzhouquan/selfforge-agent/pull/88)：PR风险优先级排序与RiskTarget契约边界加固：上下文与发现类型Fail-Closed校验、扫描深度与代码行有界防御、PrioritizedRisk模式与空字节防御、确定性排序与有效转换 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1271,6 +1272,36 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #87 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43711818243 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查与合并 PR #87。
+```
+
+### SF-RISK-01
+
+**目标：** 在 `selfforge_agent.coding.risk_prioritization` PR 风险优先级排序模块与 `PrioritizedRisk` 契约模型中贯彻 fail-closed、输入防御与资源有界防御。`prioritize_risks` 严格校验 `context` 参数必须为 `PRContext` 实例，拒绝 `None`、字典、字符串等非受控类型（抛出受控 `TypeError`，避免未受控 `AttributeError` 泄漏）；`findings` 参数严格校验必须为 `None` 或 `Finding` 实例列表，拒绝非列表类型及包含非 `Finding` 元素的序列；对 `context.files` 施加最大扫描文件上限（1,000 文件 `MAX_SCAN_FILES`），对全量累积新增代码行施加内存与扫描行数上限（10,000 行 `MAX_ADDED_LINES`），对审查发现施加扫描上限（1,000 条 `MAX_FINDINGS`），阻断超大 PR 或失控 Diff 导致的拒绝服务（DoS）；`PrioritizedRisk` 契约模型严格加固字段长度边界（`file_path <= 500`、`line_number >= 1`、`severity <= 50`、`category <= 100`、`description <= 1000`、`evidence <= 2000`、`rationale <= 500`），禁止任何字符串字段包含空字节 `\0`，强制 `score` 为有限数值（拒绝 `NaN` / `inf`），并在新增行证据超出 2,000 字符时安全截断，确保 `to_risk_target()` 转换为 `RiskTarget` 时绝对安全且不会触发 Pydantic `ValidationError`；保持 `top_k` 严格 fail-closed 校验（1 至 100 整数，拒绝布尔值与非整型），并保持确定性排序规则（按分值降序、文件升序、行号升序、分类升序），以及连续整数排序排名（1..k）。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/coding/risk_prioritization.py` 及专项安全测试 `tests/test_risk_prioritization_security.py`；保持外部调用接口（`PrioritizedRisk`、`prioritize_risks`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-RISK-01-A1 | `prioritize_risks` 严格校验 `context` 为 `PRContext` 实例、`findings` 为 `Finding` 列表或 `None`，非法类型均以 `TypeError` 受控拒绝 | `tests/test_risk_prioritization_security.py` 上下文与审查发现参数类型校验测试 | E1 |
+| SF-RISK-01-A2 | `PrioritizedRisk` 严格加固字符串长度边界、拒绝空字节 `\0` 与非有限 `score`，确保 `to_risk_target()` 安全转换不抛 `ValidationError` | `tests/test_risk_prioritization_security.py` 模型契约边界、空字节防御、分值有限性与目标转换安全测试 | E2 |
+| SF-RISK-01-A3 | 对 `context.files`（1,000）、累积新增行（10,000）与发现列表（1,000）施加有界防御，超长行证据安全截断，非 Python 文件与畸形路径安全跳过 | `tests/test_risk_prioritization_security.py` 扫描上限、证据截断与路径防御测试 | E3 |
+| SF-RISK-01-A4 | `top_k` 严格保持 1–100 整数 fail-closed 校验；排序结果满足确定性决胜规则与连续排名；全量非集成测试与静态检查通过 | `tests/test_risk_prioritization_security.py`、`tests/test_risk_prioritization.py`、`tests/test_test_generation.py` 与静态/单元测试命令 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-RISK-01-A1 | `tests/test_risk_prioritization_security.py::test_prioritize_risks_rejects_invalid_context_type`、`tests/test_risk_prioritization_security.py::test_prioritize_risks_rejects_invalid_findings_type` | 本地 `pytest -v tests/test_risk_prioritization_security.py`；GitHub Actions CI `Unit tests` | `ece71341fc08da5d1e12dd865a92b3177d4ce559`；passed；CI [R1 43721461904](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43721461904) |
+| E2 | SF-RISK-01-A2 | `tests/test_risk_prioritization_security.py::test_prioritized_risk_boundary_and_null_bytes`、`tests/test_risk_prioritization_security.py::test_prioritized_risk_rejects_non_finite_score`、`tests/test_risk_prioritization_security.py::test_prioritized_risk_to_risk_target_safety` | 本地 `pytest -v tests/test_risk_prioritization_security.py`；GitHub Actions CI `Unit tests` | `ece71341fc08da5d1e12dd865a92b3177d4ce559`；passed；CI [R1 43721461904](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43721461904) |
+| E3 | SF-RISK-01-A3 | `tests/test_risk_prioritization_security.py::test_prioritize_risks_truncates_oversized_evidence_for_risk_target`、`tests/test_risk_prioritization_security.py::test_prioritize_risks_bounds_scan_files_and_added_lines`、`tests/test_risk_prioritization_security.py::test_prioritize_risks_handles_findings_with_null_bytes_or_oversized_fields`、`tests/test_risk_prioritization_security.py::test_prioritize_risks_ignores_non_python_and_malformed_paths` | 本地 `pytest -v tests/test_risk_prioritization_security.py`；GitHub Actions CI `Unit tests` | `ece71341fc08da5d1e12dd865a92b3177d4ce559`；passed；CI [R1 43721461904](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43721461904) |
+| E4 | SF-RISK-01-A4 | `tests/test_risk_prioritization_security.py::test_prioritize_risks_top_k_validation`、`tests/test_risk_prioritization_security.py::test_prioritize_risks_deterministic_tie_breaking`、`tests/test_risk_prioritization.py::test_prioritize_risks_orders_by_severity_and_category`、`tests/test_test_generation.py::test_generated_test_proves_base_head_difference`、`tests/test_test_generation_safety.py::test_prioritize_risks_validates_top_k` | 本地 `pytest -v`、`ruff check .`、`python scripts/check_sdd.py`；GitHub Actions CI `Unit tests` 与 `Docker integration tests` | `ece71341fc08da5d1e12dd865a92b3177d4ce559`；passed；CI [R1 43721461904](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43721461904) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-risk-01 (worktree: selfforge-sf-risk-01) / ece71341fc08da5d1e12dd865a92b3177d4ce559
+已完成验收与证据 ID：SF-RISK-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；测试全绿，R1 CI 通过
+PR / 准确 head CI / merge SHA（有则填）：PR #88 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43721461904 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #88。
 ```
 
 ## 5. 验收追踪与执行记录格式
