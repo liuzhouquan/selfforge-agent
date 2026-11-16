@@ -131,6 +131,7 @@ flowchart LR
 | 21 | [SF-RUN-08](#sf-run-08) | Merged | Codex（审查整合） | 无 | [PR #78](https://github.com/liuzhouquan/selfforge-agent/pull/78)：运行时执行器与测试失败工件安全加固：工件原子读写防符链穿透/FIFO阻塞、执行器超时与命令有界校验、工作区根目录隔离 |
 | 22 | [SF-PROV-02](#sf-prov-02) | In Review | Antigravity | 无 | [PR #79](https://github.com/liuzhouquan/selfforge-agent/pull/79)：模型供应商配置与 HTTP 传输安全加固：SSRF 协议限制与本地文件读取杜绝、CRLF 响应头注入防御、配置读取防符链/FIFO阻塞、进程锁加固 |
 | 23 | [SF-INT-01](#sf-int-01) | In Review | Antigravity | 无 | [PR #80](https://github.com/liuzhouquan/selfforge-agent/pull/80)：GitHub PR 提取与检出安全加固：命令注入与参数投毒防御、URL 规范化、工作区路径防符链穿透、Diff Hunk 解析有界防御 |
+| 24 | [SF-PRICE-01](#sf-price-01) | In Review | Antigravity | 无 | [PR #81](https://github.com/liuzhouquan/selfforge-agent/pull/81)：模型费率卡与成本估算安全加固：JSON 反序列化深度防御、Token 计数严格类型与非负校验、货币代码规范化、浮点溢出安全回退 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1054,6 +1055,36 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #80 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43609921849 / 无
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无
 下一步：等待 PR #80 审查合并，合并后在后续整合或对账中闭合 merge SHA。
+```
+
+### SF-PRICE-01
+
+**目标：** 在模型费率卡解析与货币成本估算模块（`src/selfforge_agent/runtime/pricing.py`）中贯彻输入防御（Fail-Closed）、跨层规范化与未受控异常收敛原则。严格校验 `TokenUsage` 的 `prompt_tokens` 与 `completion_tokens` 类型为严格整数 `int`，拒绝布尔值（`True`/`False`）、浮点数、字符串、负数以及单次请求超过 `1,000,000,000` 的异常数值；对环境变量 `SELFFORGE_PRICING_JSON` 执行反序列化深度防御，限制输入体积上限为 16 KiB 并杜绝空字符 `\x00`，严格要求根对象及 provider/model 映射层级均为字典结构，拒绝非字典与畸形配置；模型与 provider 标识符校验排斥空字符与控制字符（`\r`、`\n`、`\t`）；在 `ModelRates` 与 `MonetaryCost` 中强制规范化 ISO 4217 三位大写字母货币代码（`^[A-Z]{3}$`）；在 `sum_monetary_costs` 中强制执行跨币种一致性校验，拒绝在无汇率换算时混加不同货币（返回 `None`）；在 `format_monetary_cost` 中提供健壮防御，遇到 `None`、`NaN`、`inf`、负数或格式不规范对象时安全回退返回 `"uncalibrated"`。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/pricing.py` 并新增专项测试 `tests/test_pricing_security.py`；保持与既有调用方（`pricing.py`、`test_pricing.py`）向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-PRICE-01-A1 | TokenUsage 的 `prompt_tokens` 与 `completion_tokens` 必须为严格非负整数且不超过 10 亿；传入布尔值（如 `True`）、浮点数、字符串、负数或超大数值时 fail-closed 返回 `None` | `tests/test_pricing_security.py` 严格整数、布尔防御、负数与溢出测试 | E1 |
+| SF-PRICE-01-A2 | `ModelRates` 与 `MonetaryCost` 强制要求 ISO 4217 三位大写字母货币代码（`^[A-Z]{3}$`），对小写、空字符串、非三位字母或含特殊字符拒绝校验 | `tests/test_pricing_security.py` 货币代码正则格式测试 | E2 |
+| SF-PRICE-01-A3 | `sum_monetary_costs` 校验输入全量为 `MonetaryCost` 且货币代码完全一致；遇到不同货币混加（如 USD + EUR）时拒绝盲目累加并返回 `None` | `tests/test_pricing_security.py` 跨币种混加防御测试 | E3 |
+| SF-PRICE-01-A4 | `SELFFORGE_PRICING_JSON` 反序列化防范超过 16 KiB 超大输入、非字典根结构与畸形卡片；provider/model 参数校验排斥 `\x00` 与控制字符；`format_monetary_cost` 遇到 `None`、`NaN`、负数安全返回 `"uncalibrated"`；本地全量测试与静态检查全部通过 | `tests/test_pricing_security.py` 环境变量与格式化防御测试，本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-PRICE-01-A1 | `tests/test_pricing_security.py::test_pricing_rejects_boolean_and_non_int_token_usage`、`tests/test_pricing_security.py::test_pricing_rejects_extreme_and_overflow_token_counts` | 本地 `pytest -v tests/test_pricing_security.py`；GitHub Actions CI `Unit tests` | `4cc33285035b9b82a3519c6326f2367880581035`；passed；CI [R1 43616839463](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43616839463) |
+| E2 | SF-PRICE-01-A2 | `tests/test_pricing_security.py::test_pricing_enforces_iso_currency_code` | 本地 `pytest -v tests/test_pricing_security.py`；GitHub Actions CI `Unit tests` | `4cc33285035b9b82a3519c6326f2367880581035`；passed；CI [R1 43616839463](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43616839463) |
+| E3 | SF-PRICE-01-A3 | `tests/test_pricing_security.py::test_pricing_rejects_mixed_currency_in_sum_monetary_costs` | 本地 `pytest -v tests/test_pricing_security.py`；GitHub Actions CI `Unit tests` | `4cc33285035b9b82a3519c6326f2367880581035`；passed；CI [R1 43616839463](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43616839463) |
+| E4 | SF-PRICE-01-A4 | `tests/test_pricing_security.py::test_pricing_rejects_malformed_and_oversized_env_json`、`tests/test_pricing_security.py::test_format_monetary_cost_handles_invalid_cost`、`tests/test_pricing.py::test_format_monetary_cost` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（869 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (869 passed) / Docker integration tests (15 passed) | `4cc33285035b9b82a3519c6326f2367880581035`；passed；CI [R1 43616839463](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43616839463) 全绿 |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-price-01 (worktree: selfforge-sf-price-01) / 源码提交 4cc33285035b9b82a3519c6326f2367880581035
+已完成验收与证据 ID：SF-PRICE-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地单元测试 869 passed；真实 Docker 运行与评测由 CI 执行
+PR / 准确 head CI / merge SHA（有则填）：PR #81 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43616839463（R1 CI 全绿，待回填 Commit H 之 R2 CI） / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：提交 Commit H 并推送到 origin/feat/sf-price-01，监控 R2 CI 直至通过。
 ```
 
 ## 5. 验收追踪与执行记录格式
