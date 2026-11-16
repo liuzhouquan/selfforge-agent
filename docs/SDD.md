@@ -141,6 +141,7 @@ flowchart LR
 | 31 | [SF-RISK-01](#sf-risk-01) | Merged | Codex（审查整合） | 无 | [PR #88](https://github.com/liuzhouquan/selfforge-agent/pull/88)：PR风险优先级排序与RiskTarget契约边界加固：上下文与发现类型Fail-Closed校验、扫描深度与代码行有界防御、PrioritizedRisk模式与空字节防御、确定性排序与有效转换 |
 | 32 | [SF-FPR-01](#sf-fpr-01) | Merged | Codex（审查整合） | 无 | [PR #89](https://github.com/liuzhouquan/selfforge-agent/pull/89)：工作区快照指纹哈希安全加固：root输入防御与斜杠绕过软链接防御、有限正数deadline与cancel状态机对齐、目录递归自循环防御、非普通文件与负大小防御 |
 | 33 | [SF-CTX-01](#sf-ctx-01) | Merged | Codex（审查整合） | 无 | [PR #90](https://github.com/liuzhouquan/selfforge-agent/pull/90)：模型上下文管理器与结构化压缩防御加固（`estimate_tokens` / `estimate_message_tokens` / `_recent_interactions` / `ContextManager`） |
+| 34 | [SF-PROC-01](#sf-proc-01) | In Review | Antigravity | 无 | [PR #97](https://github.com/liuzhouquan/selfforge-agent/pull/97)：有界原生子进程执行安全加固、参数与目录防御及进程组生命周期管理 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1462,6 +1463,38 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #90 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43793394572（最终组合；各源 PR 见审查记录） / 224a147e6abe6810edafb6bab0bb91f2dd89b663
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填十二个 PR 的交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动运行付费模型测量。
+```
+
+### SF-PROC-01
+
+**目标：** 加固原生有界子进程执行器（`run_bounded`），严格命令参数与工作目录（`cwd`）类型与边界防御，提供强隔离环境变量校验，健全超限截断与进程组生命周期安全回收。
+
+**范围/入口：** `src/selfforge_agent/core/process.py`（`BoundedProcessResult`、`run_bounded`、`_validate_command`、`_validate_cwd`、`_validate_env`、`_validate_timeout`、`_validate_output_limit`）。复用 `tests/test_bounded_process.py`，新增专项安全与生命周期测试 `tests/test_process_security.py`。
+
+**行为：** `run_bounded` 严格校验 `command` 为 `list[str]`（非 list 抛出 `TypeError`），拒绝空列表与空二进制名，限制最大参数数 `<= 1000` 与单参数长度 `<= 128 KiB`，防御空字节注入；`cwd` 严格校验类型（`None`、`str`、`Path`），防御空字节，校验存在性与必须为目录，全面防御软链接目录及其任意父目录软链接穿透；可选支持 `env` 严格字典键值字符串与空字节校验；`timeout` 校验必须为有限正数且在 `(0, 3600]` 秒内；`max_bytes` 与 `stderr_bytes` 约束在 `[1, 50 MiB]` 内且非 bool；多路复用 Selector 驱动读取并在超限时精确截断；`finally` 块实现优雅且彻底的进程组清理（捕获 `OSError`），`process.wait(timeout=2.0)` 杜绝不可中断挂起；保持与 `git_context`、`worktree`、`github_pr` 消费者的完全一致性。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-PROC-01-A1 | 严格命令与参数门禁：`command` 必须为非空 `list[str]`，限制参数数 `<=1000` 与单参数 `<=128 KiB`，防御空字节与非字符串参数 | `tests/test_process_security.py::TestProcessCommandGatingSecurity` 5 个反例测试 | E1 |
+| SF-PROC-01-A2 | 工作目录与环境安全校验：`cwd` 类型与存在性校验，防御软链接目录及其父级软链接穿透；`env` 严格字典键值字符串与空字节校验 | `tests/test_process_security.py::TestProcessWorkingDirAndEnvironmentSecurity` 6 个反例测试 | E2 |
+| SF-PROC-01-A3 | 资源边界与超时守护加固：`timeout` 在 `(0, 3600]` 秒内有限正数；输出限制在 `[1, 50 MiB]` 内；精确多路复用截断超限输出 | `tests/test_process_security.py::TestProcessResourceBoundariesAndTimeoutSecurity` 4 个测试 | E3 |
+| SF-PROC-01-A4 | 进程组生命周期与下游消费契约：超时与超限时立即终止并回收子进程组（杜绝延时写入）；结构化契约与现有消费者端到端兼容 | `tests/test_process_security.py::TestProcessLifecycleAndContractSecurity` 3 个测试与既有 `tests/test_bounded_process.py` | E4 |
+
+| 记录 | 验收 ID | 验证代码节点 / 检查项 | 命令 / 证据源 | 验证结果 / 提交 SHA |
+| --- | --- | --- | --- | --- |
+| E1 | SF-PROC-01-A1 | `tests/test_process_security.py::TestProcessCommandGatingSecurity::test_run_bounded_rejects_non_list_command`、`tests/test_process_security.py::TestProcessCommandGatingSecurity::test_run_bounded_rejects_empty_command_or_empty_binary`、`tests/test_process_security.py::TestProcessCommandGatingSecurity::test_run_bounded_rejects_non_string_or_null_byte_arguments`、`tests/test_process_security.py::TestProcessCommandGatingSecurity::test_run_bounded_rejects_excessive_arguments`、`tests/test_process_security.py::TestProcessCommandGatingSecurity::test_run_bounded_rejects_oversized_single_argument` | `pytest -v tests/test_process_security.py -k TestProcessCommandGatingSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `c0542133193ba585f16fae3d00e1336f8640bbe0`；passed；CI [R1 43881408318](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43881408318) |
+| E2 | SF-PROC-01-A2 | `tests/test_process_security.py::TestProcessWorkingDirAndEnvironmentSecurity::test_run_bounded_rejects_invalid_cwd_types`、`tests/test_process_security.py::TestProcessWorkingDirAndEnvironmentSecurity::test_run_bounded_rejects_null_bytes_in_cwd`、`tests/test_process_security.py::TestProcessWorkingDirAndEnvironmentSecurity::test_run_bounded_rejects_non_existent_cwd`、`tests/test_process_security.py::TestProcessWorkingDirAndEnvironmentSecurity::test_run_bounded_rejects_file_as_cwd`、`tests/test_process_security.py::TestProcessWorkingDirAndEnvironmentSecurity::test_run_bounded_rejects_symlinked_cwd_or_parent`、`tests/test_process_security.py::TestProcessWorkingDirAndEnvironmentSecurity::test_run_bounded_accepts_and_validates_env` | `pytest -v tests/test_process_security.py -k TestProcessWorkingDirAndEnvironmentSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `c0542133193ba585f16fae3d00e1336f8640bbe0`；passed；CI [R1 43881408318](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43881408318) |
+| E3 | SF-PROC-01-A3 | `tests/test_process_security.py::TestProcessResourceBoundariesAndTimeoutSecurity::test_run_bounded_timeout_validation`、`tests/test_process_security.py::TestProcessResourceBoundariesAndTimeoutSecurity::test_run_bounded_output_limit_validation`、`tests/test_process_security.py::TestProcessResourceBoundariesAndTimeoutSecurity::test_run_bounded_truncates_large_stdout`、`tests/test_process_security.py::TestProcessResourceBoundariesAndTimeoutSecurity::test_run_bounded_truncates_large_stderr` | `pytest -v tests/test_process_security.py -k TestProcessResourceBoundariesAndTimeoutSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `c0542133193ba585f16fae3d00e1336f8640bbe0`；passed；CI [R1 43881408318](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43881408318) |
+| E4 | SF-PROC-01-A4 | `tests/test_process_security.py::TestProcessLifecycleAndContractSecurity::test_bounded_process_result_contract`、`tests/test_process_security.py::TestProcessLifecycleAndContractSecurity::test_non_zero_exit_code_captured_cleanly`、`tests/test_process_security.py::TestProcessLifecycleAndContractSecurity::test_process_group_killed_on_timeout`、`tests/test_bounded_process.py::test_timeout_reaps_process_group_before_delayed_child_write` | `pytest -v tests/test_process_security.py tests/test_bounded_process.py`；GitHub Actions CI `Unit tests` | 源码 SHA `c0542133193ba585f16fae3d00e1336f8640bbe0`；passed；CI [R1 43881408318](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43881408318) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeffe332964d08b712036919873aeb1e13f46 / feat/sf-proc-01 (worktree: selfforge-sf-proc-01) / 源码 c0542133193ba585f16fae3d00e1336f8640bbe0
+已完成验收与证据 ID：SF-PROC-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；测试集 1045 单元测试与 29 项消费测试全部通过；不调用付费模型
+PR / 准确 head CI / merge SHA（有则填）：[PR #97](https://github.com/liuzhouquan/selfforge-agent/pull/97) / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43881408318 / 待合并后回填
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #97 审查与合并；合并后回填 merge SHA 与最终 main CI。
 ```
 
 ## 5. 验收追踪与执行记录格式
