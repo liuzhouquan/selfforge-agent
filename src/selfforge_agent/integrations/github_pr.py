@@ -29,7 +29,7 @@ _OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 
 # GitHub repository name: 1-100 characters, alphanumeric, ., _, -, cannot start with hyphen or dot,
 # cannot be . or .., and cannot end in .git.
-_REPO_RE = re.compile(r"^(?!\.\.?$)(?!.*\.git$)[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$")
+_REPO_RE = re.compile(r"^(?!\.\.?$)(?!-)(?!.*\.git$)[A-Za-z0-9_.-]{1,100}\Z")
 
 _PR_URL = re.compile(
     r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>[1-9][0-9]*)/?$"
@@ -94,13 +94,13 @@ def parse_pr_url(url: str) -> tuple[str, str, int]:
 def _validate_changed_path(path: str | None, *, label: str = "filename") -> str:
     if not isinstance(path, str) or not path.strip():
         raise GitHubPRError(f"Changed file {label} must be a non-empty string")
-    clean = path.strip()
+    clean = path
     if any(c in clean for c in ("\x00", "\r", "\n", "\t")):
         raise GitHubPRError(f"Changed file {label} contains control characters: {path!r}")
     if clean.startswith(("/", "\\")):
         raise GitHubPRError(f"Changed file {label} must not be an absolute path: {path!r}")
     norm = posixpath.normpath(clean)
-    if norm == "." or norm.startswith("..") or "/../" in f"/{norm}/":
+    if norm == "." or ".." in clean.split("/"):
         raise GitHubPRError(f"Path traversal detected in {label}: {path!r}")
     return clean
 
@@ -155,6 +155,12 @@ def _api(endpoint: str) -> object:
         raise GitHubPRError("GitHub returned invalid JSON") from exc
 
 
+def _required_text(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise GitHubPRError(f"Missing or invalid {label} in PR metadata")
+    return value
+
+
 def load_pr(url: str) -> GitHubPR:
     owner, repo, number = parse_pr_url(url)
     endpoint = f"repos/{owner}/{repo}/pulls/{number}"
@@ -167,13 +173,13 @@ def load_pr(url: str) -> GitHubPR:
         if not isinstance(base_obj, dict) or not isinstance(head_obj, dict):
             raise GitHubPRError("GitHub PR metadata missing base or head branch object")
 
-        base_sha = str(base_obj.get("sha", "")).lower()
-        head_sha = str(head_obj.get("sha", "")).lower()
+        base_sha = _required_text(base_obj.get("sha"), "base SHA").lower()
+        head_sha = _required_text(head_obj.get("sha"), "head SHA").lower()
         if not _SHA.fullmatch(base_sha) or not _SHA.fullmatch(head_sha):
             raise GitHubPRError("Invalid commit SHA in PR metadata")
 
-        base_ref = str(base_obj.get("ref", ""))
-        head_ref = str(head_obj.get("ref", ""))
+        base_ref = _required_text(base_obj.get("ref"), "base branch")
+        head_ref = _required_text(head_obj.get("ref"), "head branch")
         if not base_ref or not head_ref:
             raise GitHubPRError("Missing branch reference in PR metadata")
 
@@ -215,15 +221,20 @@ def load_pr(url: str) -> GitHubPR:
         user_obj = metadata.get("user")
         if not isinstance(user_obj, dict) or not user_obj.get("login"):
             raise GitHubPRError("Missing or invalid user login in PR metadata")
-        author = str(user_obj["login"])
+        author = _required_text(user_obj["login"], "user login")
 
-        title = str(metadata.get("title", ""))
+        title = _required_text(metadata.get("title"), "title")
         if not title:
             raise GitHubPRError("PR title cannot be empty")
 
-        state = str(metadata.get("state", "open"))
+        state = _required_text(metadata.get("state"), "state")
+        permission = metadata.get("maintainer_can_modify", False)
+        if type(permission) is not bool:
+            raise GitHubPRError("Invalid maintainer permission in PR metadata")
         head_repo = head_obj.get("repo")
-        head_repository = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+        if head_repo is not None and not isinstance(head_repo, dict):
+            raise GitHubPRError("Invalid head repository in PR metadata")
+        head_repository = _required_text(head_repo.get("full_name"), "head repository") if head_repo else None
 
         context = PRContext(
             repository=f"https://github.com/{owner}/{repo}",
@@ -242,7 +253,7 @@ def load_pr(url: str) -> GitHubPR:
             base_branch=base_ref,
             head_branch=head_ref,
             head_repository=head_repository,
-            maintainer_can_modify=bool(metadata.get("maintainer_can_modify")),
+            maintainer_can_modify=permission,
             context=context,
             warnings=warnings,
         )
