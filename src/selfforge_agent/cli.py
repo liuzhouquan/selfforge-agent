@@ -1136,7 +1136,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
                 max_attempts=args.max_attempts,
             )
-        except (GitContextError, TrustRequiredError, WorktreeError, ValueError) as exc:
+        except (GitContextError, TrustRequiredError, WorktreeError, ValueError, TypeError) as exc:
             parser.error(str(exc))
         rendered_json = result.model_dump_json(indent=2) + "\n"
         if args.output:
