@@ -101,7 +101,7 @@ def _settings() -> dict[str, dict[str, str]]:
 
     try:
         data = json.loads(content.decode("utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError) as exc:
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError) as exc:
         raise ValueError(f"Cannot read provider settings: {exc}") from exc
     if not isinstance(data, dict):
         raise TypeError("Provider settings must be a JSON object")
@@ -196,11 +196,13 @@ def save_provider_settings(name: ProviderName, *, api_key: str | None,
                 settings[name]["api_key"] = current["api_key"]
         elif api_key:
             settings[name]["api_key"] = api_key.strip()
+        payload = (json.dumps(settings, indent=2) + "\n").encode("utf-8")
+        if len(payload) > 64 * 1024:
+            raise ValueError("Provider settings file exceeds 64 KiB size limit")
         fd, temp_name = tempfile.mkstemp(prefix=".providers-", dir=parent)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(settings, handle, indent=2)
-                handle.write("\n")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
             os.chmod(temp_name, 0o600)
             os.replace(temp_name, path)
         finally:

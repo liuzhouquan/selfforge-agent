@@ -63,7 +63,22 @@ def _validate_api_key(api_key: str) -> None:
 class _RestrictedRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         _validate_model_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        old, new = urlsplit(req.full_url), urlsplit(newurl)
+        def origin(parts):
+            return (parts.scheme, parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+        if origin(old) != origin(new):
+            raise ProviderHTTPError("Cross-origin provider redirect is not allowed")
+        deadline = getattr(req, "_provider_deadline", None)
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise ProviderHTTPError("Provider redirect timed out")
+            # urllib's redirect dispatcher opens the next request using req.timeout.
+            req.timeout = remaining
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and deadline is not None:
+            redirected._provider_deadline = deadline
+        return redirected
 
 
 _OPENER = build_opener(_RestrictedRedirectHandler())
@@ -87,7 +102,7 @@ def request_json(
     _validate_model_url(url)
     _validate_api_key(api_key)
     if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
-            or not math.isfinite(timeout) or timeout <= 0 or timeout > 300):
+            or timeout <= 0 or timeout > 300 or not math.isfinite(timeout)):
         raise ValueError("timeout must be a finite positive number not exceeding 300 seconds")
     if (isinstance(max_bytes, bool) or not isinstance(max_bytes, int)
             or max_bytes <= 0 or max_bytes > 16 * 1024 * 1024):
@@ -100,6 +115,7 @@ def request_json(
         data = json.dumps(payload).encode("utf-8")
     request = Request(url, data=data, headers=headers, method="POST" if data else "GET")
     deadline = monotonic() + timeout
+    request._provider_deadline = deadline
     try:
         with urlopen(request, timeout=timeout) as response:
             chunks: list[bytes] = []
@@ -128,7 +144,7 @@ def request_json(
         raise ProviderHTTPError(f"Provider request failed: {exc}") from exc
     try:
         result = json.loads(b"".join(chunks))
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
         raise ProviderHTTPError("Provider returned invalid JSON") from exc
     if not isinstance(result, dict):
         raise ProviderHTTPError("Provider returned a non-object JSON response")

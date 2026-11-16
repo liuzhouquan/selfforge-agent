@@ -135,3 +135,98 @@ def test_validate_base_url_port_and_control_chars() -> None:
     ):
         with pytest.raises(ValueError, match="Base URL|port|URL"):
             providers.validate_base_url(bad_url)
+
+
+def test_cross_origin_redirect_never_receives_provider_credentials() -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from selfforge_agent.integrations.model_http import ProviderHTTPError
+
+    received = []
+
+    class Sink(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            pass
+
+    sink = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{sink.server_port}/models")
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    source = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+    workers = [Thread(target=server.serve_forever, daemon=True) for server in (source, sink)]
+    for worker in workers:
+        worker.start()
+    try:
+        with pytest.raises(ProviderHTTPError, match="redirect"):
+            request_json(f"http://127.0.0.1:{source.server_port}/models", "fixture-key")
+        assert received == []
+    finally:
+        for server in (source, sink):
+            server.shutdown()
+            server.server_close()
+        for worker in workers:
+            worker.join(timeout=2)
+
+
+def test_oversized_provider_update_preserves_readable_previous_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "providers.json"
+    monkeypatch.setenv("SELFFORGE_PROVIDER_CONFIG_PATH", str(path))
+    providers.save_provider_settings("deepseek", api_key="fixture-key", base_url="https://api.example.com", model="fixture")
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="64 KiB"):
+        providers.save_provider_settings("deepseek", api_key=None,
+                                         base_url="https://api.example.com/" + "x" * 65536, model="fixture")
+    assert path.read_bytes() == before
+
+
+def test_request_json_rejects_timeout_too_large_for_float_conversion() -> None:
+    with pytest.raises(ValueError, match="timeout"):
+        request_json("https://api.example.com", "fixture", timeout=10**1000)
+
+
+def test_http_parser_recursion_is_a_controlled_provider_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    from selfforge_agent.integrations import model_http
+
+    monkeypatch.setattr(model_http, "urlopen", lambda *_args, **_kwargs: io.BytesIO(b"{}"))
+
+    def recursive_parser(*_args, **_kwargs):
+        raise RecursionError("deep provider JSON")
+
+    monkeypatch.setattr(model_http.json, "loads", recursive_parser)
+    with pytest.raises(model_http.ProviderHTTPError, match="invalid JSON"):
+        request_json("https://api.example.com", "fixture")
+
+
+def test_redirect_chain_uses_one_absolute_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.request import Request
+
+    from selfforge_agent.integrations import model_http
+
+    clock = [3.0]
+    monkeypatch.setattr(model_http, "monotonic", lambda: clock[0])
+    request = Request("https://provider.example/first", headers={"Authorization": "Bearer fixture"})
+    request.timeout = 5.0
+    request._provider_deadline = 5.0
+    handler = model_http._RestrictedRedirectHandler()
+    redirected = handler.redirect_request(request, None, 302, "Found", {}, "https://provider.example/second")
+    assert request.timeout == 2.0
+    assert redirected.get_header("Authorization") == "Bearer fixture"
+    clock[0] = 6.0
+    with pytest.raises(model_http.ProviderHTTPError, match="timed out"):
+        handler.redirect_request(redirected, None, 302, "Found", {}, "https://provider.example/third")
