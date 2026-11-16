@@ -141,7 +141,7 @@ flowchart LR
 | 31 | [SF-RISK-01](#sf-risk-01) | Merged | Codex（审查整合） | 无 | [PR #88](https://github.com/liuzhouquan/selfforge-agent/pull/88)：PR风险优先级排序与RiskTarget契约边界加固：上下文与发现类型Fail-Closed校验、扫描深度与代码行有界防御、PrioritizedRisk模式与空字节防御、确定性排序与有效转换 |
 | 32 | [SF-FPR-01](#sf-fpr-01) | Merged | Codex（审查整合） | 无 | [PR #89](https://github.com/liuzhouquan/selfforge-agent/pull/89)：工作区快照指纹哈希安全加固：root输入防御与斜杠绕过软链接防御、有限正数deadline与cancel状态机对齐、目录递归自循环防御、非普通文件与负大小防御 |
 | 33 | [SF-CTX-01](#sf-ctx-01) | Merged | Codex（审查整合） | 无 | [PR #90](https://github.com/liuzhouquan/selfforge-agent/pull/90)：模型上下文管理器与结构化压缩防御加固（`estimate_tokens` / `estimate_message_tokens` / `_recent_interactions` / `ContextManager`） |
-| 34 | [SF-AGENT-01](#sf-agent-01) | In Progress | Codex | SF-CTX-01（Merged） | CodingAgent 原生自主循环边界与状态机对齐加固：类型守门、会话恢复容错、Hook 异常隔离与指标对齐 |
+| 34 | [SF-AGENT-01](#sf-agent-01) | In Review | Codex | SF-CTX-01（Merged） | [PR #91](https://github.com/liuzhouquan/selfforge-agent/pull/91)：CodingAgent 原生自主循环边界与状态机对齐加固：类型守门、会话恢复容错、Hook 异常隔离与指标对齐 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1475,21 +1475,28 @@ PR / 准确 head CI / merge SHA（有则填）：PR #90 / https://github.com/liu
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-AGENT-01-A1 | `CodingAgent.__init__` 参数守门与类型校验：`max_steps` 严格校验为 `1 <= int <= 100`（拒绝 `bool`、`float`、`NaN`、`inf`、负数与非整型）；`time_budget` 严格校验有限正数（拒绝 `bool`、非正数、`NaN`、`inf`）；`context_budget` 严格校验 `>= 500`；`cancel` 与 `approval_hook` 严格类型防护 | `tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_max_steps`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_time_budget`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_context_budget`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_cancel_and_approval_hook` | 待实现 |
-| SF-AGENT-01-A2 | `_resume_pending` 历史会话恢复与畸形容错：对历史记录中的非 dict 消息、非 dict `tool_calls` 或丢失 `id` 的调用稳健容错，安全执行写前证据撤销，杜绝未受控属性异常与崩溃 | `tests/test_agent_lifecycle_security.py::test_resume_pending_handles_non_dict_and_malformed_messages`、`tests/test_agent_lifecycle_security.py::test_resume_pending_handles_non_list_tool_calls` | 待实现 |
-| SF-AGENT-01-A3 | `run` 任务输入校验与 Hook 异常隔离：严格校验 `task` 字符串类型与大小上限；捕获 `approval_hook` 异常并受控映射为操作拒绝，防止破坏会话生命周期；工具参数反序列化与调用结构畸形容错 | `tests/test_agent_lifecycle_security.py::test_run_rejects_non_string_task`、`tests/test_agent_lifecycle_security.py::test_run_rejects_oversized_task`、`tests/test_agent_lifecycle_security.py::test_approval_hook_exception_is_isolated_and_reported`、`tests/test_agent_lifecycle_security.py::test_run_handles_malformed_tool_call_structure_and_json` | 待实现 |
-| SF-AGENT-01-A4 | 遥测状态机对齐与鲁棒终止：在取消（cancel）、超时（timed_out）与异常场景下，`AgentResult` 与会话持久化状态严格对齐，执行步数与 Token 统计精确无虚增，`_finish` 防御指标解析异常 | `tests/test_agent_lifecycle_security.py::test_finish_state_and_metrics_alignment`、`tests/test_agent_lifecycle_security.py::test_cancel_before_and_during_run_aligns_session_status` | 待实现 |
+| SF-AGENT-01-A1 | `CodingAgent.__init__` 参数守门与类型校验：`max_steps` 严格校验为 `1 <= int <= 100`（拒绝 `bool`、`float`、`NaN`、`inf`、负数与非整型）；`time_budget` 严格校验有限正数（拒绝 `bool`、非正数、`NaN`、`inf`）；`context_budget` 严格校验 `>= 500`；`cancel` 与 `approval_hook` 严格类型防护 | `tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_max_steps`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_time_budget`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_context_budget`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_cancel_and_approval_hook` | E1 |
+| SF-AGENT-01-A2 | `_resume_pending` 历史会话恢复与畸形容错：对历史记录中的非 dict 消息、非 dict `tool_calls` 或丢失 `id` 的调用稳健容错，安全执行写前证据撤销，杜绝未受控属性异常与崩溃 | `tests/test_agent_lifecycle_security.py::test_resume_pending_handles_non_dict_and_malformed_messages`、`tests/test_agent_lifecycle_security.py::test_resume_pending_handles_non_list_tool_calls` | E2 |
+| SF-AGENT-01-A3 | `run` 任务输入校验与 Hook 异常隔离：严格校验 `task` 字符串类型与大小上限；捕获 `approval_hook` 异常并受控映射为操作拒绝，防止破坏会话生命周期；工具参数反序列化与调用结构畸形容错 | `tests/test_agent_lifecycle_security.py::test_run_rejects_non_string_task`、`tests/test_agent_lifecycle_security.py::test_run_rejects_oversized_task`、`tests/test_agent_lifecycle_security.py::test_approval_hook_exception_is_isolated_and_reported`、`tests/test_agent_lifecycle_security.py::test_run_handles_malformed_tool_call_structure_and_json` | E3 |
+| SF-AGENT-01-A4 | 遥测状态机对齐与鲁棒终止：在取消（cancel）、超时（timed_out）与异常场景下，`AgentResult` 与会话持久化状态严格对齐，执行步数与 Token 统计精确无虚增，`_finish` 防御指标解析异常 | `tests/test_agent_lifecycle_security.py::test_finish_state_and_metrics_alignment`、`tests/test_agent_lifecycle_security.py::test_cancel_before_and_during_run_aligns_session_status` | E4 |
 
-执行记录（Owner/状态以上表为准）：Base=`c5cbeffe332964d08b712036919873aeb1e13f46`；Branch=`feat/sf-agent-01`；Worktree=`selfforge-sf-agent-01`；PR待开。实现 CodingAgent 构造参数强校验、历史消息恢复畸形容错、审批钩子异常隔离受控映射、工具结构与参数反序列化递归防御、遥测指标与会话终止状态机对齐。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-AGENT-01-A1 | `tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_max_steps`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_time_budget`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_context_budget`、`tests/test_agent_lifecycle_security.py::test_coding_agent_init_rejects_invalid_cancel_and_approval_hook` | 本地 `pytest -v tests/test_agent_lifecycle_security.py`；GitHub CI `Unit tests` | `cda9b51a3900df07e73d3e11b1d4e1fa7208dde9`；passed；CI [Run #43811410499](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43811410499) |
+| E2 | SF-AGENT-01-A2 | `tests/test_agent_lifecycle_security.py::test_resume_pending_handles_non_dict_and_malformed_messages`、`tests/test_agent_lifecycle_security.py::test_resume_pending_handles_non_list_tool_calls` | 本地 `pytest -v tests/test_agent_lifecycle_security.py`；GitHub CI `Unit tests` | `cda9b51a3900df07e73d3e11b1d4e1fa7208dde9`；passed；CI [Run #43811410499](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43811410499) |
+| E3 | SF-AGENT-01-A3 | `tests/test_agent_lifecycle_security.py::test_run_rejects_non_string_task`、`tests/test_agent_lifecycle_security.py::test_run_rejects_oversized_task`、`tests/test_agent_lifecycle_security.py::test_approval_hook_exception_is_isolated_and_reported`、`tests/test_agent_lifecycle_security.py::test_run_handles_malformed_tool_call_structure_and_json` | 本地 `pytest -v tests/test_agent_lifecycle_security.py`；GitHub CI `Unit tests` | `cda9b51a3900df07e73d3e11b1d4e1fa7208dde9`；passed；CI [Run #43811410499](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43811410499) |
+| E4 | SF-AGENT-01-A4 | `tests/test_agent_lifecycle_security.py::test_finish_state_and_metrics_alignment`、`tests/test_agent_lifecycle_security.py::test_cancel_before_and_during_run_aligns_session_status` | 本地 `pytest -v tests/test_agent_lifecycle_security.py`；GitHub CI `Unit tests` | `cda9b51a3900df07e73d3e11b1d4e1fa7208dde9`；passed；CI [Run #43811410499](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43811410499) |
+
+执行记录（Owner/状态以上表为准）：Base=`c5cbeffe332964d08b712036919873aeb1e13f46`；Branch=`feat/sf-agent-01`；Worktree=`selfforge-sf-agent-01`；PR=[#91](https://github.com/liuzhouquan/selfforge-agent/pull/91)。实现 CodingAgent 构造参数强校验、历史消息恢复畸形容错、审批钩子异常隔离受控映射、工具结构与参数反序列化递归防御、遥测指标与会话终止状态机对齐。源码提交 `cda9b51a3900df07e73d3e11b1d4e1fa7208dde9`，CI [Run #43811410499](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43811410499) 全绿通过。
 
 ```text
-Owner / 状态：Codex / In Progress
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeffe332964d08b712036919873aeb1e13f46 / feat/sf-agent-01 (worktree: selfforge-sf-agent-01) / 源码与专项测试编写完成
-已完成验收与证据 ID：待实现
-未完成 / 环境限制 / 未提交内容归属：无未提交冲突；全量测试与回归验证进行中
-PR / 准确 head CI / merge SHA（有则填）：PR待开 / 待CI / 未合并
+Owner / 状态：Codex / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeffe332964d08b712036919873aeb1e13f46 / feat/sf-agent-01 (worktree: selfforge-sf-agent-01) / 源码提交 cda9b51a3900df07e73d3e11b1d4e1fa7208dde9
+已完成验收与证据 ID：SF-AGENT-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交冲突；CI 全绿；等待审查与合并
+PR / 准确 head CI / merge SHA（有则填）：PR #91 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43811410499 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
-下一步：验证通过后提交源码 Commit S 并开设 PR
+下一步：等待 PR #91 审查合入主线
 ```
 
 ## 5. 验收追踪与执行记录格式
