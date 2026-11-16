@@ -186,3 +186,39 @@ def test_budget_notice_defense() -> None:
     )
     assert len(notice["content"]) < 2000
     assert "Repeated read-only tool call detected" in notice["content"]
+
+
+def test_malformed_edit_call_id_is_ignored_without_hashing() -> None:
+    history = [{"role": "assistant", "tool_calls": [{"id": ["bad"], "function": {
+        "name": "edit_file", "arguments": '{"path":"a.py"}'}}]}]
+    assert detect_edit_failure_loop(history) is None
+
+
+def test_both_loop_detectors_scan_only_the_tail_window() -> None:
+    class TailWindow(list):
+        def __iter__(self):
+            raise AssertionError("unbounded history iteration")
+
+    read = {"role": "assistant", "tool_calls": [{"function": {"name": "read_file", "arguments": '{"path":"a.py"}'}}]}
+    history = TailWindow([{}] * 1001 + [read, read])
+    assert detect_tool_loop(history)["count"] == 2
+    assert detect_edit_failure_loop(history) is None
+
+
+def test_oversized_parameter_values_are_not_consumed_as_edit_paths() -> None:
+    values = [{"path": "x" * 100000}, {"path": "中" * 30000}, json.dumps({"path": "中" * 30000}, ensure_ascii=False)]
+    for value in values:
+        events = []
+        for index in range(2):
+            events += [{"role": "assistant", "tool_calls": [{"id": str(index), "function": {
+                "name": "edit_file", "arguments": value}}]},
+                {"role": "tool", "tool_call_id": str(index), "content": "Tool error: no match"}]
+        assert detect_edit_failure_loop(events) is None
+        canonical, parsed = _canonical_args(value)
+        assert len(canonical.encode("utf-8")) <= 65536 and parsed == {}
+
+
+def test_unrepresentable_pressure_and_time_are_controlled() -> None:
+    assert evaluate_context_pressure(10**1000, 1) is None
+    notice = budget_notice(step=1, max_steps=3, remaining_seconds=10**1000, tests_passed=False)
+    assert notice["role"] == "system"

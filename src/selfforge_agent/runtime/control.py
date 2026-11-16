@@ -17,26 +17,67 @@ MAX_NOTICE_PATH_CHARS = 256
 MAX_NOTICE_TOOL_CHARS = 64
 
 
+def _within_argument_budget(value: Any) -> bool:
+    pending = [value]
+    seen = set()
+    remaining = MAX_ARG_BYTES
+    while pending:
+        item = pending.pop()
+        remaining -= 1
+        if remaining < 0:
+            return False
+        if isinstance(item, str):
+            if len(item) > remaining:
+                return False
+            remaining -= len(item.encode("utf-8", errors="replace"))
+        elif isinstance(item, (dict, list)):
+            if id(item) in seen or len(item) > remaining:
+                return False
+            seen.add(id(item))
+            if isinstance(item, dict):
+                if any(not isinstance(key, str) for key in item):
+                    return False
+                pending.extend(item.keys())
+                pending.extend(item.values())
+            else:
+                pending.extend(item)
+        elif type(item) is int:
+            if item.bit_length() > MAX_ARG_BYTES * 3:
+                return False
+        elif item is not None and type(item) not in (bool, float):
+            return False
+    return remaining >= 0
+
+
 def _canonical_args(args: Any) -> tuple[str, dict[str, Any]]:
     if isinstance(args, str):
-        clean = args.replace("\x00", "")
-        if len(clean) > MAX_ARG_BYTES:
-            clean = clean[:MAX_ARG_BYTES]
+        prefix = args[:MAX_ARG_BYTES + 1].encode("utf-8", errors="replace")
+        clean = prefix[:MAX_ARG_BYTES].decode("utf-8", errors="ignore").replace("\x00", "")
+        if len(args) > MAX_ARG_BYTES or len(prefix) > MAX_ARG_BYTES or "\x00" in args:
+            return clean, {}
         try:
             parsed = json.loads(clean)
-            if isinstance(parsed, dict):
-                serialized = json.dumps(parsed, sort_keys=True)
-                return serialized[:MAX_ARG_BYTES], parsed
         except (ValueError, TypeError, RecursionError):
-            pass
-        return clean, {}
-    if isinstance(args, dict):
-        try:
-            serialized = json.dumps(args, sort_keys=True)
-            return serialized[:MAX_ARG_BYTES], args
-        except (ValueError, TypeError, RecursionError):
-            return str(args)[:MAX_ARG_BYTES], {}
-    return str(args)[:MAX_ARG_BYTES], {}
+            return clean, {}
+    else:
+        parsed = args
+    if not isinstance(parsed, dict):
+        return "<invalid tool arguments>", {}
+    if not _within_argument_budget(parsed):
+        return "<oversized or invalid tool arguments>", {}
+    chunks = []
+    size = 0
+    try:
+        for chunk in json.JSONEncoder(sort_keys=True).iterencode(parsed):
+            room = MAX_ARG_BYTES - size
+            chunks.append(chunk[:room])
+            if len(chunk) > room:
+                return "".join(chunks), {}
+            size += len(chunk)
+        canonical = "".join(chunks)
+        return canonical, json.loads(canonical)
+    except (ValueError, TypeError, RecursionError):
+        return "<invalid tool arguments>", {}
 
 
 def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str, Any] | None:
@@ -61,7 +102,7 @@ def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str,
     counts: dict[tuple[str, str], int] = {}
     last_assistant_calls: list[tuple[str, str, dict[str, Any]]] = []
 
-    valid_messages = [m for m in messages if isinstance(m, dict)][-MAX_MESSAGES_SCAN:]
+    valid_messages = [m for m in messages[-MAX_MESSAGES_SCAN:] if isinstance(m, dict)]
 
     for msg in valid_messages:
         role = msg.get("role")
@@ -77,7 +118,8 @@ def detect_tool_loop(messages: list[dict], *, min_repeats: int = 2) -> dict[str,
 
         turn_calls: list[tuple[str, str, dict[str, Any]]] = []
         for call in calls:
-            if not isinstance(call, dict):
+            if (not isinstance(call, dict)
+                    or ("id" in call and not isinstance(call["id"], str))):
                 continue
             fn = call.get("function")
             if not isinstance(fn, dict):
@@ -122,7 +164,7 @@ def _find_tool_content(
     if not isinstance(call, dict) or not isinstance(messages, list):
         return ""
     call_id = call.get("id")
-    if call_id and call_id in tool_responses_by_id:
+    if isinstance(call_id, str) and call_id in tool_responses_by_id:
         return tool_responses_by_id[call_id]
     offset = 0
     lookahead = min(len(messages), msg_idx + 100)
@@ -164,7 +206,7 @@ def detect_edit_failure_loop(
         min_failures = 2
 
     tool_responses_by_id: dict[str, str] = {}
-    valid_messages = [m for m in messages if isinstance(m, dict)][-MAX_MESSAGES_SCAN:]
+    valid_messages = [m for m in messages[-MAX_MESSAGES_SCAN:] if isinstance(m, dict)]
 
     for msg in valid_messages:
         if msg.get("role") == "tool":
@@ -191,7 +233,8 @@ def detect_edit_failure_loop(
 
         current_turn_failed: list[str] = []
         for call_idx, call in enumerate(calls):
-            if not isinstance(call, dict):
+            if (not isinstance(call, dict)
+                    or ("id" in call and not isinstance(call["id"], str))):
                 continue
             fn = call.get("function")
             if not isinstance(fn, dict):
@@ -269,12 +312,17 @@ def evaluate_context_pressure(
     if (
         not isinstance(high_watermark, (int, float))
         or isinstance(high_watermark, bool)
-        or not math.isfinite(high_watermark)
         or not (0 < high_watermark <= 1.0)
+        or not math.isfinite(high_watermark)
     ):
         high_watermark = 0.75
 
-    ratio = estimated_tokens / token_budget
+    try:
+        ratio = estimated_tokens / token_budget
+    except OverflowError:
+        return None
+    if not math.isfinite(ratio):
+        return None
     if ratio >= high_watermark or was_compacted:
         return {
             "estimated_tokens": estimated_tokens,
@@ -305,15 +353,12 @@ def budget_notice(
 
     remaining_turns = max_steps - step + 1
 
-    if (
-        not isinstance(remaining_seconds, (int, float))
-        or isinstance(remaining_seconds, bool)
-        or not math.isfinite(remaining_seconds)
-        or remaining_seconds < 0
-    ):
-        sec_int = 0
-    else:
-        sec_int = int(remaining_seconds)
+    try:
+        valid_seconds = (type(remaining_seconds) in (int, float) and remaining_seconds >= 0
+                         and math.isfinite(remaining_seconds))
+    except OverflowError:
+        valid_seconds = False
+    sec_int = int(remaining_seconds) if valid_seconds else 0
 
     content = (
         "Runtime budget (generated for this turn):\n"
