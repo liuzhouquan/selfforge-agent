@@ -137,6 +137,7 @@ flowchart LR
 | 27 | [SF-REV-01](#sf-rev-01) | In Review | Antigravity | 无 | [PR #84](https://github.com/liuzhouquan/selfforge-agent/pull/84)：代码审查引擎安全加固：规则基线有界防御、模型审查输入/输出防御与执行隔离 |
 | 28 | [SF-CTRL-01](#sf-ctrl-01) | In Review | Antigravity | 无 | [PR #85](https://github.com/liuzhouquan/selfforge-agent/pull/85)：运行时控制流与瞬态指导安全加固：工具循环检测防御、编辑失败循环防护、上下文压力评估与预算通知有界防御 |
 | 29 | [SF-MODEL-01](#sf-model-01) | In Review | Antigravity | 无 | [PR #86](https://github.com/liuzhouquan/selfforge-agent/pull/86)：编码模型客户端安全加固：有限正超时校验、Base URL与凭据防御、输入观测类型与有界负载防御、Markdown代码块剥离与CodeEdit边界校验 |
+| 30 | [SF-WT-01](#sf-wt-01) | In Review | Antigravity | 无 | [PR #87](https://github.com/liuzhouquan/selfforge-agent/pull/87)：Git worktree与临时分支执行安全加固：子进程执行与有界读取防御、修订与参数注入防御、目标路径与符号链接隔离防御、清理容错与工作区元数据修剪 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1240,6 +1241,36 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #86 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43708232832 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查与合并 PR #86。
+```
+
+### SF-WT-01
+
+**目标：** 在 `selfforge_agent.coding.worktree` 核心 Git 工作区与临时分支执行模块中贯彻 fail-closed、输入防御与资源有界防御。`git` 与 `git_bounded` 严格校验 `repo` 参数必须为已存在的非符号链接目录，拒绝空路径、符号链接目录或非 Git 仓库；`args` 严格校验非空字符串序列，拒绝空参数、包含空字节 `\0` 的参数或超大单参数（限制最大 64 KiB `MAX_ARG_CHARS`），执行命令使用非 shell 的 argv 列表调用；`git` 施加最大输出缓冲约束（最大 10 MiB `MAX_GIT_OUTPUT_BYTES`），防范失控命令输出造成内存耗尽崩溃；`deadline` 严格校验有限浮点数（排除 `NaN`、`inf`、`bool` 及非数值类型），当剩余预算耗尽（`<= 0`）时立即 fail-closed 抛出 `TimeoutError`，阻断超时绕过与负超时挂起；`git_bounded` 严格校验 `max_bytes` 为正整数（拒绝 `bool`、`<=0`、非整数类型及超上限 50 MiB `MAX_ALLOWED_BOUNDED_BYTES`），并在达到限制时平稳终止（SIGTERM/SIGKILL）底层子进程，杜绝进程句柄泄漏；`detached_worktree` 对 `revision` 严格校验合法非空 Git 修订标识（拒绝空字符串、空字节 `\0`，严禁以 `-` 开头防止 Git 选项注入），并使用 `--` 选项终止符安全传递修订；`destination` 严格校验非符号链接，拒绝目标位于当前仓库根目录或 `.git` 元数据目录内部，阻断路径穿越破坏主仓库结构；为检出操作合理预留清理预算（至少 0.25 秒），若剩余总预算不足 0.25 秒直接 fail-closed 拒绝；上下文退出时优先调用 `git worktree remove --force`，若遇到不可读残余或元数据冲突安全执行 `git worktree prune` 修剪游离元数据，且保证清理过程中的异常绝不掩盖上下文主体的原始异常。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/coding/worktree.py` 及专项安全测试 `tests/test_coding_worktree_security.py`；保持外部调用接口（`git`、`git_bounded`、`detached_worktree`、`WorktreeError`）完全向后兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-WT-01-A1 | `git` 与 `git_bounded` 严格校验 `repo` 为合法非符号链接目录，拒绝空参数、空字节 `\0` 与超长参数（>64 KiB），命令输出施加 10 MiB 内存保护 | `tests/test_coding_worktree_security.py` 仓库路径、参数安全与空字节/超长参数校验测试 | E1 |
+| SF-WT-01-A2 | `git` 与 `git_bounded` 对 `deadline` 严格校验有限浮点数并在预算耗尽时抛出 `TimeoutError`；`git_bounded` 校验 `max_bytes` 正整数并在截断时平稳终止子进程 | `tests/test_coding_worktree_security.py` 截止时间校验、预算耗尽防御与有界读取截断测试 | E2 |
+| SF-WT-01-A3 | `detached_worktree` 严格校验 `revision`（拒绝空串、空字节与 `-` 前缀注入）并使用 `--` 传递；`destination` 拒绝符号链接、仓库根目录或 `.git` 内部路径；预留 0.25s 清理预算 | `tests/test_coding_worktree_security.py` 修订注入防御、目标路径隔离与检出预算预留测试 | E3 |
+| SF-WT-01-A4 | `detached_worktree` 正常清理临时目录并在异常退出时保留调用者主体异常；支持 `worktree prune` 元数据清理容错；全量回归与静态合规通过 | `tests/test_coding_worktree_security.py`、`tests/test_workspace.py`、`tests/test_repair_agent.py` 与全套静态/单元测试命令 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-WT-01-A1 | `tests/test_coding_worktree_security.py::test_git_command_argument_and_path_defense` | 本地 `pytest -v tests/test_coding_worktree_security.py`；GitHub Actions CI `Unit tests` | `8a55356c52e3a5c0e16d7ecfdf189aaf73e3af7e`；passed；CI [R1 43711818243](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43711818243) |
+| E2 | SF-WT-01-A2 | `tests/test_coding_worktree_security.py::test_git_bounded_input_and_timeout_defense` | 本地 `pytest -v tests/test_coding_worktree_security.py`；GitHub Actions CI `Unit tests` | `8a55356c52e3a5c0e16d7ecfdf189aaf73e3af7e`；passed；CI [R1 43711818243](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43711818243) |
+| E3 | SF-WT-01-A3 | `tests/test_coding_worktree_security.py::test_detached_worktree_revision_and_destination_defense` | 本地 `pytest -v tests/test_coding_worktree_security.py`；GitHub Actions CI `Unit tests` | `8a55356c52e3a5c0e16d7ecfdf189aaf73e3af7e`；passed；CI [R1 43711818243](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43711818243) |
+| E4 | SF-WT-01-A4 | `tests/test_coding_worktree_security.py::test_detached_worktree_lifecycle_and_cleanup_fault_tolerance`、`tests/test_workspace.py::test_bounded_git_preserves_command_failure`、`tests/test_workspace.py::test_bounded_git_handles_utf8_cut_at_byte_limit`、`tests/test_repair_agent.py::test_verified_repair_keeps_original_tree_untouched` | 本地 `pytest -v`、`ruff check .`、`python scripts/check_sdd.py`；GitHub Actions CI `Unit tests` 与 `Docker integration tests` | `8a55356c52e3a5c0e16d7ecfdf189aaf73e3af7e`；passed；CI [R1 43711818243](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43711818243) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-wt-01 (worktree: selfforge-sf-wt-01) / 8a55356c52e3a5c0e16d7ecfdf189aaf73e3af7e
+已完成验收与证据 ID：SF-WT-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；测试全绿，R1 CI 通过
+PR / 准确 head CI / merge SHA（有则填）：PR #87 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43711818243 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #87。
 ```
 
 ## 5. 验收追踪与执行记录格式
