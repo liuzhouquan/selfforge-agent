@@ -81,7 +81,7 @@ def _recent_interactions(messages: list[dict], limit: int) -> list[dict]:
                 if not isinstance(call, dict):
                     return []
                 function = call.get("function")
-                if (call.get("type") != "function" or not isinstance(function, dict)
+                if (call.get("type", "function") != "function" or not isinstance(function, dict)
                         or not isinstance(function.get("name"), str) or not function["name"]
                         or not isinstance(function.get("arguments"), str)):
                     return []
