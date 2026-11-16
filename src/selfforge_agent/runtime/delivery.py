@@ -1,7 +1,10 @@
 """Delivery workflow: commit worktree changes and create pull requests."""
 
 import json
+import math
+import os
 import re
+import stat
 import subprocess
 from pathlib import Path
 
@@ -17,6 +20,15 @@ from selfforge_agent.runtime.workspace_diff import MAX_PATH_LIST_BYTES, _visible
 _PR_URL_PATTERN = re.compile(
     r"https://github\.com/[^/\s]+/[^/\s]+/pull/(?P<number>[1-9][0-9]*)"
 )
+_SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
+_REF_NAME_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-\./]+$")
+_REMOTE_NAME_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
+MAX_COMMIT_MESSAGE_LENGTH = 64 * 1024
+MAX_PR_TITLE_LENGTH = 1024
+MAX_PR_BODY_BYTES = 256 * 1024
+MAX_GH_TIMEOUT = 300
+MAX_GH_OUTPUT_BYTES = 10 * 1024 * 1024
 
 
 class DeliveryError(ValueError):
@@ -46,7 +58,30 @@ class RevertResult(BaseModel):
     reverted_files: list[str] = Field(default_factory=list)
 
 
+def _validate_workspace(workspace: CodingWorkspace) -> None:
+    if not isinstance(workspace, CodingWorkspace):
+        raise TypeError("workspace must be a CodingWorkspace instance")
+    if not isinstance(workspace.path, Path):
+        raise TypeError("workspace.path must be a Path instance")
+    if workspace.path.is_symlink() or not workspace.path.is_dir():
+        raise DeliveryError(f"Workspace path is invalid or a symlink: {workspace.path}")
+    if not isinstance(workspace.repository, Path):
+        raise TypeError("workspace.repository must be a Path instance")
+    if workspace.repository.is_symlink() or not workspace.repository.is_dir():
+        raise DeliveryError(f"Workspace repository is invalid or a symlink: {workspace.repository}")
+    if not isinstance(workspace.session_id, str) or not workspace.session_id.isalnum():
+        raise DeliveryError(f"Invalid workspace session_id: {workspace.session_id}")
+    if (
+        not isinstance(workspace.branch, str)
+        or not workspace.branch
+        or workspace.branch.startswith("-")
+        or not _REF_NAME_SAFE_RE.match(workspace.branch)
+    ):
+        raise DeliveryError(f"Invalid workspace branch: {workspace.branch}")
+
+
 def _paths(workspace: CodingWorkspace, *args: str) -> list[str]:
+    _validate_workspace(workspace)
     try:
         output, truncated = git_bounded(workspace.path, *args, max_bytes=MAX_PATH_LIST_BYTES)
     except WorktreeError as exc:
@@ -64,24 +99,53 @@ def commit_workspace(
     author_email: str | None = None,
 ) -> CommitResult:
     """Stage allowed modified and untracked files and commit them to the worktree branch."""
-    if not message or not message.strip():
+    _validate_workspace(workspace)
+    if not isinstance(message, str):
+        raise TypeError("Commit message must be a string")
+    if not message.strip():
         raise DeliveryError("Commit message must not be empty")
+    if "\0" in message:
+        raise DeliveryError("Commit message must not contain null bytes")
+    if len(message) > MAX_COMMIT_MESSAGE_LENGTH:
+        raise DeliveryError(f"Commit message exceeds maximum length of {MAX_COMMIT_MESSAGE_LENGTH} characters")
+
+    if author_name is not None:
+        if not isinstance(author_name, str):
+            raise TypeError("author_name must be a string")
+        if "\n" in author_name or "\r" in author_name or "\0" in author_name:
+            raise DeliveryError("author_name must not contain newlines or null bytes")
+        if len(author_name) > 256 or not author_name.strip():
+            raise DeliveryError("author_name must be a non-empty string up to 256 characters")
+
+    if author_email is not None:
+        if not isinstance(author_email, str):
+            raise TypeError("author_email must be a string")
+        if "\n" in author_email or "\r" in author_email or "\0" in author_email:
+            raise DeliveryError("author_email must not contain newlines or null bytes")
+        if len(author_email) > 256 or not author_email.strip():
+            raise DeliveryError("author_email must be a non-empty string up to 256 characters")
 
     tracked = _paths(workspace, "diff", "--no-renames", "--name-only", "-z", "HEAD")
     untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
 
     def _safe_commit_path(p: str) -> bool:
+        if not isinstance(p, str) or not p or "\0" in p:
+            return False
         if not _visible(p):
             return False
         candidate = workspace.path / p
         try:
-            if candidate.exists() and not (candidate.is_file() or candidate.is_symlink() or candidate.is_dir()):
-                return False
             if candidate.is_symlink():
                 resolved = candidate.resolve()
                 if not resolved.is_relative_to(workspace.path):
                     return False
                 if not _visible(resolved.relative_to(workspace.path).as_posix()):
+                    return False
+                st = os.stat(candidate)
+                if not stat.S_ISREG(st.st_mode):
+                    return False
+            elif candidate.exists():
+                if not (candidate.is_file() or candidate.is_dir()):
                     return False
         except (OSError, RuntimeError):
             return False
@@ -153,7 +217,10 @@ def commit_workspace(
     except WorktreeError as exc:
         raise DeliveryError(f"Git commit failed: {exc}") from exc
 
-    commit_sha = git(workspace.path, "rev-parse", "HEAD").strip()
+    commit_sha = git(workspace.path, "rev-parse", "HEAD").strip().lower()
+    if not _SHA40_RE.match(commit_sha):
+        raise DeliveryError(f"Invalid commit SHA produced: {commit_sha}")
+
     return CommitResult(
         session_id=workspace.session_id,
         branch=workspace.branch,
@@ -168,6 +235,10 @@ def revert_workspace(
     session: SessionStore | None = None,
 ) -> RevertResult:
     """Discard all uncommitted changes and remove untracked files in the worktree."""
+    _validate_workspace(workspace)
+    if session is not None and not isinstance(session, SessionStore):
+        raise TypeError("session must be a SessionStore instance or None")
+
     tracked = _paths(workspace, "diff", "--no-renames", "--name-only", "-z", "HEAD")
     untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
     cached = _paths(workspace, "diff", "--cached", "--no-renames", "--name-only", "-z")
@@ -207,7 +278,24 @@ def revert_workspace(
     )
 
 
-def _run_gh(args: list[str], *, cwd: Path, timeout: int = 60) -> str:
+def _run_gh(args: list[str], *, cwd: Path, timeout: float = 60) -> str:
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        raise TypeError("args must be a list of strings")
+    if any("\0" in a for a in args):
+        raise DeliveryError("gh args must not contain null bytes")
+    if not isinstance(cwd, Path):
+        raise TypeError("cwd must be a Path instance")
+    if cwd.is_symlink() or not cwd.is_dir():
+        raise DeliveryError(f"cwd must be an existing directory without symlinks: {cwd}")
+    if (
+        not isinstance(timeout, (int, float))
+        or type(timeout) is bool
+        or not math.isfinite(timeout)
+        or timeout <= 0
+        or timeout > MAX_GH_TIMEOUT
+    ):
+        raise DeliveryError(f"timeout must be a positive number up to {MAX_GH_TIMEOUT} seconds")
+
     try:
         result = subprocess.run(
             ["gh", *args],
@@ -225,8 +313,11 @@ def _run_gh(args: list[str], *, cwd: Path, timeout: int = 60) -> str:
         raise DeliveryError(f"GitHub operation failed: {exc}") from exc
 
     if result.returncode != 0:
-        error_msg = result.stderr.strip() or result.stdout.strip() or "GitHub operation failed"
+        raw_error = result.stderr.strip() or result.stdout.strip() or "GitHub operation failed"
+        error_msg = raw_error[:1024] if len(raw_error) > 1024 else raw_error
         raise DeliveryError(f"GitHub PR creation failed: {error_msg}")
+    if len(result.stdout) > MAX_GH_OUTPUT_BYTES:
+        raise DeliveryError("GitHub CLI output exceeded maximum allowed size")
     return result.stdout
 
 
@@ -255,7 +346,11 @@ def _existing_pull_request(workspace: CodingWorkspace, base_branch: str | None) 
 
 def _verified_commit(workspace: CodingWorkspace, session: SessionStore | None,
                      commit_sha: str) -> bool:
-    saved = session.verification_snapshot() if session is not None else None
+    if session is None or session.session_id != workspace.session_id:
+        return False
+    if not isinstance(commit_sha, str) or not _SHA40_RE.match(commit_sha.lower()):
+        return False
+    saved = session.verification_snapshot()
     if saved is None:
         return False
     try:
@@ -273,8 +368,11 @@ def _verified_commit(workspace: CodingWorkspace, session: SessionStore | None,
 
 def _verified_regression(workspace: CodingWorkspace, session: SessionStore | None,
                          commit_sha: str) -> bool:
-    saved = (session.confirmed_regression_snapshot(base_sha=workspace.base_sha)
-             if session is not None and session.session_id == workspace.session_id else None)
+    if session is None or session.session_id != workspace.session_id:
+        return False
+    if not isinstance(commit_sha, str) or not _SHA40_RE.match(commit_sha.lower()):
+        return False
+    saved = session.confirmed_regression_snapshot(base_sha=workspace.base_sha)
     if saved is None:
         return False
     try:
@@ -299,10 +397,50 @@ def create_pull_request(
     session_store: SessionStore | None = None,
 ) -> PRResult:
     """Push branch to remote and create a GitHub pull request using gh CLI."""
-    if not title or not title.strip():
+    _validate_workspace(workspace)
+    if not isinstance(title, str):
+        raise TypeError("title must be a string")
+    if not title.strip():
         raise DeliveryError("PR title must not be empty")
+    if "\n" in title or "\r" in title or "\0" in title:
+        raise DeliveryError("PR title must not contain newlines or null bytes")
+    if len(title) > MAX_PR_TITLE_LENGTH:
+        raise DeliveryError(f"PR title exceeds maximum length of {MAX_PR_TITLE_LENGTH} characters")
 
-    commit_sha = git(workspace.path, "rev-parse", "HEAD").strip()
+    if not isinstance(body, str):
+        raise TypeError("body must be a string")
+    if "\0" in body:
+        raise DeliveryError("PR body must not contain null bytes")
+    if len(body) > MAX_PR_BODY_BYTES:
+        raise DeliveryError(f"PR body exceeds maximum length of {MAX_PR_BODY_BYTES} characters")
+
+    if type(draft) is not bool:
+        raise TypeError("draft must be a boolean")
+
+    if not isinstance(remote, str) or not remote.strip():
+        raise DeliveryError("remote must be a non-empty string")
+    if remote.startswith("-") or not _REMOTE_NAME_SAFE_RE.match(remote.strip()) or "\0" in remote or "\n" in remote:
+        raise DeliveryError(f"Invalid remote name: {remote}")
+    remote = remote.strip()
+
+    if base_branch is not None:
+        if not isinstance(base_branch, str) or not base_branch.strip():
+            raise DeliveryError("base_branch must be a non-empty string if provided")
+        if (
+            base_branch.startswith("-")
+            or not _REF_NAME_SAFE_RE.match(base_branch.strip())
+            or "\0" in base_branch
+            or "\n" in base_branch
+        ):
+            raise DeliveryError(f"Invalid base branch name: {base_branch}")
+        base_branch = base_branch.strip()
+
+    if session_store is not None and not isinstance(session_store, SessionStore):
+        raise TypeError("session_store must be a SessionStore instance or None")
+
+    commit_sha = git(workspace.path, "rev-parse", "HEAD").strip().lower()
+    if not _SHA40_RE.match(commit_sha):
+        raise DeliveryError(f"Invalid commit SHA in worktree: {commit_sha}")
 
     # Verify that commits exist ahead of base
     try:
