@@ -30,13 +30,13 @@ class GitContextError(ValueError):
 def _validate_diff_path(path: str | None, *, label: str = "path") -> str:
     if not isinstance(path, str) or not path.strip():
         raise GitContextError(f"Changed file {label} must be a non-empty string")
-    clean = path.strip()
+    clean = path
     if any(c in clean for c in ("\x00", "\r", "\n", "\t")):
         raise GitContextError(f"Changed file {label} contains control characters: {path!r}")
     if clean.startswith(("/", "\\")):
         raise GitContextError(f"Changed file {label} must not be an absolute path: {path!r}")
     norm = posixpath.normpath(clean)
-    if norm == "." or norm.startswith("..") or "/../" in f"/{norm}/":
+    if norm == "." or ".." in clean.split("/"):
         raise GitContextError(f"Path traversal detected in {label}: {path!r}")
     return clean
 
@@ -55,7 +55,7 @@ def _git(
     if any(not isinstance(arg, str) or "\x00" in arg for arg in args):
         raise GitContextError("Invalid Git command arguments")
     try:
-        result = run_bounded(["git", "-C", str(repo), *args], timeout=timeout, max_bytes=max_output_bytes)
+        result = run_bounded(["git", "--literal-pathspecs", "-C", str(repo), *args], timeout=timeout, max_bytes=max_output_bytes)
     except (OSError, ValueError) as exc:
         raise GitContextError(f"Git failed: {exc}") from exc
     if result.stdout_limited or result.stderr_limited:
@@ -80,18 +80,28 @@ def parse_hunks(patch: str) -> list[DiffHunk]:
         raise GitContextError("Patch must be a string")
     if "\x00" in patch:
         raise GitContextError("Patch must not contain null bytes")
-    if len(patch.encode("utf-8")) > MAX_PATCH_BYTES:
+    if len(patch) > MAX_PATCH_BYTES or len(patch.encode("utf-8")) > MAX_PATCH_BYTES:
         raise GitContextError(f"Diff patch exceeded maximum size limit of {MAX_PATCH_BYTES} bytes")
 
     hunks: list[DiffHunk] = []
     old_line = new_line = 0
     total_lines = 0
 
-    for line in patch.splitlines():
+    lines = patch.splitlines()
+    if len(lines) > MAX_DIFF_LINES:
+        raise GitContextError(f"Diff patch line limit exceeded ({MAX_DIFF_LINES})")
+    for line in lines:
         match = _HUNK.match(line)
+        if hunks and not match and (
+            (line.startswith(("+", " ")) and new_line > MAX_LINE_NUMBER)
+            or (line.startswith(("-", " ")) and old_line > MAX_LINE_NUMBER)
+        ):
+            raise GitContextError("Diff line number exceeds maximum allowed")
         if match:
             if len(hunks) >= MAX_HUNKS:
                 raise GitContextError(f"Diff patch exceeded maximum allowed hunks ({MAX_HUNKS})")
+            if len(match[1]) > 8 or len(match[3]) > 8:
+                raise GitContextError("Invalid line number in hunk header")
             old_line, new_line = int(match[1]), int(match[3])
             if old_line > MAX_LINE_NUMBER or new_line > MAX_LINE_NUMBER:
                 raise GitContextError(

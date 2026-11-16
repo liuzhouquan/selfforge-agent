@@ -111,3 +111,27 @@ def test_git_execution_bounds_output_and_validates_timeout(
     for bad_timeout in (float("nan"), float("inf"), -1.0, 0, True, False, "30"):
         with pytest.raises(GitContextError, match="Timeout"):
             git_context._git(repo, "status", timeout=bad_timeout)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("filename", [" space.py ", "..valid.py", ":literal.py", "[literal].py"])
+def test_build_context_keeps_exact_legal_git_path(demo_repo, filename) -> None:
+    from selfforge_agent.coding.worktree import git
+
+    repo, _, before = demo_repo
+    (repo / filename).write_text("eval('boundary')\n")
+    git(repo, "--literal-pathspecs", "add", "--", filename)
+    git(repo, "commit", "-qm", "Add exact path fixture")
+    after = git(repo, "rev-parse", "HEAD").strip()
+    context = build_context(repo, before, after)
+    assert [file.path for file in context.files] == [filename]
+    assert context.files[0].hunks[0].lines[0].content == "eval('boundary')"
+
+
+@pytest.mark.parametrize("patch", [
+    "@@ -0,0 +10000000,2 @@\n+a\n+b",
+    "@@ -10000000,2 +0,0 @@\n-a\n-b",
+    "@@ -10000000,2 +10000000,2 @@\n a\n b",
+])
+def test_hunk_increment_cannot_exceed_line_number_boundary(patch) -> None:
+    with pytest.raises(GitContextError, match="line number"):
+        parse_hunks(patch)
