@@ -187,6 +187,8 @@ def workspace_fingerprint(
             field(os.fsencode(root_abs))
             field(str(stat.S_IMODE(root_st.st_mode)).encode())
             walk(root_fd, "", 0)
+            if identity(root_st) != identity(os.lstat(clean_abs_str)):
+                raise WorkspaceSnapshotError("Workspace root changed during fingerprint")
         finally:
             os.close(root_fd)
         check()

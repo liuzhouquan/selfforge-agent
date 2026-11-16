@@ -128,3 +128,28 @@ def test_workspace_fingerprint_rejects_negative_file_size(tmp_path: Path) -> Non
 
     with patch("os.stat", side_effect=mock_stat), pytest.raises(WorkspaceSnapshotError, match="invalid file size"):
         workspace_fingerprint(tmp_path)
+
+
+def test_root_replaced_during_scan_invalidates_fingerprint(tmp_path, monkeypatch):
+    import selfforge_agent.runtime.fingerprint as module
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "old.txt").write_text("old")
+    real_lstat = os.lstat
+    calls = 0
+
+    def replace_after_lstat(path, *args, **kwargs):
+        nonlocal calls
+        result = real_lstat(path, *args, **kwargs)
+        if str(path) == str(root):
+            calls += 1
+        if str(path) == str(root) and calls == 3:
+            root.rename(tmp_path / "previous")
+            root.mkdir()
+            (root / "new.txt").write_text("new")
+        return result
+
+    monkeypatch.setattr(module.os, "lstat", replace_after_lstat)
+    with pytest.raises(WorkspaceSnapshotError, match="changed"):
+        workspace_fingerprint(root)
