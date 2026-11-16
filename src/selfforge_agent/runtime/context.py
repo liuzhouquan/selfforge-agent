@@ -12,6 +12,10 @@ _TOKEN_PATTERN = re.compile(
 
 def estimate_tokens(text: str) -> int:
     """Estimate token count without claiming model-specific tokenizer accuracy."""
+    if text is None:
+        return 0
+    if not isinstance(text, str):
+        raise TypeError(f"text must be a str, got {type(text).__name__}")
     if not text:
         return 0
     tokens = 0
@@ -43,24 +47,53 @@ def estimate_tokens(text: str) -> int:
 
 def _recent_interactions(messages: list[dict], limit: int) -> list[dict]:
     """Select complete assistant/tool blocks after the latest user task."""
-    last_user = max(index for index, item in enumerate(messages) if item.get("role") == "user")
-    starts = [index for index in range(last_user + 1, len(messages))
-              if messages[index].get("role") == "assistant"]
-    if not starts or limit <= 0:
+    if not isinstance(messages, list) or type(limit) is not int or limit <= 0:
+        return []
+    user_indices = [
+        index for index, item in enumerate(messages)
+        if isinstance(item, dict) and item.get("role") == "user"
+    ]
+    if not user_indices:
+        return []
+    last_user = max(user_indices)
+    starts = [
+        index for index in range(last_user + 1, len(messages))
+        if isinstance(messages[index], dict) and messages[index].get("role") == "assistant"
+    ]
+    if not starts:
         return []
     recent = messages[starts[-min(limit, len(starts))]:]
     pending: set[str] = set()
     for item in recent:
-        if item.get("role") == "assistant":
+        if not isinstance(item, dict):
+            return []
+        role = item.get("role")
+        if role == "assistant":
             if pending:
                 return []
-            calls = item.get("tool_calls") or []
-            pending = {call.get("id") for call in calls}
-            if len(pending) != len(calls) or any(not isinstance(value, str) for value in pending):
+            calls = item.get("tool_calls")
+            if calls is None:
+                continue
+            if not isinstance(calls, list):
                 return []
-        elif item.get("role") == "tool":
+            pending = set()
+            for call in calls:
+                if not isinstance(call, dict):
+                    return []
+                function = call.get("function")
+                if (call.get("type", "function") != "function" or not isinstance(function, dict)
+                        or not isinstance(function.get("name"), str) or not function["name"]
+                        or not isinstance(function.get("arguments"), str)):
+                    return []
+                call_id = call.get("id")
+                if not isinstance(call_id, str) or not call_id:
+                    return []
+                pending.add(call_id)
+            if len(pending) != len(calls):
+                return []
+        elif role == "tool":
             call_id = item.get("tool_call_id")
-            if call_id not in pending:
+            if not isinstance(call_id, str) or call_id not in pending:
                 return []
             pending.remove(call_id)
         else:
@@ -70,6 +103,9 @@ def _recent_interactions(messages: list[dict], limit: int) -> list[dict]:
 
 def estimate_message_tokens(message: dict) -> int:
     """Estimate tokens for a message envelope, role, content, and tool calls."""
+    if not isinstance(message, dict):
+        raise TypeError(f"message must be a dict, got {type(message).__name__}")
+
     # Message formatting envelope overhead (<|start|>role\n...<|end|>)
     overhead = 4
     role = str(message.get("role") or "")
@@ -80,19 +116,39 @@ def estimate_message_tokens(message: dict) -> int:
         overhead += estimate_tokens(content)
     elif isinstance(content, list):
         for part in content:
-            overhead += estimate_tokens(str(part))
+            if isinstance(part, dict):
+                part_text = part.get("text")
+                if isinstance(part_text, str):
+                    overhead += estimate_tokens(part_text)
+                else:
+                    overhead += estimate_tokens(str(part))
+            else:
+                overhead += estimate_tokens(str(part))
+    elif content is not None:
+        overhead += estimate_tokens(str(content))
 
     reasoning = message.get("reasoning_content")
     if isinstance(reasoning, str):
         overhead += estimate_tokens(reasoning) + 2
+    elif reasoning is not None:
+        overhead += estimate_tokens(str(reasoning)) + 2
 
     tool_calls = message.get("tool_calls")
     if isinstance(tool_calls, list):
         for call in tool_calls:
             overhead += 4  # tool call envelope
-            func = call.get("function") or {}
-            overhead += estimate_tokens(str(func.get("name") or ""))
-            overhead += estimate_tokens(str(func.get("arguments") or ""))
+            if not isinstance(call, dict):
+                continue
+            func = call.get("function")
+            if isinstance(func, dict):
+                name = func.get("name")
+                if name is not None:
+                    overhead += estimate_tokens(str(name))
+                args = func.get("arguments")
+                if args is not None:
+                    overhead += estimate_tokens(str(args))
+            elif func is not None:
+                overhead += estimate_tokens(str(func))
 
     if message.get("tool_call_id"):
         overhead += 3
@@ -102,13 +158,15 @@ def estimate_message_tokens(message: dict) -> int:
 
 class ContextManager:
     def __init__(self, token_budget: int = 8_000) -> None:
-        if token_budget < 500:
-            raise ValueError("Context budget must be at least 500 tokens")
+        if type(token_budget) is not int or token_budget < 500:
+            raise ValueError("Context budget must be an integer of at least 500 tokens")
         self.token_budget = token_budget
 
     @staticmethod
     def estimate(messages: list[dict]) -> int:
         """Estimate total tokens across messages with framing overhead."""
+        if not isinstance(messages, list):
+            raise TypeError(f"messages must be a list, got {type(messages).__name__}")
         return sum(estimate_message_tokens(item) for item in messages) + 3
 
     def compact(
@@ -122,17 +180,29 @@ class ContextManager:
 
         and recent interaction turns when budget permits.
         """
-        if not 0 <= reserve_tokens < self.token_budget:
+        if not isinstance(messages, list):
+            raise TypeError(f"messages must be a list, got {type(messages).__name__}")
+        for i, item in enumerate(messages):
+            if not isinstance(item, dict):
+                raise TypeError(f"message at index {i} must be a dict, got {type(item).__name__}")
+
+        if type(reserve_tokens) is not int or not (0 <= reserve_tokens < self.token_budget):
             raise ValueError("Reserved tokens must leave a positive context budget")
+
+        if type(preserve_recent_turns) is not int or preserve_recent_turns < 0:
+            raise ValueError("preserve_recent_turns must be a non-negative integer")
+
         budget = self.token_budget - reserve_tokens
         if self.estimate(messages) <= budget:
             return messages, False
 
-        system = next((item for item in messages if item.get("role") == "system"), None)
+        systems = [item for item in messages if item.get("role") == "system"
+                   and not str(item.get("content", "")).startswith(_SUMMARY_PREFIX)]
         users = [item for item in messages if item.get("role") == "user"]
-        if system is None or not users:
+        if not systems or not users:
             raise ValueError("Session lacks a system prompt or task")
-        anchors = [system, *users]
+        anchors = [item for item in messages
+                   if item.get("role") == "user" or any(item is system for system in systems)]
         if self.estimate(anchors) >= budget:
             raise ValueError("Task and constraints exceed context budget")
 
@@ -143,38 +213,54 @@ class ContextManager:
 
         if preserve_recent_turns > 0:
             turn_slice = _recent_interactions(messages, preserve_recent_turns)
-            test_compacted = [anchors[0], {"role": "system", "content": _SUMMARY_PREFIX}, *anchors[1:], *turn_slice]
-            if self.estimate(test_compacted) + 50 <= budget:
-                recent_preserved = turn_slice
-                older_to_summarize = [item for item in intermediates
-                                      if not any(item is kept for kept in recent_preserved)]
+            if turn_slice:
+                test_compacted = [anchors[0], {"role": "system", "content": _SUMMARY_PREFIX}, *anchors[1:], *turn_slice]
+                if self.estimate(test_compacted) + 50 <= budget:
+                    recent_preserved = turn_slice
+                    older_to_summarize = [item for item in intermediates
+                                          if not any(item is kept for kept in recent_preserved)]
 
         digest: list[str] = []
         for item in older_to_summarize:
             role = item.get("role")
             if role == "system" and str(item.get("content", "")).startswith(_SUMMARY_PREFIX):
-                digest.append(str(item["content"])[len(_SUMMARY_PREFIX):])
+                content_str = str(item.get("content", ""))
+                digest.append(content_str[len(_SUMMARY_PREFIX):])
             elif role == "assistant" and item.get("tool_calls"):
                 actions = []
-                for call in item["tool_calls"]:
-                    func = call.get("function") or {}
-                    name = func.get("name", "?")
-                    args_raw = func.get("arguments") or ""
-                    try:
-                        args = json.loads(args_raw) if args_raw else {}
-                    except (ValueError, TypeError):
+                calls = item.get("tool_calls")
+                if isinstance(calls, list):
+                    for call in calls:
+                        if not isinstance(call, dict):
+                            continue
+                        func = call.get("function")
+                        if not isinstance(func, dict):
+                            func = {}
+                        name = str(func.get("name") or "?")[:100]
+                        args_raw = func.get("arguments")
                         args = {}
-                    if name == "edit_file" and isinstance(args, dict) and "path" in args:
-                        actions.append(f"Edited file: {args['path']}")
-                    elif name == "read_file" and isinstance(args, dict) and "path" in args:
-                        actions.append(f"Read file: {args['path']}")
-                    elif name == "search_code" and isinstance(args, dict) and "pattern" in args:
-                        actions.append(f"Searched code for: {args['pattern']}")
-                    elif name == "run_tests":
-                        actions.append("Executed test runner")
-                    else:
-                        actions.append(f"Called: {name}")
-                digest.append("; ".join(actions))
+                        if isinstance(args_raw, str) and args_raw:
+                            try:
+                                parsed = json.loads(args_raw)
+                                if isinstance(parsed, dict):
+                                    args = parsed
+                            except (ValueError, TypeError):
+                                args = {}
+                        elif isinstance(args_raw, dict):
+                            args = args_raw
+
+                        if name == "edit_file" and "path" in args:
+                            actions.append(f"Edited file: {str(args['path'])[:200]}")
+                        elif name == "read_file" and "path" in args:
+                            actions.append(f"Read file: {str(args['path'])[:200]}")
+                        elif name == "search_code" and "pattern" in args:
+                            actions.append(f"Searched code for: {str(args['pattern'])[:200]}")
+                        elif name == "run_tests":
+                            actions.append("Executed test runner")
+                        else:
+                            actions.append(f"Called: {name}")
+                if actions:
+                    digest.append("; ".join(actions))
             elif role == "tool":
                 content = str(item.get("content", ""))
                 first_line = content.splitlines()[0] if content.splitlines() else ""
@@ -187,7 +273,7 @@ class ContextManager:
                 if content:
                     digest.append("Assistant: " + content[:200])
 
-        summary_body = "\n".join(digest)
+        summary_body = "\n".join(d for d in digest if d)
         base_overhead = self.estimate([anchors[0], *anchors[1:], *recent_preserved])
         allowed = max(100, (budget - base_overhead) * 3)
 
@@ -202,7 +288,7 @@ class ContextManager:
             *recent_preserved,
         ]
 
-        while self.estimate(compacted) > budget and allowed > 50:
+        while self.estimate(compacted) > budget and allowed > 0:
             allowed //= 2
             compacted[1]["content"] = bounded_summary(allowed)
 
