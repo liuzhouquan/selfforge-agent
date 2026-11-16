@@ -80,6 +80,11 @@ def _recent_interactions(messages: list[dict], limit: int) -> list[dict]:
             for call in calls:
                 if not isinstance(call, dict):
                     return []
+                function = call.get("function")
+                if (call.get("type") != "function" or not isinstance(function, dict)
+                        or not isinstance(function.get("name"), str) or not function["name"]
+                        or not isinstance(function.get("arguments"), str)):
+                    return []
                 call_id = call.get("id")
                 if not isinstance(call_id, str) or not call_id:
                     return []
@@ -191,11 +196,13 @@ class ContextManager:
         if self.estimate(messages) <= budget:
             return messages, False
 
-        system = next((item for item in messages if item.get("role") == "system"), None)
+        systems = [item for item in messages if item.get("role") == "system"
+                   and not str(item.get("content", "")).startswith(_SUMMARY_PREFIX)]
         users = [item for item in messages if item.get("role") == "user"]
-        if system is None or not users:
+        if not systems or not users:
             raise ValueError("Session lacks a system prompt or task")
-        anchors = [system, *users]
+        anchors = [item for item in messages
+                   if item.get("role") == "user" or any(item is system for system in systems)]
         if self.estimate(anchors) >= budget:
             raise ValueError("Task and constraints exceed context budget")
 

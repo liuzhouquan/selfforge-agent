@@ -144,3 +144,38 @@ def test_compact_handles_malformed_intermediate_messages() -> None:
     assert manager.estimate(compacted) <= 400
     assert compacted[0] == messages[0]
     assert [m for m in compacted if m["role"] == "user"] == [messages[1]]
+
+
+def test_compaction_preserves_every_system_constraint_and_user_task():
+    manager = ContextManager(500)
+    anchors = [
+        {"role": "system", "content": "Main instruction"},
+        {"role": "system", "content": "Never edit protected files"},
+        {"role": "user", "content": "First task"},
+        {"role": "user", "content": "Also preserve configuration"},
+    ]
+    compacted, changed = manager.compact(anchors + [{"role": "assistant", "content": "x " * 2000}])
+    assert changed
+    assert all(anchor in compacted for anchor in anchors)
+    assert manager.estimate(compacted) <= 500
+
+
+@pytest.mark.parametrize("function", [["bad"], {"name": 7, "arguments": "{}"}, {"name": "read_file", "arguments": []}])
+def test_recent_native_call_rejects_invalid_function_shape(function):
+    messages = [{"role": "user", "content": "task"},
+                {"role": "assistant", "tool_calls": [{"id": "a", "type": "function", "function": function}]},
+                {"role": "tool", "tool_call_id": "a", "content": "result"}]
+    assert _recent_interactions(messages, 1) == []
+
+
+def test_compaction_preserves_complete_native_multicall_with_reversed_replies():
+    calls = [{"id": key, "type": "function", "function": {"name": "read_file", "arguments": "{}"}} for key in ("a", "b")]
+    recent = [{"role": "assistant", "tool_calls": calls},
+              {"role": "tool", "tool_call_id": "b", "content": "second"},
+              {"role": "tool", "tool_call_id": "a", "content": "first"}]
+    messages = [{"role": "system", "content": "constraints"},
+                {"role": "user", "content": "task"},
+                {"role": "assistant", "content": "old " * 3000}, *recent]
+    compacted, changed = ContextManager(500).compact(messages, preserve_recent_turns=1)
+    assert changed
+    assert compacted[-3:] == recent
