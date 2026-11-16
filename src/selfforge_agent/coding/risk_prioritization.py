@@ -10,6 +10,8 @@ from selfforge_agent.models import ChangeKind, Finding, PRContext
 from selfforge_agent.review.baseline import BaselineReviewer
 
 MAX_SCAN_FILES = 1_000
+MAX_SCAN_HUNKS = 1_000
+MAX_SCAN_LINES = 10_000
 MAX_ADDED_LINES = 10_000
 MAX_FINDINGS = 1_000
 MAX_EVIDENCE_CHARS = 2_000
@@ -114,6 +116,25 @@ def _score_candidate(severity: str, category: str, evidence: str) -> tuple[float
     return total, rationale[:500]
 
 
+def _bounded_context(context: PRContext) -> PRContext:
+    files = []
+    remaining_lines = MAX_SCAN_LINES
+    remaining_hunks = MAX_SCAN_HUNKS
+    for file in context.files[:MAX_SCAN_FILES]:
+        hunks = []
+        for hunk in file.hunks[:remaining_hunks]:
+            lines = hunk.lines[:remaining_lines]
+            hunks.append(hunk.model_copy(update={"lines": lines}))
+            remaining_hunks -= 1
+            remaining_lines -= len(lines)
+            if remaining_lines == 0 or remaining_hunks == 0:
+                break
+        files.append(file.model_copy(update={"hunks": hunks}))
+        if remaining_lines == 0 or remaining_hunks == 0:
+            break
+    return context.model_copy(update={"files": files})
+
+
 def prioritize_risks(
     context: PRContext,
     findings: list[Finding] | None = None,
@@ -131,6 +152,7 @@ def prioritize_risks(
             if not isinstance(f, Finding):
                 raise TypeError("findings must contain only Finding instances")
 
+    context = _bounded_context(context)
     added_lines: dict[tuple[str, int], str] = {}
     for file in context.files[:MAX_SCAN_FILES]:
         if not isinstance(file.path, str) or not file.path.endswith(".py"):

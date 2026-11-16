@@ -377,3 +377,26 @@ def test_prioritize_risks_ignores_non_python_and_malformed_paths() -> None:
     ]
     ctx = _make_context(files)
     assert prioritize_risks(ctx) == []
+
+
+def test_default_reviewer_receives_only_bounded_scan_context(monkeypatch):
+    import selfforge_agent.coding.risk_prioritization as module
+
+    line = DiffLine(kind=ChangeKind.added, content="int(value)", new_line=1)
+    hunk = DiffHunk(header="@@", old_start=1, new_start=1, lines=[line] * 10001)
+    file = ChangedFile(path="app.py", status="modified", hunks=[hunk])
+    empty = ChangedFile(path="empty.py", status="modified", hunks=[])
+    context = _make_context([]).model_copy(update={"files": [file] + [empty] * MAX_SCAN_FILES})
+    observed = []
+
+    def review(_self, bounded):
+        observed.append(bounded)
+        assert len(bounded.files) <= MAX_SCAN_FILES
+        assert sum(len(h.lines) for f in bounded.files for h in f.hunks) <= 10000
+        return []
+
+    monkeypatch.setattr(module.BaselineReviewer, "review", review)
+    assert prioritize_risks(context)
+    assert observed
+    assert len(context.files) == MAX_SCAN_FILES + 1
+    assert len(context.files[0].hunks[0].lines) == 10001
