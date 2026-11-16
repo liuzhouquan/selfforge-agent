@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from datetime import date
 from typing import Any
 
@@ -53,7 +54,8 @@ def estimate_monetary_cost(
         return None
 
     configured = os.environ.get("SELFFORGE_PRICING_JSON", "")
-    if not configured or len(configured) > MAX_PRICING_JSON_BYTES or "\x00" in configured:
+    if (not configured or len(configured) > MAX_PRICING_JSON_BYTES or "\x00" in configured
+            or len(configured.encode("utf-8", errors="replace")) > MAX_PRICING_JSON_BYTES):
         return None
 
     try:
@@ -67,7 +69,10 @@ def estimate_monetary_cost(
         if not isinstance(card_data, dict):
             return None
         rates = ModelRates.model_validate(card_data)
-    except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+        # All production consumers use USD fields/budgets; no implicit FX conversion.
+        if rates.currency != "USD":
+            return None
+    except (json.JSONDecodeError, ValidationError, TypeError, ValueError, RecursionError):
         return None
 
     try:
@@ -140,7 +145,8 @@ def format_monetary_cost(cost: Any) -> str:
         prompt = getattr(cost, "prompt_cost_usd", None)
         comp = getattr(cost, "completion_cost_usd", None)
         currency = getattr(cost, "currency", None)
-        if total is None or prompt is None or comp is None or currency is None:
+        if (total is None or prompt is None or comp is None or not isinstance(currency, str)
+                or not re.fullmatch(r"[A-Z]{3}", currency)):
             return "uncalibrated"
         if (
             not isinstance(total, (int, float))
@@ -155,6 +161,8 @@ def format_monetary_cost(cost: Any) -> str:
             return "uncalibrated"
         if total < 0.0 or prompt < 0.0 or comp < 0.0:
             return "uncalibrated"
-        return f"${total:.6f} {currency} (prompt: ${prompt:.6f}, completion: ${comp:.6f})"
-    except (AttributeError, TypeError, ValueError):
+        if currency == "USD":
+            return f"${total:.6f} {currency} (prompt: ${prompt:.6f}, completion: ${comp:.6f})"
+        return f"{currency} {total:.6f} (prompt: {prompt:.6f}, completion: {comp:.6f})"
+    except (AttributeError, TypeError, ValueError, OverflowError):
         return "uncalibrated"

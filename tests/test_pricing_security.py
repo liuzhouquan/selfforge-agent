@@ -145,3 +145,51 @@ def test_pricing_rejects_extreme_and_overflow_token_counts(configured_rates: Non
         total_tokens=MAX_TOKENS_PER_REQUEST + 501,
     )
     assert estimate_monetary_cost("deepseek-chat", usage, provider="deepseek") is None
+
+
+@pytest.mark.parametrize("currency", ["bad\nlabel", "usd", ["USD"], 123])
+def test_formatter_rejects_invalid_currency_on_unvalidated_objects(currency) -> None:
+    from types import SimpleNamespace
+
+    value = SimpleNamespace(prompt_cost_usd=1.0, completion_cost_usd=2.0,
+                            total_cost_usd=3.0, currency=currency)
+    assert format_monetary_cost(value) == "uncalibrated"
+
+
+def test_non_usd_rate_card_cannot_establish_usd_budget_evidence(tmp_path, monkeypatch) -> None:
+    from selfforge_agent.runtime.session import SessionStore
+
+    card = {"prompt_per_million": 1, "completion_per_million": 2,
+            "source": "fixture", "as_of": "2026-11-16", "currency": "EUR"}
+    monkeypatch.setenv("SELFFORGE_PRICING_JSON", json.dumps({"fixture": {"model": card}}))
+    usage = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    assert estimate_monetary_cost("model", usage, provider="fixture") is None
+    session = SessionStore(tmp_path)
+    session.trace("model_call", provider="fixture", model="model", usage=usage.model_dump())
+    assert session.token_metrics()["cost"] is None
+
+
+def test_non_usd_explicit_same_currency_sum_and_format_remain_available() -> None:
+    value = MonetaryCost(currency="EUR", prompt_cost_usd=1, completion_cost_usd=2, total_cost_usd=3)
+    result = sum_monetary_costs([value, value])
+    assert result is not None and result.currency == "EUR" and result.total_cost_usd == 6
+    assert format_monetary_cost(result).startswith("EUR 6.000000")
+    assert "$" not in format_monetary_cost(result)
+
+
+def test_rate_card_limit_counts_utf8_bytes(monkeypatch) -> None:
+    card = {"prompt_per_million": 1, "completion_per_million": 2,
+            "source": "fixture", "as_of": "2026-11-16"}
+    raw = json.dumps({"p": {"m": card}, "padding": "中" * 6000}, ensure_ascii=False)
+    assert len(raw) < MAX_PRICING_JSON_BYTES < len(raw.encode("utf-8"))
+    monkeypatch.setenv("SELFFORGE_PRICING_JSON", raw)
+    usage = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    assert estimate_monetary_cost("m", usage, provider="p") is None
+
+
+def test_formatter_handles_integer_too_large_for_float_conversion() -> None:
+    from types import SimpleNamespace
+
+    value = SimpleNamespace(prompt_cost_usd=10**1000, completion_cost_usd=1,
+                            total_cost_usd=10**1000, currency="USD")
+    assert format_monetary_cost(value) == "uncalibrated"
