@@ -169,3 +169,15 @@ def test_checkout_pr_rejects_existing_destination_and_cleans_up(
     with pytest.raises(GitHubPRError, match="already exists"):
         checkout_pr("https://github.com/example/project/pull/1", workspace_root)
 
+
+
+@pytest.mark.parametrize("stream", [1, 2])
+def test_github_command_limit_stops_producer_before_followup_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stream: int,
+) -> None:
+    marker = tmp_path / "after-output"
+    monkeypatch.setattr(github_pr, "MAX_OUTPUT_BYTES", 1024)
+    code = "import os,sys;from pathlib import Path;os.write(int(sys.argv[1]),b'x'*1000000);Path(sys.argv[2]).write_text('ran')"
+    with pytest.raises(GitHubPRError, match="output|Output"):
+        github_pr._run([sys.executable, "-c", code, str(stream), str(marker)])
+    assert not marker.exists()

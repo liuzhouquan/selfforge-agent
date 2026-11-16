@@ -4,6 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from selfforge_agent.core.process import run_bounded
 from selfforge_agent.models import ChangedFile, ChangeKind, DiffHunk, DiffLine, PRContext
 
 _HEX_SHA = re.compile(r"^[0-9a-fA-F]{7,40}\Z")
@@ -21,18 +22,14 @@ def _git(repo: Path, *args: str) -> bytes:
     if any("\x00" in str(arg) for arg in args):
         raise GitContextError("Git command argument cannot contain null bytes")
     try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
-            check=False,
-            timeout=30,
-        )
+        result = run_bounded(["git", "-C", str(repo), *args], timeout=30,
+                             max_bytes=MAX_GIT_OUTPUT_BYTES)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitContextError(f"Git failed: {exc}") from exc
-    if len(result.stdout) > MAX_GIT_OUTPUT_BYTES or len(result.stderr) > MAX_GIT_OUTPUT_BYTES:
+    if result.stdout_limited or result.stderr_limited:
         raise GitContextError("Git command output exceeded limit")
     if result.returncode:
-        message = result.stderr.decode("utf-8", "replace").strip()
+        message = result.stderr.decode("utf-8", "replace").strip()[-1000:]
         raise GitContextError(message or "Git command failed")
     return result.stdout
 

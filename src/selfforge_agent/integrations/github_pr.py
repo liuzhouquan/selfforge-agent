@@ -11,6 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from selfforge_agent.core.git_context import parse_hunks
+from selfforge_agent.core.process import run_bounded
 from selfforge_agent.models import ChangedFile, PRContext
 
 _PR_URL = re.compile(
@@ -94,7 +95,7 @@ def parse_pr_url(url: str) -> tuple[str, str, int]:
 def _run(command: list[str], *, cwd: Path | None = None, timeout: float = 60) -> str:
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
         raise GitHubPRError("Timeout must be a finite positive number")
-    if not math.isfinite(timeout) or timeout <= 0 or timeout > 300:
+    if timeout <= 0 or timeout > 300 or not math.isfinite(timeout):
         raise GitHubPRError("Timeout must be a finite positive number between 1 and 300")
     if cwd is not None:
         if cwd.is_symlink():
@@ -102,16 +103,17 @@ def _run(command: list[str], *, cwd: Path | None = None, timeout: float = 60) ->
         if not cwd.is_dir():
             raise GitHubPRError("Working directory must be an existing directory")
     try:
-        result = subprocess.run(
-            command, cwd=cwd, capture_output=True, text=True, check=False, timeout=timeout
-        )
+        result = run_bounded(command, cwd=cwd, timeout=timeout, max_bytes=MAX_OUTPUT_BYTES)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitHubPRError(f"GitHub operation failed: {exc}") from exc
-    if len(result.stdout) > MAX_OUTPUT_BYTES or len(result.stderr) > MAX_OUTPUT_BYTES:
+    if result.stdout_limited or result.stderr_limited:
         raise GitHubPRError("Command output exceeded size limit")
     if result.returncode:
-        raise GitHubPRError(result.stderr.strip()[-1000:] or "GitHub operation failed")
-    return result.stdout
+        raise GitHubPRError(result.stderr.decode("utf-8", "replace").strip()[-1000:] or "GitHub operation failed")
+    try:
+        return result.stdout.decode("utf-8")
+    except UnicodeError as exc:
+        raise GitHubPRError("GitHub returned invalid UTF-8") from exc
 
 
 def _api(endpoint: str) -> object:
