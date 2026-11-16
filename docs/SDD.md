@@ -133,6 +133,7 @@ flowchart LR
 | 23 | [SF-INT-01](#sf-int-01) | In Review | Antigravity | 无 | [PR #80](https://github.com/liuzhouquan/selfforge-agent/pull/80)：GitHub PR 提取与检出安全加固：命令注入与参数投毒防御、URL 规范化、工作区路径防符链穿透、Diff Hunk 解析有界防御 |
 | 24 | [SF-PRICE-01](#sf-price-01) | In Review | Antigravity | 无 | [PR #81](https://github.com/liuzhouquan/selfforge-agent/pull/81)：模型费率卡与成本估算安全加固：JSON 反序列化深度防御、Token 计数严格类型与非负校验、货币代码规范化、浮点溢出安全回退 |
 | 25 | [SF-GH-01](#sf-gh-01) | In Review | Antigravity | 无 | [PR #82](https://github.com/liuzhouquan/selfforge-agent/pull/82)：GitHub PR 抓取与检出安全加固：URL 严格正则与选项防注入、变更文件路径防穿越与状态规范化、工作区软链接防御、命令输出有界防御 |
+| 26 | [SF-CORE-01](#sf-core-01) | In Review | Antigravity | 无 | [PR #83](https://github.com/liuzhouquan/selfforge-agent/pull/83)：Git 差异上下文与补丁解析安全加固：仓库路径软链接防御、差异解包受控映射、补丁与行号有界防 DoS |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1116,6 +1117,36 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #82 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43660950665（R1 CI 全绿，待回填 Commit H 之 R2 CI） / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：提交 Commit H 并推送到 origin/feat/sf-gh-01，监控 R2 CI 直至通过。
+```
+
+### SF-CORE-01
+
+**目标：** 在 `selfforge_agent.core.git_context` 中贯彻输入防御、受控收敛与资源有界防御。`build_context` 严格校验仓库路径 `repo_root`，通过 `os.lstat` 阻断软链接仓库根目录与不存在/非目录路径；对 `git diff --name-status -z` 的输出安全解包，严防截断或畸形输出触发未受控异常，对变更文件路径执行安全性校验（拒绝空字节 `\x00`、控制字符、绝对路径与 `..` 路径穿越段）；在 `_git` 底层执行中强制校验 `timeout` 为有限正数，并限制 git 命令输出大小（默认最大 10 MiB `MAX_GIT_OUTPUT_BYTES`）；在 `parse_hunks` 中对补丁文本大小（最大 10 MiB `MAX_PATCH_BYTES`）、最大 hunk 数量（10,000 `MAX_HUNKS`）、最大行数（100,000 `MAX_DIFF_LINES`）及行号数值（最大 10,000,000 `MAX_LINE_NUMBER`）施加有界防御，防范解析 DoS 与内存耗尽。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/core/git_context.py` 及安全测试 `tests/test_git_context_security.py`；保持既有外部接口（`build_context`、`parse_hunks`、`GitContextError`）完全兼容。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-CORE-01-A1 | `build_context` 传入软链接仓库根目录或非目录时，在解析前通过 `os.lstat` 识别并抛出受控 `GitContextError`，阻断符号链接跨界 | `tests/test_git_context_security.py` 软链接仓库根目录防御测试 | E1 |
+| SF-CORE-01-A2 | `git diff --name-status -z` 输出截断或畸形分片时受控报错，且变更文件路径含空字节、控制字符、绝对路径或 `..` 路径穿越时显式拒绝，抛出受控 `GitContextError` | `tests/test_git_context_security.py` 畸形差异流与路径穿越防御测试 | E2 |
+| SF-CORE-01-A3 | `parse_hunks` 对超限补丁文本（>10 MiB）、超限 hunk 数（>10,000）、超限行数（>100,000）或天文数字行号（>10,000,000）施加有界防御，解析超限时抛出受控 `GitContextError` | `tests/test_git_context_security.py` 补丁大小与行号有界防御测试 | E3 |
+| SF-CORE-01-A4 | `_git` 强制校验有限正数 `timeout`，并对超大输出执行 10 MiB 上限截断保护；`ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过 | `tests/test_git_context_security.py`、`tests/test_git_review.py` 与全套静态/单元测试命令 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CORE-01-A1 | `tests/test_git_context_security.py::test_build_context_rejects_symlink_repository` | 本地 `pytest -v tests/test_git_context_security.py`；GitHub Actions CI `Unit tests` | `c470ab928dca44c099714bb275263015780db9ab`；passed；CI [R1 43663583620](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43663583620) |
+| E2 | SF-CORE-01-A2 | `tests/test_git_context_security.py::test_build_context_rejects_truncated_and_malformed_diff_tokens`、`tests/test_git_context_security.py::test_build_context_rejects_path_traversal_in_diff_paths` | 本地 `pytest -v tests/test_git_context_security.py`；GitHub Actions CI `Unit tests` | `c470ab928dca44c099714bb275263015780db9ab`；passed；CI [R1 43663583620](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43663583620) |
+| E3 | SF-CORE-01-A3 | `tests/test_git_context_security.py::test_parse_hunks_bounds_patch_size_and_line_numbers` | 本地 `pytest -v tests/test_git_context_security.py`；GitHub Actions CI `Unit tests` | `c470ab928dca44c099714bb275263015780db9ab`；passed；CI [R1 43663583620](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43663583620) |
+| E4 | SF-CORE-01-A4 | `tests/test_git_context_security.py::test_git_execution_bounds_output_and_validates_timeout`、`tests/test_git_review.py::test_diff_hunks_and_heuristic`、`tests/test_git_review.py::test_invalid_repository_and_commit`、`tests/test_git_review.py::test_finding_validation` | 本地 `pytest -v`、`ruff check .`、`python scripts/check_sdd.py`；GitHub Actions CI `Unit tests` 与 `Docker integration tests` | `c470ab928dca44c099714bb275263015780db9ab`；passed；CI [R1 43663583620](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43663583620) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：14203249e58444780422567ce98606217ea1ba36 / feat/sf-core-01 (worktree: selfforge-sf-core-01) / c470ab928dca44c099714bb275263015780db9ab
+已完成验收与证据 ID：SF-CORE-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；测试全绿，R1 CI 通过
+PR / 准确 head CI / merge SHA（有则填）：PR #83 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43663583620 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #83。
 ```
 
 ## 5. 验收追踪与执行记录格式
