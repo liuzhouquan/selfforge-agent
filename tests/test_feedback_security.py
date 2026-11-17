@@ -272,3 +272,15 @@ class TestRepairFeedbackFormatting:
         out = format_repair_feedback(attempt)
         assert "Previous edit did not pass: failed" in out
         assert "Process terminated with SIGSEGV" in out
+
+
+@pytest.mark.parametrize('limit', [50, 64, 99, 100, 2000, 50000])
+@pytest.mark.parametrize('details', [False, True])
+def test_repair_feedback_respects_every_supported_limit(limit, details):
+    failures = [TestFailure(test_id='fixture::test', kind='failure', message='assertion failed', detail='trace fixture')]
+    attempt = RepairAttempt(number=1, test_result=_make_result(failures) if details else None)
+    output = format_repair_feedback(attempt, max_length=limit)
+    assert isinstance(output, str)
+    assert 0 < len(output) <= limit
+    if details:
+        assert output.startswith('JUnit failures')

@@ -179,7 +179,7 @@ def format_repair_feedback(attempt: RepairAttempt, max_length: int = MAX_REPAIR_
         if res.status == "passed":
             return "Previous edit passed all tests."
         if res.failure_details:
-            return failure_feedback(res, max_length=max_length)
+            return failure_feedback(res, max_length=max(MIN_FAILURE_FEEDBACK, max_length))[:max_length]
         _check_no_null_bytes(res.status, "status")
         status_clean = _sanitize_text(res.status, multiline=False)
         msg = f"Previous edit did not pass: {status_clean}"
@@ -189,4 +189,4 @@ def format_repair_feedback(attempt: RepairAttempt, max_length: int = MAX_REPAIR_
             msg += f" ({err_clean})"
         return msg[:max_length]
 
-    return "Previous edit did not produce test evidence or error diagnostics."
+    return "Previous edit did not produce test evidence or error diagnostics."[:max_length]
