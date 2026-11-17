@@ -149,6 +149,7 @@ flowchart LR
 | 39 | [SF-CAUSAL-01](#sf-causal-01) | In Review | Antigravity | 无 | [PR #96](https://github.com/liuzhouquan/selfforge-agent/pull/96)：测试故障因果推断输入门禁、调用栈提取有界化与基础测试因果反归因加固 |
 | 40 | [SF-PROC-01](#sf-proc-01) | In Review | Antigravity | 无 | [PR #97](https://github.com/liuzhouquan/selfforge-agent/pull/97)：有界原生子进程执行安全加固、参数与目录防御及进程组生命周期管理 |
 | 41 | [SF-BMDIFF-01](#sf-bmdiff-01) | In Review | Codex（审查整合） | 无 | [PR #98](https://github.com/liuzhouquan/selfforge-agent/pull/98)：基准评测报告解析与差异分析加固：非普通文件与符链路径防御、报告指标Fail-Closed校验与SHA-256规范化、Markdown表格注入防御与结构化导出 |
+| 42 | [SF-JOB-01](#sf-job-01) | In Review | Codex（审查整合） | 无 | [PR #99](https://github.com/liuzhouquan/selfforge-agent/pull/99)：本地异步编码任务管理与取消标记加固：取消标记防符链与FIFO阻塞、作业记录序列化/反序列化校验与状态白名单防御、任务并发上限与工作区锁防泄露加固 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1730,6 +1731,38 @@ Owner / 状态：Codex（审查整合） / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #98 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43905452868 / 待合入
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待 PR #98 审查与合入。
+```
+
+### SF-JOB-01
+
+**目标：** 本地 Web 异步编码任务管理（`CodingJobManager`）、持久化取消标记（`_write_cancel_marker` / `DurableCancel`）、作业记录持久化与安全恢复（`_write_record` / `_load_record` / `_recover`）及工作区并发锁（`workspace_guard` / `active_workspace`）安全防御加固。
+
+**范围/入口：** `src/selfforge_agent/api/coding_jobs.py`（`CodingJobManager`、`CodingJob`、`DurableCancel`、`_write_cancel_marker`）。复用 `tests/test_coding_jobs_durable.py`，新增专项安全与边界复现测试 `tests/test_coding_jobs_security.py`。
+
+**行为：** `_write_cancel_marker` 严格校验输入为 `pathlib.Path`（拒绝非 Path 类型抛出 `TypeError`），严格杜绝空字节 `\0`；检查目标标记及所有祖先目录，拒绝任何符号链接；以 `O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK` 安全创建并基于 `stat.S_ISREG` 校验必须为常规文件（杜绝 FIFO 与设备阻塞）；`DurableCancel` 容错 `previous=None`，`is_set()` 杜绝符号链接标记；`CodingJobManager.__init__` 严格校验 `max_active`（`1 <= max_active <= 100`）与 `max_history`（`1 <= max_history <= 1000`）为正整数边界，校验 `root` 必须为有效 Path 且无空字节；`_record_path` 严格校验 12 位十六进制 `job_id`，非字符串或非法格式抛出 `KeyError`；`_write_record` 校验字典与 `job_id`，杜绝符号链接目标与父目录符号链接，限制单条记录 <= 64 KiB，使用唯一 `.tmp` 文件原子写入并 fsync 刷盘；`_load_record` 拒绝符号链接读取，严格校验必须为常规文件且 <= 64 KiB，校验字符串属性无空字节，严格校验 `state` 必须在合法白名单内（`{"queued", "running", "completed", "unverified", "failed", "max_steps", "timed_out", "cancelled", "interrupted"}`）；`start` 校验 agent 实例与有效 Path 根、校验非空 `task` 字符串（非恢复时要求非空）、杜绝空字节并限制长度 <= 100,000，拒绝符号链接工作区根目录；对工作区锁获取与作业初始化全程加固，异常时确保释放锁描述符；工作线程退出时原子清理 `job.lock_fd`，杜绝重复解锁与描述符泄漏；`get` 与 `cancel` 非法 `job_id` 抛出 `KeyError`；`list_jobs` 校验 `repository` Path 类型与空字节，容错损坏/非法记录。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-JOB-01-A1 | `_write_cancel_marker` 与 `DurableCancel` 防御：非 `Path` 抛出 `TypeError`，空字节、符号链接目标及父目录符号链接抛出 `ValueError`，拒绝 FIFO/特殊文件，`DurableCancel` 忽略符号链接标记 | `tests/test_coding_jobs_security.py::TestCancelMarkerAndDurableCancelSecurity`（含 `test_write_cancel_marker_rejects_non_path`、`test_write_cancel_marker_rejects_null_byte`、`test_write_cancel_marker_rejects_symlinked_parent_directory`、`test_write_cancel_marker_rejects_fifo`、`test_durable_cancel_ignores_symlinked_marker`） | E1 |
+| SF-JOB-01-A2 | 作业记录序列化与读取完整性：非字符串或非法 `job_id` 抛出 `KeyError`，记录写盘杜绝符号链接并限制 <= 64 KiB 原子写入，记录加载严格白名单状态校验与空字节防御 | `tests/test_coding_jobs_security.py::TestJobRecordSecurity`（含 `test_record_path_rejects_non_string_or_invalid_job_id`、`test_write_record_rejects_non_dict_or_missing_job_id`、`test_write_record_rejects_symlinked_parent_directory`、`test_load_record_rejects_invalid_state`、`test_load_record_rejects_null_byte_in_strings`） | E2 |
+| SF-JOB-01-A3 | 管理器上限与工作区守卫防御：`max_active`（<= 100）与 `max_history`（<= 1000）严格正数有界校验，`root` 与 `workspace` 非 `Path` 输入抛出 `TypeError`，空字节严格抛出 `ValueError` | `tests/test_coding_jobs_security.py::TestManagerLimitsAndWorkspaceSecurity`（含 `test_coding_job_manager_rejects_extreme_or_invalid_limits`、`test_coding_job_manager_rejects_invalid_root_type_or_null_byte`、`test_active_workspace_rejects_non_path_or_null_byte`、`test_workspace_guard_rejects_non_path_or_null_byte`） | E3 |
+| SF-JOB-01-A4 | 任务生命周期与并发安全：`start` 严格校验 agent 与 task 输入、杜绝空字节与符号链接工作区并保证异常锁释放与描述符原子重置，`get` 与 `cancel` 非法 `job_id` 抛出 `KeyError`，`list_jobs` 校验 `repository` 类型并安全忽略坏记录 | `tests/test_coding_jobs_security.py::TestJobLifecycleSecurity`（含 `test_start_rejects_invalid_agent_or_task`、`test_start_rejects_symlinked_workspace_root`、`test_get_and_cancel_reject_non_string_job_id`、`test_list_jobs_rejects_non_path_repository`）、`tests/test_coding_jobs_durable.py`（全量生命周期恢复与取消测试） | E4 |
+
+| 记录 | 验收 ID | 验证代码节点 / 检查项 | 命令 / 证据源 | 验证结果 / 提交 SHA |
+| --- | --- | --- | --- | --- |
+| E1 | SF-JOB-01-A1 | `tests/test_coding_jobs_security.py::TestCancelMarkerAndDurableCancelSecurity::test_write_cancel_marker_rejects_non_path`、`tests/test_coding_jobs_security.py::TestCancelMarkerAndDurableCancelSecurity::test_write_cancel_marker_rejects_null_byte`、`tests/test_coding_jobs_security.py::TestCancelMarkerAndDurableCancelSecurity::test_write_cancel_marker_rejects_symlinked_parent_directory`、`tests/test_coding_jobs_security.py::TestCancelMarkerAndDurableCancelSecurity::test_write_cancel_marker_rejects_fifo`、`tests/test_coding_jobs_security.py::TestCancelMarkerAndDurableCancelSecurity::test_durable_cancel_ignores_symlinked_marker` | `PYTHONPATH=src pytest tests/test_coding_jobs_security.py`；GitHub Actions CI `Unit tests` | `8d2fb79f0feffbfb6f3ead6160d1ae6563ff080a`；passed；CI [R1 43994435802](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43994435802) |
+| E2 | SF-JOB-01-A2 | `tests/test_coding_jobs_security.py::TestJobRecordSecurity::test_record_path_rejects_non_string_or_invalid_job_id`、`tests/test_coding_jobs_security.py::TestJobRecordSecurity::test_write_record_rejects_non_dict_or_missing_job_id`、`tests/test_coding_jobs_security.py::TestJobRecordSecurity::test_write_record_rejects_symlinked_parent_directory`、`tests/test_coding_jobs_security.py::TestJobRecordSecurity::test_load_record_rejects_invalid_state`、`tests/test_coding_jobs_security.py::TestJobRecordSecurity::test_load_record_rejects_null_byte_in_strings` | `PYTHONPATH=src pytest tests/test_coding_jobs_security.py`；GitHub Actions CI `Unit tests` | `8d2fb79f0feffbfb6f3ead6160d1ae6563ff080a`；passed；CI [R1 43994435802](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43994435802) |
+| E3 | SF-JOB-01-A3 | `tests/test_coding_jobs_security.py::TestManagerLimitsAndWorkspaceSecurity::test_coding_job_manager_rejects_extreme_or_invalid_limits`、`tests/test_coding_jobs_security.py::TestManagerLimitsAndWorkspaceSecurity::test_coding_job_manager_rejects_invalid_root_type_or_null_byte`、`tests/test_coding_jobs_security.py::TestManagerLimitsAndWorkspaceSecurity::test_active_workspace_rejects_non_path_or_null_byte`、`tests/test_coding_jobs_security.py::TestManagerLimitsAndWorkspaceSecurity::test_workspace_guard_rejects_non_path_or_null_byte` | `PYTHONPATH=src pytest tests/test_coding_jobs_security.py`；GitHub Actions CI `Unit tests` | `8d2fb79f0feffbfb6f3ead6160d1ae6563ff080a`；passed；CI [R1 43994435802](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43994435802) |
+| E4 | SF-JOB-01-A4 | `tests/test_coding_jobs_security.py::TestJobLifecycleSecurity::test_start_rejects_invalid_agent_or_task`、`tests/test_coding_jobs_security.py::TestJobLifecycleSecurity::test_start_rejects_symlinked_workspace_root`、`tests/test_coding_jobs_security.py::TestJobLifecycleSecurity::test_get_and_cancel_reject_non_string_job_id`、`tests/test_coding_jobs_security.py::TestJobLifecycleSecurity::test_list_jobs_rejects_non_path_repository`、`tests/test_coding_jobs_durable.py` 全量用例 | `PYTHONPATH=src pytest tests/test_coding_jobs_security.py tests/test_coding_jobs_durable.py`；GitHub Actions CI `Unit tests` | `8d2fb79f0feffbfb6f3ead6160d1ae6563ff080a`；passed；CI [R1 43994435802](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43994435802) |
+
+```text
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeff9b972c3d5e2d634ea8448ec1712a2a0eb / feat/sf-job-01 (worktree: selfforge-sf-job-01) / 源码 8d2fb79f0feffbfb6f3ead6160d1ae6563ff080a
+已完成验收与证据 ID：SF-JOB-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；本地单测 18 passed、durable 5 passed、全量单元测试 passed；Ruff passed；Docker 集成由 CI 完整执行通过（8m24s）
+PR / 准确 head CI / merge SHA（有则填）：PR #99 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43994435802 / 待合入
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #99 审查与合入。
 ```
 
 ## 5. 验收追踪与执行记录格式
