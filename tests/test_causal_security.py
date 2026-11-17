@@ -206,3 +206,29 @@ class TestFailureDetailsRobustnessAndContract:
         assert isinstance(inv.explanation, str)
         assert 0 < len(inv.explanation) <= 2048
         assert inv.causally_linked is False
+
+
+def test_long_line_token_cannot_be_truncated_into_a_false_target_match():
+    target = RiskTarget(file_path='src/foo.py', line_number=1, description='fixture', evidence='fixture')
+    result = investigate_causality(target, _make_test_result(stdout='File "src/foo.py", line 000000019'))
+    assert result.matched_line is False
+    assert result.causally_linked is False
+
+
+@pytest.mark.parametrize('control', ['\t', '\x1b', '\x7f'])
+def test_observed_locations_never_echo_control_characters(control):
+    target = RiskTarget(file_path='foo.py', line_number=1, description='fixture', evidence='fixture')
+    result = investigate_causality(target, _make_test_result(stdout=f'File "src/{control}foo.py", line 1'))
+    assert all(control not in item for item in result.observed_locations)
+
+
+def test_base_target_match_cannot_invent_a_head_association():
+    target = RiskTarget(file_path='target.py', line_number=7, description='fixture', evidence='fixture')
+    head = _make_test_result(stdout='File "unrelated.py", line 99')
+    base = _make_test_result(stdout='File "target.py", line 7')
+    result = investigate_causality(target, head, base)
+    assert result.matched_file is False
+    assert result.matched_line is False
+    assert result.trace_associated is False
+    assert result.causally_linked is False
+    assert result.observed_locations == ['unrelated.py:99']

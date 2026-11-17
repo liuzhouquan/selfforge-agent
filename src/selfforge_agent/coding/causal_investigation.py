@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from selfforge_agent.coding.models import RiskTarget
 from selfforge_agent.models import TestResult
 
-_TRACEBACK_FRAME = re.compile(r'File\s+"([^"\n\r]+)",\s+line\s+(\d{1,8})')
+_TRACEBACK_FRAME = re.compile(r'File\s+"([^"\n\r]+)",\s+line\s+(\d{1,8})(?!\d)')
 _PYTEST_LOCATION = re.compile(r'([^\s:\n\r]+\.py):(\d{1,8}):')
 
 MAX_INVESTIGATION_TEXT_BYTES = 64 * 1024
@@ -74,7 +74,7 @@ def _normalize_path(path_str: str) -> str:
 
 
 def _sanitize_location_str(file_path: str, line_number: int) -> str:
-    cleaned = file_path.replace("\n", "").replace("\r", "").strip()
+    cleaned = "".join(char for char in file_path if char.isprintable()).strip()
     return f"{cleaned}:{line_number}"
 
 
@@ -185,26 +185,6 @@ def investigate_causality(
         _sanitize_location_str(f, l) for f, l in frames[:MAX_OBSERVED_FRAMES]
     ]
 
-    # Causal disattribution: check if base_test already failed at the exact target location
-    if base_test is not None and base_test.status == "failed" and base_test.failed > 0:
-        base_text = _collect_test_text(base_test)
-        base_frames = _extract_frames(base_text)
-        for base_file, base_line in base_frames:
-            if _matches_target(base_file, target_name) and base_line == target.line_number:
-                return CausalInvestigation(
-                    target=target,
-                    causally_linked=False,
-                    trace_associated=True,
-                    confidence="none",
-                    matched_file=True,
-                    matched_line=True,
-                    observed_locations=observed[:MAX_LOCATION_DISPLAY],
-                    explanation=(
-                        f"Head test failure matches target {target.file_path} at line {target.line_number}, "
-                        "but this failure was already present in base test; cannot establish causal link to head changes"
-                    ),
-                )
-
     direct_line_match = False
     module_match = False
     best_line = None
@@ -220,6 +200,26 @@ def investigate_causality(
                 best_line = frame_line
 
     if direct_line_match:
+        # Causal disattribution: check if base_test already failed at the exact target location
+        if base_test is not None and base_test.status == "failed" and base_test.failed > 0:
+            base_text = _collect_test_text(base_test)
+            base_frames = _extract_frames(base_text)
+            for base_file, base_line in base_frames:
+                if _matches_target(base_file, target_name) and base_line == target.line_number:
+                    return CausalInvestigation(
+                        target=target,
+                        causally_linked=False,
+                        trace_associated=True,
+                        confidence="none",
+                        matched_file=True,
+                        matched_line=True,
+                        observed_locations=observed[:MAX_LOCATION_DISPLAY],
+                        explanation=(
+                            f"Head test failure matches target {target.file_path} at line {target.line_number}, "
+                            "but this failure was already present in base test; cannot establish causal link to head changes"
+                        ),
+                    )
+
         return CausalInvestigation(
             target=target,
             causally_linked=False,
