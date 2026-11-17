@@ -66,8 +66,9 @@ class CodingAgent:
         if (
             type(time_budget) not in (int, float)
             or type(time_budget) is bool
-            or not math.isfinite(time_budget)
             or time_budget <= 0
+            or time_budget > 1e308
+            or not math.isfinite(time_budget)
         ):
             raise ValueError("Positive time budget and 1-100 steps are required")
         if (
@@ -76,7 +77,7 @@ class CodingAgent:
             or context_budget < 500
         ):
             raise ValueError("context_budget must be an integer >= 500")
-        if cancel is not None and not hasattr(cancel, "is_set"):
+        if cancel is not None and not callable(getattr(cancel, "is_set", None)):
             raise TypeError("cancel must be an Event-like object with is_set()")
         if approval_hook is not None and not callable(approval_hook):
             raise TypeError("approval_hook must be callable")
@@ -100,12 +101,12 @@ class CodingAgent:
                 error: str = "") -> AgentResult:
         clean_steps = (
             max(0, int(steps))
-            if type(steps) in (int, float) and math.isfinite(steps) and type(steps) is not bool
+            if (type(steps) is int or (type(steps) is float and math.isfinite(steps)))
             else 0
         )
         clean_tools = (
             max(0, int(tools_used))
-            if type(tools_used) in (int, float) and math.isfinite(tools_used) and type(tools_used) is not bool
+            if (type(tools_used) is int or (type(tools_used) is float and math.isfinite(tools_used)))
             else 0
         )
         self.session.record_status(status, detail=error)
@@ -113,6 +114,8 @@ class CodingAgent:
         try:
             metrics = self.session.token_metrics()
         except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError):
+            metrics = {}
+        if not isinstance(metrics, dict):
             metrics = {}
         cost = None
         if isinstance(metrics.get("cost"), dict):
@@ -139,7 +142,8 @@ class CodingAgent:
         if not isinstance(calls, list):
             return
         existing = {item.get("tool_call_id") for item in messages[last_assistant + 1:]
-                    if isinstance(item, dict) and item.get("role") == "tool"}
+                    if isinstance(item, dict) and item.get("role") == "tool"
+                    and isinstance(item.get("tool_call_id"), str)}
         for call in calls:
             if not isinstance(call, dict):
                 continue
@@ -153,7 +157,7 @@ class CodingAgent:
                 # interrupted resume cannot conceal that uncertainty.
                 func = call.get("function")
                 func_name = func.get("name") if isinstance(func, dict) else None
-                if func_name in {
+                if isinstance(func_name, str) and func_name in {
                     "edit_file", "bash", "run_tests",
                 }:
                     self.session.record_verification(False)
@@ -285,6 +289,22 @@ class CodingAgent:
                     if isinstance(turn.message, dict)
                     else {"role": "assistant", "content": str(turn.message)}
                 )
+                msg_to_append = dict(msg_to_append)
+                native_calls = msg_to_append.get("tool_calls")
+                if isinstance(native_calls, list):
+                    normalized = []
+                    seen_ids = set()
+                    for call in native_calls:
+                        if not isinstance(call, dict):
+                            continue
+                        call = dict(call)
+                        cid = call.get("id")
+                        if not isinstance(cid, str) or not cid or cid in seen_ids:
+                            cid = f"call_{uuid4().hex}"
+                        call["id"] = cid
+                        seen_ids.add(cid)
+                        normalized.append(call)
+                    msg_to_append["tool_calls"] = normalized
                 self._append(messages, msg_to_append)
                 raw_calls = msg_to_append.get("tool_calls") or []
                 calls = raw_calls if isinstance(raw_calls, list) else []

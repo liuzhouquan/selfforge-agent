@@ -304,3 +304,63 @@ def test_cancel_before_and_during_run_aligns_session_status(tmp_path: Path) -> N
     # Session record matches result
     _messages, status = session.load()
     assert status == "cancelled"
+
+
+@pytest.mark.parametrize("metrics", [None, [], True])
+def test_public_run_handles_non_mapping_token_metrics(tmp_path, metrics):
+    agent = _make_agent(tmp_path)
+    agent.session.token_metrics = lambda: metrics
+    result = agent.run("inspect fixture")
+    assert result.status == "unverified"
+    assert result.monetary_cost is None
+    assert result.total_tokens == 0
+    assert agent.session.load()[1] == result.status
+
+
+@pytest.mark.parametrize("bad_field", ["tool_call_id", "name"])
+def test_resume_filters_unhashable_history_identifiers(tmp_path, bad_field):
+    agent = _make_agent(tmp_path)
+    agent.session.record_message({"role": "system", "content": "fixture"})
+    agent.session.record_message({"role": "user", "content": "inspect"})
+    name = [] if bad_field == "name" else "read_file"
+    agent.session.record_message({"role": "assistant", "tool_calls": [
+        {"id": "pending", "function": {"name": name, "arguments": "{}"}}]})
+    if bad_field == "tool_call_id":
+        agent.session.record_message({"role": "tool", "tool_call_id": [], "content": "invalid"})
+    result = agent.run(resume=True)
+    assert result.status == "unverified"
+    assert agent.session.load()[1] == result.status
+
+
+def test_cancellation_predicate_must_be_callable(tmp_path):
+    class InvalidCancel:
+        is_set = True
+
+    with pytest.raises(TypeError, match="cancel"):
+        _make_agent(tmp_path, cancel=InvalidCancel())
+
+
+def test_unrepresentable_time_budget_is_controlled(tmp_path):
+    with pytest.raises(ValueError):
+        _make_agent(tmp_path, time_budget=10**1000)
+
+
+def test_missing_call_id_is_repaired_in_both_native_messages(tmp_path):
+    class Model:
+        turns = 0
+
+        def complete(self, messages, tools, timeout):
+            self.turns += 1
+            if self.turns == 1:
+                return ModelTurn({"role": "assistant", "tool_calls": [
+                    {"function": {"name": "read_file", "arguments": '{"path":"fixture.py"}'}}]},
+                    "tool_calls", "fixture", "fixture", None)
+            request = next(m for m in reversed(messages) if m.get("role") == "assistant")
+            reply = messages[-1]
+            assert isinstance(request['tool_calls'][0].get('id'), str)
+            assert request['tool_calls'][0]['id'] == reply['tool_call_id']
+            return ModelTurn({"role": "assistant", "content": "Inspected"}, "stop", "fixture", "fixture", None)
+
+    agent = _make_agent(tmp_path, model=Model())
+    (agent.tools.root / "fixture.py").write_text("value = 1\n")
+    assert agent.run("inspect").status == "unverified"
