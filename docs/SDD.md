@@ -146,6 +146,7 @@ flowchart LR
 | 36 | [SF-SESS-01](#sf-sess-01) | In Review | Codex（审查整合） | 无 | [PR #93](https://github.com/liuzhouquan/selfforge-agent/pull/93)：SessionStore 输入防御、安全写入/读取与指标鲁棒性加固 |
 | 37 | [SF-DELIV-01](#sf-deliv-01) | In Review | Codex（审查整合） | 无 | [PR #94](https://github.com/liuzhouquan/selfforge-agent/pull/94)：工作区交付工作流（commit/revert/pr）输入守门、配置注入防御与证据绑定加固 |
 | 38 | [SF-IMG-01](#sf-img-01) | In Review | Antigravity | 无 | [PR #95](https://github.com/liuzhouquan/selfforge-agent/pull/95)：离线依赖镜像构建器输入门禁、wheelhouse扫描校验与Docker子进程安全执行加固 |
+| 39 | [SF-CAUSAL-01](#sf-causal-01) | In Review | Antigravity | 无 | [PR #96](https://github.com/liuzhouquan/selfforge-agent/pull/96)：测试故障因果推断输入门禁、调用栈提取有界化与基础测试因果反归因加固 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1631,6 +1632,38 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：[PR #95](https://github.com/liuzhouquan/selfforge-agent/pull/95) / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43869514581 / 待合并后回填
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待 PR #95 审查与合并；合并后回填 merge SHA 与最终 main CI。
+```
+
+### SF-CAUSAL-01
+
+**目标：** 加固测试故障因果推断模块（`investigate_causality` 及底层辅助函数），严格类型守门与行号/路径边界防御，强化多轮测试文本提取有界化，接入基础测试（`base_test`）因果反归因与精准词根匹配，消除误报与非受控属性崩溃。
+
+**范围/入口：** `src/selfforge_agent/coding/causal_investigation.py`（`_truncate_text`、`_normalize_path`、`_extract_frames`、`_collect_test_text`、`investigate_causality`、`CausalInvestigation`）。复用 `tests/test_causal_investigation.py`，新增专项安全与因果反归因测试 `tests/test_causal_security.py`。
+
+**行为：** `investigate_causality` 严格校验输入参数类型：`target`（`RiskTarget | None`）、`head_test`（`TestResult | None`）、`base_test`（`TestResult | None`）、`test_code`（`str`），非受控类型抛出 `TypeError`；`target` 校验 `file_path` 非空且禁空字节，`line_number` 限制在 `1 <= line_number <= 1_000_000`；`_truncate_text` 严格校验输入类型与正整数限额，安全清洗空字节并基于 UTF-8 字节长度精确截断；`_normalize_path` 严格类型守门，防御空字节注入并规范化斜杠与相对路径；`_extract_frames` 对行号正则施加 `\d{1,8}` 有界约束防止超大整数字符串 DoS，帧数上限截断（最多 100 帧）；接入 `base_test` 对比：若 `base_test` 已在相同目标模块和行号发生失败，判定该故障非 head 变更引入，因果置信度判定为 `"none"` 并明确说明预先存在；重构模块词根（`target_stem`）匹配，采用词边界与非通用词过滤，消除在 "AssertionError" 等无关报错文本中的虚假 low 置信度误报；容错 `failure_details` 中的缺失/None/畸形对象，清洗 `observed_locations` 中的换行符与控制字符；`CausalInvestigation` 结构化契约中 `causally_linked` 恒为 `False`。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-CAUSAL-01-A1 | 输入门禁与类型安全防御：`investigate_causality` 严格类型校验，行号 `1 <= line_number <= 1_000_000`，文件路径禁空字节；`_truncate_text` 严格正整数截断与空字节清洗 | `tests/test_causal_security.py::TestCausalInputValidationSecurity` 8 个反例测试 | E1 |
+| SF-CAUSAL-01-A2 | 路径规范化与调用栈提取有界防御：`_normalize_path` 严格类型守门与空字节防御；调用栈行号 `\d{1,8}` 有界匹配；帧提取上限截断（<=100） | `tests/test_causal_security.py::TestPathNormalizationAndStackExtractionSecurity` 5 个反例测试 | E2 |
+| SF-CAUSAL-01-A3 | 基础测试对比与因果归因判定加固：`base_test` 故障对比实现因果反归因（置信度判定为 `"none"`）；消除目标词根（`target_stem`）无边界子串误报，采用词边界与非通用词过滤 | `tests/test_causal_security.py::TestBaseTestComparisonAndCausalDisattribution` 3 个测试 | E3 |
+| SF-CAUSAL-01-A4 | 测试失败详情容错与端到端结构化契约：容错 `failure_details` 中缺失/None/畸形对象；清洗 `observed_locations` 换行符与控制字符；`CausalInvestigation` 有界非空且 `causally_linked` 恒为 `False` | `tests/test_causal_security.py::TestFailureDetailsRobustnessAndContract` 3 个测试与既有 `tests/test_causal_investigation.py` | E4 |
+
+| 记录 | 验收 ID | 验证代码节点 / 检查项 | 命令 / 证据源 | 验证结果 / 提交 SHA |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CAUSAL-01-A1 | `tests/test_causal_security.py::TestCausalInputValidationSecurity::test_investigate_causality_rejects_invalid_target_type`、`tests/test_causal_security.py::TestCausalInputValidationSecurity::test_investigate_causality_rejects_invalid_head_test_type`、`tests/test_causal_security.py::TestCausalInputValidationSecurity::test_investigate_causality_rejects_invalid_base_test_type`、`tests/test_causal_security.py::TestCausalInputValidationSecurity::test_investigate_causality_rejects_invalid_test_code_type`、`tests/test_causal_security.py::TestCausalInputValidationSecurity::test_target_line_number_excessive_bounds`、`tests/test_causal_security.py::TestCausalInputValidationSecurity::test_target_file_path_invalid_or_null_bytes`、`tests/test_causal_security.py::TestCausalInputValidationSecurity::test_truncate_text_rejects_invalid_types_and_bounds`、`tests/test_causal_security.py::TestCausalInputValidationSecurity::test_truncate_text_strips_null_bytes` | `pytest -v tests/test_causal_security.py -k TestCausalInputValidationSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `d9530aaa254880dae7daf9bd3fca9e2d5543e090`；passed；CI [R1 43876623361](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43876623361) |
+| E2 | SF-CAUSAL-01-A2 | `tests/test_causal_security.py::TestPathNormalizationAndStackExtractionSecurity::test_normalize_path_type_defense`、`tests/test_causal_security.py::TestPathNormalizationAndStackExtractionSecurity::test_normalize_path_rejects_null_bytes`、`tests/test_causal_security.py::TestPathNormalizationAndStackExtractionSecurity::test_normalize_path_canonicalizes_slashes_and_dots`、`tests/test_causal_security.py::TestPathNormalizationAndStackExtractionSecurity::test_traceback_regex_handles_extreme_digit_lengths_without_crash`、`tests/test_causal_security.py::TestPathNormalizationAndStackExtractionSecurity::test_stack_frames_bounded_extraction_under_huge_traceback` | `pytest -v tests/test_causal_security.py -k TestPathNormalizationAndStackExtractionSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `d9530aaa254880dae7daf9bd3fca9e2d5543e090`；passed；CI [R1 43876623361](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43876623361) |
+| E3 | SF-CAUSAL-01-A3 | `tests/test_causal_security.py::TestBaseTestComparisonAndCausalDisattribution::test_pre_existing_base_failure_disattributes_causality`、`tests/test_causal_security.py::TestBaseTestComparisonAndCausalDisattribution::test_short_target_stem_does_not_trigger_substring_false_positive`、`tests/test_causal_security.py::TestBaseTestComparisonAndCausalDisattribution::test_generic_stem_words_do_not_trigger_false_positive` | `pytest -v tests/test_causal_security.py -k TestBaseTestComparisonAndCausalDisattribution`；GitHub Actions CI `Unit tests` | 源码 SHA `d9530aaa254880dae7daf9bd3fca9e2d5543e090`；passed；CI [R1 43876623361](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43876623361) |
+| E4 | SF-CAUSAL-01-A4 | `tests/test_causal_security.py::TestFailureDetailsRobustnessAndContract::test_head_test_with_none_or_malformed_failure_details`、`tests/test_causal_security.py::TestFailureDetailsRobustnessAndContract::test_observed_locations_sanitizes_newlines_and_control_chars`、`tests/test_causal_security.py::TestFailureDetailsRobustnessAndContract::test_explanation_is_bounded_and_non_empty`、`tests/test_causal_investigation.py::test_investigate_causality_direct_line_match`、`tests/test_causal_investigation.py::test_investigate_causality_module_level_match`、`tests/test_causal_investigation.py::test_investigate_causality_unrelated_failure`、`tests/test_causal_investigation.py::test_investigate_causality_no_target_or_passing_test`、`tests/test_causal_investigation.py::test_same_basename_in_another_package_is_not_a_trace_match` | `pytest -v tests/test_causal_security.py tests/test_causal_investigation.py`；GitHub Actions CI `Unit tests` | 源码 SHA `d9530aaa254880dae7daf9bd3fca9e2d5543e090`；passed；CI [R1 43876623361](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43876623361) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeffe332964d08b712036919873aeb1e13f46 / feat/sf-causal-01 (worktree: selfforge-sf-causal-01) / 源码 d9530aaa254880dae7daf9bd3fca9e2d5543e090
+已完成验收与证据 ID：SF-CAUSAL-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；测试集 1045 单元测试与 38 项生成测试全部通过；不调用付费模型
+PR / 准确 head CI / merge SHA（有则填）：[PR #96](https://github.com/liuzhouquan/selfforge-agent/pull/96) / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43876623361 / 待合并后回填
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #96 审查与合并；合并后回填 merge SHA 与最终 main CI。
 ```
 
 ## 5. 验收追踪与执行记录格式
