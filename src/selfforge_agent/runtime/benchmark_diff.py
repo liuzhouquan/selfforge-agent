@@ -2,23 +2,51 @@
 
 import json
 import math
+import os
 import re
+import stat
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 
 def read_eval_report(path: Path) -> dict:
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("Evaluation report must be a regular file, not a symlink")
-    with path.open("rb") as handle:
-        data = handle.read(32 * 1024 * 1024 + 1)
-    if len(data) > 32 * 1024 * 1024:
-        raise ValueError("Evaluation report exceeds 32 MiB")
+    if not isinstance(path, Path):
+        raise TypeError(f"Evaluation report path must be a pathlib.Path, got {type(path).__name__}")
+    if "\x00" in str(path):
+        raise ValueError("Evaluation report path contains null byte")
+    if path.is_symlink() or any(p.is_symlink() for p in path.parents):
+        raise ValueError("Evaluation report path or its parent must not be a symlink")
+    if not path.is_file():
+        raise ValueError("Evaluation report must be a regular file, not a symlink, directory, or special file")
+
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        return json.loads(data)
+        fd = os.open(str(path), flags)
+    except OSError as exc:
+        raise ValueError(f"Cannot open evaluation report: {exc}") from exc
+
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Evaluation report must be a regular file, not a symlink, directory, or special file")
+        if st.st_size > 32 * 1024 * 1024:
+            raise ValueError("Evaluation report exceeds 32 MiB")
+        with open(fd, "rb", closefd=False) as handle:
+            data = handle.read(32 * 1024 * 1024 + 1)
+        if len(data) > 32 * 1024 * 1024:
+            raise ValueError("Evaluation report exceeds 32 MiB")
+    finally:
+        os.close(fd)
+
+    try:
+        parsed = json.loads(data)
     except (ValueError, RecursionError) as exc:
         raise ValueError("Invalid evaluation JSON report") from exc
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Evaluation report JSON must be an object (dict)")  # noqa: TRY004 - report data
+    return parsed
 
 
 def _count(value: object, *, positive: bool = False) -> int:
@@ -41,15 +69,19 @@ def _checked(report: object) -> dict:
         raise ValueError("Expected an evaluation report object")  # noqa: TRY004 - report data
     result = report.copy()
     sha = report.get("manifest_sha256")
-    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+    if not isinstance(sha, str):
+        raise ValueError("Report requires a complete manifest SHA-256")  # noqa: TRY004 - report data
+    sha = sha.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", sha):
         raise ValueError("Report requires a complete manifest SHA-256")
+    result["manifest_sha256"] = sha
     runs, successes = _count(report.get("runs"), positive=True), _count(report.get("successes"))
     cases = report.get("by_case")
     if not isinstance(cases, dict) or not cases or len(cases) > 10000:
         raise ValueError("Report requires a nonempty bounded by_case mapping")
     sum_runs = sum_successes = 0
     for name, case in cases.items():
-        if not isinstance(name, str) or not name or len(name) > 200 or not isinstance(case, dict):
+        if not isinstance(name, str) or not name or len(name) > 200 or "\x00" in name or not isinstance(case, dict):
             raise ValueError("Invalid case record")
         cr, cs = _count(case.get("runs"), positive=True), _count(case.get("successes"))
         if cs > cr:
@@ -63,7 +95,7 @@ def _checked(report: object) -> dict:
         raise ValueError("Report success rate is inconsistent with counts")
     result["success_rate"] = rate
     reasons = report.get("failure_reasons", {})
-    if not isinstance(reasons, dict) or any(not isinstance(k, str) for k in reasons):
+    if not isinstance(reasons, dict) or len(reasons) > 1000 or any(not isinstance(k, str) or not k or len(k) > 200 or "\x00" in k for k in reasons):
         raise ValueError("Invalid failure reason mapping")
     for value in reasons.values():
         _count(value)
@@ -201,9 +233,30 @@ def diff_eval_reports(before: dict[str, Any], after: dict[str, Any]) -> dict[str
     }
 
 
+def _escape_md_cell(text: str) -> str:
+    """Sanitize and escape text for markdown table cell to prevent table structure injection."""
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
 def format_eval_diff(diff: dict[str, Any], format: str = "markdown") -> str:
     """Format benchmark evaluation diff into markdown or plain text."""
+    if not isinstance(diff, dict):
+        raise TypeError(f"Evaluation diff must be a dict, got {type(diff).__name__}")
+    if "summary" not in diff or not isinstance(diff["summary"], dict):
+        raise ValueError("Evaluation diff missing summary")
+    if not isinstance(format, str) or format not in ("markdown", "text", "plain"):
+        raise ValueError(f"Unsupported format '{format}'. Supported formats: 'markdown', 'text', 'plain'")
+
     summary = diff["summary"]
+    runs_info = summary.get("runs")
+    succ_info = summary.get("successes")
+    rate_info = summary.get("success_rate")
+    if not (isinstance(runs_info, dict) and isinstance(succ_info, dict) and isinstance(rate_info, dict)):
+        raise ValueError("Invalid summary structure in diff")  # noqa: TRY004 - report data
+    for field_name, d in (("successes", succ_info), ("runs", runs_info), ("success_rate", rate_info)):
+        if not ("before" in d and "after" in d and "delta" in d):
+            raise ValueError(f"Invalid {field_name} summary in diff")
+
     lines: list[str] = []
 
     if format == "markdown":
@@ -214,41 +267,49 @@ def format_eval_diff(diff: dict[str, Any], format: str = "markdown") -> str:
         lines.append("## Overall Summary\n")
         lines.append("| Metric | Before | After | Delta |")
         lines.append("| --- | ---: | ---: | ---: |")
-        lines.append(f"| Successes | {summary['successes']['before']} | {summary['successes']['after']} | {summary['successes']['delta']:+d} |")
-        lines.append(f"| Total Runs | {summary['runs']['before']} | {summary['runs']['after']} | {summary['runs']['delta']:+d} |")
+        lines.append(f"| Successes | {succ_info['before']} | {succ_info['after']} | {succ_info['delta']:+d} |")
+        lines.append(f"| Total Runs | {runs_info['before']} | {runs_info['after']} | {runs_info['delta']:+d} |")
 
-        b_pct = summary['success_rate']['before'] * 100
-        a_pct = summary['success_rate']['after'] * 100
-        d_pct = summary['success_rate']['delta'] * 100
+        b_pct = rate_info['before'] * 100
+        a_pct = rate_info['after'] * 100
+        d_pct = rate_info['delta'] * 100
         lines.append(f"| Success Rate | {b_pct:.1f}% | {a_pct:.1f}% | {d_pct:+.1f}% |")
 
-        if "duration_seconds" in summary:
-            lines.append(f"| Duration (s) | {summary['duration_seconds']['before']}s | {summary['duration_seconds']['after']}s | {summary['duration_seconds']['delta']:+.3f}s |")
+        if "duration_seconds" in summary and isinstance(summary["duration_seconds"], dict):
+            dur = summary["duration_seconds"]
+            lines.append(f"| Duration (s) | {dur['before']}s | {dur['after']}s | {dur['delta']:+.3f}s |")
 
-        if "tokens" in summary:
+        if "tokens" in summary and isinstance(summary["tokens"], dict):
             tok = summary["tokens"]
-            lines.append(f"| Total Tokens | {tok['total']['before']} | {tok['total']['after']} | {tok['total']['delta']:+d} |")
+            if "total" in tok and isinstance(tok["total"], dict):
+                lines.append(f"| Total Tokens | {tok['total']['before']} | {tok['total']['after']} | {tok['total']['delta']:+d} |")
 
         lines.append("\n## Case Changes\n")
         lines.append("| Case | Before | After | Delta Rate | Status |")
         lines.append("| --- | ---: | ---: | ---: | --- |")
         for item in diff.get("improved", []):
-            lines.append(f"| `{item['case']}` | {item['before']} | {item['after']} | {item['delta_rate'] * 100:+.1f}% | Improved |")
+            safe_case = _escape_md_cell(str(item.get("case", "")))
+            lines.append(f"| `{safe_case}` | {item['before']} | {item['after']} | {item['delta_rate'] * 100:+.1f}% | Improved |")
         for item in diff.get("regressed", []):
-            lines.append(f"| `{item['case']}` | {item['before']} | {item['after']} | {item['delta_rate'] * 100:+.1f}% | **Regressed** |")
+            safe_case = _escape_md_cell(str(item.get("case", "")))
+            lines.append(f"| `{safe_case}` | {item['before']} | {item['after']} | {item['delta_rate'] * 100:+.1f}% | **Regressed** |")
         for c in diff.get("added", []):
-            lines.append(f"| `{c}` | - | present | - | Added |")
+            safe_case = _escape_md_cell(str(c))
+            lines.append(f"| `{safe_case}` | - | present | - | Added |")
         for c in diff.get("removed", []):
-            lines.append(f"| `{c}` | present | - | - | Removed |")
+            safe_case = _escape_md_cell(str(c))
+            lines.append(f"| `{safe_case}` | present | - | - | Removed |")
         for c in diff.get("unchanged", []):
-            lines.append(f"| `{c}` | - | - | 0.0% | Unchanged |")
+            safe_case = _escape_md_cell(str(c))
+            lines.append(f"| `{safe_case}` | - | - | 0.0% | Unchanged |")
 
-        if diff.get("failure_reasons"):
+        if diff.get("failure_reasons") and isinstance(diff["failure_reasons"], dict):
             lines.append("\n## Failure Reason Shifts\n")
             lines.append("| Failure Reason | Before | After | Delta |")
             lines.append("| --- | ---: | ---: | ---: |")
             for reason, counts in diff["failure_reasons"].items():
-                lines.append(f"| `{reason}` | {counts['before']} | {counts['after']} | {counts['delta']:+d} |")
+                safe_reason = _escape_md_cell(str(reason))
+                lines.append(f"| `{safe_reason}` | {counts['before']} | {counts['after']} | {counts['delta']:+d} |")
 
         return "\n".join(lines) + "\n"
 
@@ -256,12 +317,12 @@ def format_eval_diff(diff: dict[str, Any], format: str = "markdown") -> str:
     lines.append("=== Benchmark Comparison ===")
     if diff.get("manifest_mismatch"):
         lines.append("Warning: Manifest SHA-256 mismatch between runs.")
-    b_pct = summary['success_rate']['before'] * 100
-    a_pct = summary['success_rate']['after'] * 100
-    d_pct = summary['success_rate']['delta'] * 100
+    b_pct = rate_info['before'] * 100
+    a_pct = rate_info['after'] * 100
+    d_pct = rate_info['delta'] * 100
     lines.append(f"Success Rate: {b_pct:.1f}% -> {a_pct:.1f}% ({d_pct:+.1f}%)")
-    lines.append(f"Successes: {summary['successes']['before']} -> {summary['successes']['after']} ({summary['successes']['delta']:+d})")
-    lines.append(f"Total Runs: {summary['runs']['before']} -> {summary['runs']['after']}")
+    lines.append(f"Successes: {succ_info['before']} -> {succ_info['after']} ({succ_info['delta']:+d})")
+    lines.append(f"Total Runs: {runs_info['before']} -> {runs_info['after']}")
 
     if diff.get("improved"):
         lines.append("\nImproved Cases:")
