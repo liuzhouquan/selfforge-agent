@@ -17,6 +17,39 @@ MAX_REGRESSION_BYTES = 4 * 1024 * 1024
 MAX_REGRESSION_LINE_BYTES = 16 * 1024
 MAX_REGRESSION_EVENTS = 10000
 
+MAX_SESSION_BYTES = 16 * 1024 * 1024
+MAX_SESSION_LINE_BYTES = 1024 * 1024
+MAX_SESSION_ID_LENGTH = 64
+
+
+def _directory_fd(path: Path, *, create: bool = False) -> int:
+    """Open every directory component without following aliases, including parents."""
+    absolute = path.absolute()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(absolute.anchor, flags)
+    try:
+        for part in absolute.parts[1:]:
+            if create:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _state_open(path: Path, flags: int, mode: int = 0o600) -> int:
+    directory = _directory_fd(path.parent)
+    try:
+        return os.open(path.name, flags, mode, dir_fd=directory)
+    finally:
+        os.close(directory)
+
 
 class RegressionJournalCorruptError(ValueError):
     """The last committed journal entry cannot be decoded as a JSON object."""
@@ -24,21 +57,68 @@ class RegressionJournalCorruptError(ValueError):
 
 class SessionStore:
     def __init__(self, root: Path, session_id: str | None = None) -> None:
-        self.root = root.resolve()
-        self.session_id = session_id or uuid4().hex[:12]
-        if not self.session_id.isalnum():
-            raise ValueError("Invalid session ID")
+        if not isinstance(root, Path):
+            raise TypeError("root must be a Path instance")
+        if any(part.is_symlink() for part in (root, *root.parents)):
+            raise ValueError("Session root and ancestors must not be symlinks")
+        self.root = root.absolute()
+        if self.root.exists() and not self.root.is_dir():
+            raise ValueError("Session root is not a directory")
+
+        if session_id is not None:
+            if not isinstance(session_id, str):
+                raise TypeError("session_id must be a string")
+            if (
+                not session_id
+                or not session_id.isalnum()
+                or len(session_id) > MAX_SESSION_ID_LENGTH
+            ):
+                raise ValueError(
+                    f"Invalid session ID: must be non-empty alphanumeric up to {MAX_SESSION_ID_LENGTH} chars"
+                )
+            self.session_id = session_id
+        else:
+            self.session_id = uuid4().hex[:12]
+
         directory = self.root / ".selfforge" / "sessions"
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if any(part.is_symlink() for part in (directory, *directory.parents)) or (directory.exists() and not directory.is_dir()):
+            raise ValueError(f"Session directory path is invalid or a symlink: {directory}")
+        try:
+            directory_fd = _directory_fd(directory, create=True)
+            os.close(directory_fd)
+        except OSError as exc:
+            raise ValueError(f"Failed to create session directory: {exc}") from exc
         self.path = directory / f"{self.session_id}.jsonl"
         self.trace_path = directory / f"{self.session_id}.trace.jsonl"
 
     @staticmethod
     def _append(path: Path, event: dict) -> None:
-        payload = (json.dumps({"at": datetime.now(UTC).isoformat(), **event},
-                              ensure_ascii=False) + "\n").encode("utf-8")
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        if not isinstance(event, dict):
+            raise TypeError("event must be a dict")
         try:
+            serialized = json.dumps(
+                {"at": datetime.now(UTC).isoformat(), **event},
+                ensure_ascii=False,
+            ) + "\n"
+            payload = serialized.encode("utf-8")
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ValueError(f"Event is not JSON-serializable: {exc}") from exc
+
+        if len(payload) > MAX_SESSION_LINE_BYTES:
+            raise ValueError(f"Event payload exceeds maximum line bytes of {MAX_SESSION_LINE_BYTES}")
+
+        if path.is_symlink() or any(part.is_symlink() for part in (path, *path.parents)):
+            raise ValueError(f"Cannot append to symlinked path: {path}")
+
+        try:
+            fd = _state_open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError as exc:
+            raise OSError(f"Failed to open session file: {exc}") from exc
+
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise ValueError(f"Target path is not a regular file: {path}")
             fcntl.flock(fd, fcntl.LOCK_EX)
             end = os.lseek(fd, 0, os.SEEK_END)
             if end and os.pread(fd, 1, end - 1) != b"\n":
@@ -54,32 +134,82 @@ class SessionStore:
                     position = start
                 else:
                     os.ftruncate(fd, 0)
+            end = os.lseek(fd, 0, os.SEEK_END)
+            if end + len(payload) > MAX_SESSION_BYTES:
+                raise ValueError(f"Session file exceeds maximum size of {MAX_SESSION_BYTES} bytes")
             view = memoryview(payload)
             while view:
-                view = view[os.write(fd, view):]
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("Session write made no progress")
+                view = view[written:]
         finally:
             os.close(fd)
 
     @staticmethod
     def _complete_events(path: Path) -> Iterator[dict]:
-        with path.open("rb") as handle:
-            for line in handle:
-                if not line.endswith(b"\n"):
-                    break  # A writer may still be finishing the last event.
-                yield json.loads(line)
+        if not path.exists():
+            return
+        if path.is_symlink() or any(part.is_symlink() for part in (path, *path.parents)):
+            raise ValueError(f"Cannot read symlinked session file: {path}")
+        fd = None
+        try:
+            fd = _state_open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise ValueError(f"Session path is not a regular file: {path}")
+            if st.st_size > MAX_SESSION_BYTES:
+                raise ValueError(f"Session file exceeds maximum size of {MAX_SESSION_BYTES} bytes")
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            chunks = []
+            total = 0
+            while total <= MAX_SESSION_BYTES:
+                chunk = os.read(fd, min(65536, MAX_SESSION_BYTES + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            if total > MAX_SESSION_BYTES:
+                raise ValueError(f"Session file exceeds maximum size of {MAX_SESSION_BYTES} bytes")
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+        for line in io.BytesIO(b"".join(chunks)):
+            if not line.endswith(b"\n"):
+                break  # A writer may still be finishing the last event.
+            if len(line) > MAX_SESSION_LINE_BYTES:
+                raise ValueError(f"Session line exceeds maximum size of {MAX_SESSION_LINE_BYTES} bytes")
+            stripped = line.strip()
+            if not stripped:
+                continue
+            data = json.loads(stripped)
+            if not isinstance(data, dict):
+                raise TypeError(f"Session event must be a JSON object, got {type(data).__name__}")
+            yield data
 
     def record_message(self, message: dict) -> None:
+        if not isinstance(message, dict):
+            raise TypeError("message must be a dict")
         self._append(self.path, {"type": "message", "message": message})
 
     def record_compaction(self, messages: list[dict]) -> None:
+        if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
+            raise TypeError("messages must be a list of dicts")
         self._append(self.path, {"type": "compaction", "messages": messages})
         self.trace("context_compaction", messages=len(messages))
 
     def record_status(self, status: str, *, detail: str = "") -> None:
-        self._append(self.path, {"type": "status", "status": status, "detail": detail})
-        self.trace("status", status=status, detail=detail[:300])
+        if not isinstance(status, str) or not status.strip():
+            raise ValueError("status must be a non-empty string")
+        if not isinstance(detail, str):
+            raise TypeError("detail must be a string")
+        self._append(self.path, {"type": "status", "status": status.strip(), "detail": detail})
+        self.trace("status", status=status.strip(), detail=detail[:300])
 
     def record_verification(self, passed: bool, *, workspace_sha256: str | None = None) -> None:
+        if type(passed) is not bool:
+            raise TypeError("passed must be a boolean")
         if passed and workspace_sha256 is None:
             raise ValueError("Successful verification needs a workspace fingerprint")
         if workspace_sha256 is not None and (
@@ -151,7 +281,7 @@ class SessionStore:
         try:
             if any(part.is_symlink() for part in (path, *path.parents)):
                 return [], None, False
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = _state_open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_REGRESSION_BYTES:
@@ -257,7 +387,12 @@ class SessionStore:
         return record["workspace_sha256"]
 
     def trace(self, event: str, **fields: object) -> None:
-        self._append(self.trace_path, {"event": event, **fields})
+        if not isinstance(event, str) or not event.strip():
+            return
+        try:
+            self._append(self.trace_path, {"event": event.strip(), **fields})
+        except (OSError, ValueError, TypeError):
+            pass
 
     def load(self) -> tuple[list[dict], str | None]:
         if not self.path.is_file():
@@ -265,22 +400,32 @@ class SessionStore:
         messages: list[dict] = []
         status = None
         for event in self._complete_events(self.path):
-            if event.get("type") == "message":
-                messages.append(event["message"])
-            elif event.get("type") == "compaction":
-                messages = event["messages"]
-            elif event.get("type") == "status":
-                status = event["status"]
+            if not isinstance(event, dict):
+                continue
+            ev_type = event.get("type")
+            if ev_type == "message":
+                msg = event.get("message")
+                if isinstance(msg, dict):
+                    messages.append(msg)
+            elif ev_type == "compaction":
+                msgs = event.get("messages")
+                if isinstance(msgs, list):
+                    messages = [m for m in msgs if isinstance(m, dict)]
+            elif ev_type == "status":
+                s = event.get("status")
+                if isinstance(s, str) and s.strip():
+                    status = s.strip()
         return messages, status
 
     def trace_events(self, limit: int | None = None) -> list[dict]:
-        if limit is not None and limit <= 0:
-            raise ValueError("Trace limit must be positive")
+        if limit is not None and (type(limit) is not int or limit <= 0):
+            raise ValueError("Trace limit must be positive integer")
         if not self.trace_path.exists():
             return []
         events: deque[dict] = deque(maxlen=limit)
         for event in self._complete_events(self.trace_path):
-            events.append(event)
+            if isinstance(event, dict):
+                events.append(event)
         return list(events)
 
     def token_metrics(self) -> dict:
@@ -296,28 +441,54 @@ class SessionStore:
         complete = True
         events = self._complete_events(self.trace_path) if self.trace_path.exists() else []
         for event in events:
+            if not isinstance(event, dict):
+                continue
             if event.get("event") == "model_call":
                 model = str(event.get("model") or "")
                 provider = str(event.get("provider") or "")
-                models.add(model)
-                providers.add(provider)
+                if model:
+                    models.add(model)
+                if provider:
+                    providers.add(provider)
+                raw_usage = event.get("usage")
+                if not isinstance(raw_usage, (dict, TokenUsage)):
+                    complete = False
+                    costs.append(None)
+                    continue
                 try:
-                    usage = TokenUsage.model_validate(event.get("usage"))
+                    usage = (
+                        raw_usage
+                        if isinstance(raw_usage, TokenUsage)
+                        else TokenUsage.model_validate(raw_usage)
+                    )
                     if min(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) < 0:
                         raise ValueError("Negative usage")
-                except ValueError:
+                    if not (
+                        math.isfinite(usage.prompt_tokens)
+                        and math.isfinite(usage.completion_tokens)
+                        and math.isfinite(usage.total_tokens)
+                    ):
+                        raise ValueError("Non-finite usage")
+                except (ValueError, TypeError):
                     complete = False
                     costs.append(None)
                     continue
                 prompt_tokens += usage.prompt_tokens
                 completion_tokens += usage.completion_tokens
                 total_tokens += usage.total_tokens
-                costs.append(estimate_monetary_cost(model, usage, provider=provider))
-        cost = sum_monetary_costs(costs)
+                try:
+                    c = estimate_monetary_cost(model, usage, provider=provider)
+                    costs.append(c)
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    costs.append(None)
+        try:
+            cost = sum_monetary_costs(costs)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            cost = None
         return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
+            "prompt_tokens": max(0, prompt_tokens),
+            "completion_tokens": max(0, completion_tokens),
+            "total_tokens": max(0, total_tokens),
             "model": next(iter(models)) if len(models) == 1 else None,
             "models": sorted(models),
             "providers": sorted(providers),
