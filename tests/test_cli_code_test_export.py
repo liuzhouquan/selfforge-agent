@@ -347,3 +347,28 @@ def test_test_rejects_timeout_before_runner_construction(tmp_path, monkeypatch, 
         main(["test", "--repo", str(repo), "--sandbox", sandbox, "--trust-local", "--timeout", timeout])
     assert exc.value.code == 2
     assert "--timeout" in capsys.readouterr().err
+
+
+def test_code_interactive_json_keeps_approval_prompts_off_stdout(tmp_path, monkeypatch, capsys):
+    from selfforge_agent import cli
+    from selfforge_agent.runtime.agent import AgentResult
+
+    repo = _setup_git_repo(tmp_path)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(cli, "OpenAIChatAdapter", lambda _: OfflineFixtureModel(CASES[0]))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+
+    def run(agent, *args, **kwargs):
+        assert agent.approval_hook("bash", {"command": "echo hello"}) is False
+        return AgentResult(session_id="approval", status="failed", answer="Denied", steps=1, tools_used=0)
+
+    monkeypatch.setattr(cli.CodingAgent, "run", run)
+    assert main([
+        "code", "--repo", str(repo), "--task", "Fix add", "--workspace", "direct",
+        "--sandbox", "host", "--trust-local", "--model", "fixture",
+        "--base-url", "http://localhost/v1", "--json", "--interactive",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["status"] == "failed"
+    assert "APPROVAL REQUIRED" in captured.err
+    assert "Execute bash?" in captured.err
