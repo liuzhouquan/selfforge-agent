@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -305,7 +306,8 @@ class CodingAgent:
                         call["id"] = cid
                         function = call.get("function")
                         if (not isinstance(function, dict)
-                                or not isinstance(function.get("name"), str) or not function["name"]):
+                                or not isinstance(function.get("name"), str)
+                                or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", function["name"])):
                             call_errors[cid] = "Tool call function definition is malformed"
                             function = {"name": "invalid_tool_call", "arguments": "{}"}
                         else:
