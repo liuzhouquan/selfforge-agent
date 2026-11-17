@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 import stat
 import sys
@@ -61,9 +62,22 @@ from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, Tr
 def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not args.task and not args.resume:
         parser.error("code requires --task or --resume")
+    if args.max_steps < 1 or args.max_steps > 1000:
+        parser.error("--max-steps must be an integer between 1 and 1000")
+    if not math.isfinite(args.time_budget) or args.time_budget <= 0 or args.time_budget > 86400:
+        parser.error("--time-budget must be a finite positive number up to 86400")
+    if args.context_tokens < 100 or args.context_tokens > 1_000_000:
+        parser.error("--context-tokens must be an integer between 100 and 1000000")
+    if getattr(args, "output", None):
+        try:
+            _validate_cli_output_target(args.output)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
     root = args.repo.resolve()
     if not root.is_dir():
         parser.error("Repository directory does not exist")
+    if getattr(args, "output", None) and (args.output.resolve() == root or (args.output.exists() and root.exists() and args.output.samefile(root))):
+        parser.error("Output path must not collide with repository directory")
     try:
         if args.sandbox == "host" and not args.trust_local:
             parser.error("Host execution requires --trust-local")
@@ -117,41 +131,112 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                             session, max_steps=args.max_steps,
                             time_budget=args.time_budget, context_budget=args.context_tokens,
                             approval_hook=approval_hook)
-        if workspace:
+        if workspace and not getattr(args, "json", False):
             print(f"Workspace: {workspace.path} (branch {workspace.branch}, "
                   f"base {workspace.base_sha[:12]})")
         with manager.guard(working_root, message=f"Workspace {working_root} is locked by another running task or process"):
             result = agent.run(args.task or "", resume=bool(args.resume))
     except (ValueError, RuntimeError, OSError) as exc:
         parser.error(str(exc))
-    cost_str = f", {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
-    token_str = f", {result.total_tokens} tokens" if result.total_tokens else ""
-    print(f"Session {result.session_id}: {result.status} ({result.steps} steps, "
-          f"{result.tools_used} tools{token_str}{cost_str})")
-    if result.answer:
-        print(result.answer)
-    if result.error:
+    payload = {
+        "session_id": result.session_id,
+        "status": result.status,
+        "steps": result.steps,
+        "tools_used": result.tools_used,
+        "total_tokens": result.total_tokens,
+        "monetary_cost": result.monetary_cost,
+        "answer": result.answer,
+        "error": result.error,
+        "workspace": {
+            "path": str(workspace.path),
+            "branch": workspace.branch,
+            "base_sha": workspace.base_sha,
+        } if workspace else None,
+    }
+    rendered_json = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    if getattr(args, "output", None):
+        try:
+            _write_cli_output(args.output, rendered_json)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+    if getattr(args, "json", False):
+        print(rendered_json, end="")
+    else:
+        cost_str = f", {format_monetary_cost(result.monetary_cost)}" if result.monetary_cost else ""
+        token_str = f", {result.total_tokens} tokens" if result.total_tokens else ""
+        print(f"Session {result.session_id}: {result.status} ({result.steps} steps, "
+              f"{result.tools_used} tools{token_str}{cost_str})")
+        if result.answer:
+            print(result.answer)
+    if result.error and not getattr(args, "json", False):
         print(result.error, file=sys.stderr)
     return 0 if result.status == "completed" else 1
 
 
 def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if getattr(args, "timeout", None) is not None and (
+        not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 86400
+    ):
+        parser.error("--timeout must be a finite positive number")
+    if getattr(args, "output", None):
+        try:
+            _validate_cli_output_target(args.output)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
     root = args.repo.resolve()
+    if not root.is_dir():
+        parser.error("Repository directory does not exist")
+    if getattr(args, "output", None) and (args.output.resolve() == root or (args.output.exists() and root.exists() and args.output.samefile(root))):
+        parser.error("Output path must not collide with repository directory")
     try:
         if args.sandbox == "host":
             report = TestRunner().run(root, trusted=args.trust_local,
                                       timeout=args.timeout, test_path=args.path)
-            print(f"pytest: {report.status}; passed={report.passed}; failed={report.failed}; "
-                  f"errors={report.errors}; exit={report.exit_code}")
-            if report.error_message:
-                print(report.error_message, file=sys.stderr)
             diagnostics = failure_feedback(report)
-            if diagnostics:
-                print(diagnostics)
+            payload = {
+                "sandbox": "host",
+                "status": report.status,
+                "passed": report.passed,
+                "failed": report.failed,
+                "errors": report.errors,
+                "skipped": report.skipped,
+                "exit_code": report.exit_code,
+                "error_message": report.error_message,
+                "diagnostics": diagnostics if diagnostics else None,
+            }
+            rendered_json = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+            if getattr(args, "output", None):
+                try:
+                    _write_cli_output(args.output, rendered_json)
+                except (ValueError, OSError) as exc:
+                    parser.error(str(exc))
+            if getattr(args, "json", False):
+                print(rendered_json, end="")
+            else:
+                print(f"pytest: {report.status}; passed={report.passed}; failed={report.failed}; "
+                      f"errors={report.errors}; exit={report.exit_code}")
+                if report.error_message:
+                    print(report.error_message, file=sys.stderr)
+                if diagnostics:
+                    print(diagnostics)
             return 0 if report.status == "passed" else 1
         outcome = ToolRegistry(root, DockerExecutor(root, image=args.image)).execute(
             "run_tests", {"path": args.path, "timeout": args.timeout})
-        print(outcome.content)
+        payload = {
+            "sandbox": "docker",
+            "ok": outcome.ok,
+            "content": outcome.content,
+        }
+        rendered_json = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        if getattr(args, "output", None):
+            try:
+                _write_cli_output(args.output, rendered_json)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+        if getattr(args, "json", False):
+            print(rendered_json, end="")
+        else:
+            print(outcome.content)
         return 0 if outcome.ok else 1
     except (ValueError, OSError, RuntimeError) as exc:
         parser.error(str(exc))
@@ -240,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
     code.add_argument("--context-tokens", type=int, default=8_000)
     code.add_argument("--interactive", action="store_true",
                       help="Prompt operator for approval before running tools")
+    code.add_argument("--output", type=Path, help="Write JSON session report to this file")
+    code.add_argument("--json", action="store_true", help="Format session report as JSON")
     testing = subcommands.add_parser("test", help="Run pytest with Docker or explicit host trust")
     testing.add_argument("--repo", type=Path, default=Path.cwd())
     testing.add_argument("--path", default="tests")
@@ -247,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
     testing.add_argument("--sandbox", choices=["docker", "host"], default="docker")
     testing.add_argument("--trust-local", action="store_true")
     testing.add_argument("--image", default="selfforge-agent-sandbox:latest")
+    testing.add_argument("--output", type=Path, help="Write JSON test report to this file")
+    testing.add_argument("--json", action="store_true", help="Format test report as JSON")
     trace = subcommands.add_parser("trace", help="Show a session's structured trace")
     trace.add_argument("--repo", type=Path, default=Path.cwd())
     trace.add_argument("session_id")
@@ -1178,45 +1267,48 @@ def main(argv: list[str] | None = None) -> int:
         if result.errors:
             print("Errors: " + "; ".join(result.errors), file=sys.stderr)
         return 0 if result.status == "verified" else 1
-    if getattr(args, "output", None):
+    if args.command == "review":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         try:
-            _validate_cli_output_target(args.output)
-        except (ValueError, OSError) as exc:
-            parser.error(str(exc))
-    try:
-        report = ReviewService().review(
-            args.repo,
-            args.base,
-            args.head,
-            trusted_tests=args.trust_local_tests,
-            test_path=args.test_path,
-            timeout=args.timeout,
-        )
-    except (GitContextError, ValueError) as exc:
-        parser.error(str(exc))
-    rendered_json = report.model_dump_json(indent=2) + "\n"
-    if args.output:
-        try:
-            _write_cli_output(args.output, rendered_json)
-        except (ValueError, OSError) as exc:
-            parser.error(str(exc))
-    if getattr(args, "json", False):
-        print(rendered_json, end="")
-    else:
-        print(f"Run {report.run_id}: {report.execution_status}")
-        print(f"{report.base_sha[:12]}..{report.head_sha[:12]} | {len(report.context.files)} files")
-        print(f"Findings: {len(report.findings)} heuristic suspected")
-        for index, finding in enumerate(report.findings):
-            print(f"  [{index}] {finding.file_path}:{finding.line_number} "
-                  f"[{finding.severity}] {finding.description}")
-        for result in report.test_results:
-            print(
-                f"Tests: {result.status} (exit={result.exit_code}, "
-                f"passed={result.passed}, failed={result.failed}, errors={result.errors})"
+            report = ReviewService().review(
+                args.repo,
+                args.base,
+                args.head,
+                trusted_tests=args.trust_local_tests,
+                test_path=args.test_path,
+                timeout=args.timeout,
             )
-    if report.errors:
-        print("Errors: " + "; ".join(report.errors), file=sys.stderr)
-    return 2 if report.execution_status == "error" else 0
+        except (GitContextError, ValueError) as exc:
+            parser.error(str(exc))
+        rendered_json = report.model_dump_json(indent=2) + "\n"
+        if args.output:
+            try:
+                _write_cli_output(args.output, rendered_json)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+        if getattr(args, "json", False):
+            print(rendered_json, end="")
+        else:
+            print(f"Run {report.run_id}: {report.execution_status}")
+            print(f"{report.base_sha[:12]}..{report.head_sha[:12]} | {len(report.context.files)} files")
+            print(f"Findings: {len(report.findings)} heuristic suspected")
+            for index, finding in enumerate(report.findings):
+                print(f"  [{index}] {finding.file_path}:{finding.line_number} "
+                      f"[{finding.severity}] {finding.description}")
+            for result in report.test_results:
+                print(
+                    f"Tests: {result.status} (exit={result.exit_code}, "
+                    f"passed={result.passed}, failed={result.failed}, errors={result.errors})"
+                )
+        if report.errors:
+            print("Errors: " + "; ".join(report.errors), file=sys.stderr)
+        return 2 if report.execution_status == "error" else 0
+    parser.error(f"Unknown command: {args.command}")
+    return 2
 
 
 if __name__ == "__main__":
