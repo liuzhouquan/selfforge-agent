@@ -112,7 +112,6 @@ def _same_origin(request: Request, origin: str) -> bool:
 _MAX_REQUEST_BYTES = 2 * 1024 * 1024  # 2MB
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 _JOB_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
-_REF_PATTERN = re.compile(r"^[A-Za-z0-9_.\-/]{1,128}\Z")
 
 
 def _validate_session_id(session_id: str) -> str:
@@ -128,9 +127,12 @@ def _validate_job_id(job_id: str) -> str:
 
 
 def _validate_git_ref(ref: str) -> str:
-    if (not isinstance(ref, str) or not _REF_PATTERN.fullmatch(ref)
-            or ref.startswith("-") or ".." in ref or "\x00" in ref):
+    if (not isinstance(ref, str) or not 1 <= len(ref) <= 128
+            or not ref.isprintable() or any(c.isspace() for c in ref)
+            or ref.startswith("-") or ".." in ref):
         raise HTTPException(status_code=400, detail="Invalid git reference")
+    # Workspace resolution uses rev-parse --verify --end-of-options in the repository.
+    # Preserve Git commit expressions and valid branch names here.
     return ref
 
 

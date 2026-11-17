@@ -153,12 +153,15 @@ class TestRepositoryAndWorkspaceInputHardening:
         res = client.post("/api/sandbox/freshness", json={"repository": "/tmp/\x00repo"})
         assert res.status_code == 400, f"Expected 400, got {res.status_code}: {res.text}"
 
-        # validate-regression with null byte
+        # Regression requests reject invalid fields during Pydantic validation (422).
         res = client.post(
             f"/api/code/workspaces/{valid_sid}/validate-regression",
             json={"repository": "/tmp/\x00repo", "test_file": "tests/test_x.py"},
         )
-        assert res.status_code == 400, f"Expected 400, got {res.status_code}: {res.text}"
+        assert res.status_code == 422, res.text
+        error = res.json()["detail"][0]
+        assert error["loc"] == ["body", "repository"]
+        assert error["type"] == "value_error"
 
         # remove with null byte
         res = client.post(
@@ -224,3 +227,26 @@ class TestAccessControlAndExceptionHardening:
         )
         assert res.status_code == 400
         assert "Unsupported format requested" in res.json()["detail"]
+
+
+@pytest.mark.parametrize("head_ref", ["feature+fix", "HEAD~1"])
+@pytest.mark.parametrize("operation", ["audit", "storage", "prune"])
+def test_workspace_api_preserves_git_commit_reference_syntax(test_repo, tmp_path, monkeypatch, head_ref, operation):
+    from selfforge_agent.coding.worktree import git
+    from selfforge_agent.runtime.workspace import CodingWorkspaceManager
+
+    git(test_repo, "branch", "feature+fix")
+    git(test_repo, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+        "commit", "--allow-empty", "-m", "Second")
+    manager = CodingWorkspaceManager(tmp_path / "workspaces")
+    manager.create(test_repo, "refsyntax")
+    monkeypatch.setattr(api_module, "_CODING_WORKSPACES", manager)
+    monkeypatch.setattr(api_module, "_storage_workspace_manager", lambda: manager)
+    client = TestClient(api_module.app, base_url="http://localhost")
+    args = {"repository": str(test_repo), "head_ref": head_ref}
+    if operation == "prune":
+        response = client.post("/api/workspaces/prune", json={**args, "dry_run": True})
+    else:
+        response = client.get(f"/api/workspaces/{operation}", params=args)
+    assert response.status_code == 200, response.text
+    assert manager.get(test_repo, "refsyntax").path.exists()
