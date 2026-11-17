@@ -157,3 +157,36 @@ class TestProcessLifecycleAndContractSecurity:
 
         time.sleep(0.6)
         assert not marker.exists()
+
+
+def test_pipe_read_error_cannot_return_successful_incomplete_output(tmp_path, monkeypatch):
+    import errno
+    import os
+
+    real_read = os.read
+    pid_file = tmp_path / 'producer.pid'
+
+    def fail_pipe_read(fd, length):
+        if length <= 8192:
+            raise OSError(errno.EIO, 'fixture pipe read failure')
+        return real_read(fd, length)
+
+    monkeypatch.setattr(os, 'read', fail_pipe_read)
+    code = f'import os,pathlib; pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); print("important evidence")'
+    with pytest.raises(OSError) as error:
+        run_bounded([sys.executable, '-c', code], timeout=2, max_bytes=1024)
+    assert error.value.errno == errno.EIO
+    pid = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+@pytest.mark.parametrize('argument', ['界'*50000, 'x'*(128*1024)], ids=['utf8', 'terminator'])
+def test_argument_budget_counts_encoded_bytes_and_terminator(argument):
+    with pytest.raises(ValueError):
+        run_bounded([sys.executable, '-c', 'pass', argument], timeout=2, max_bytes=1024)
+
+
+def test_huge_integer_timeout_is_controlled_before_launch():
+    with pytest.raises(ValueError):
+        run_bounded([sys.executable, '-c', 'pass'], timeout=10**1000, max_bytes=1024)

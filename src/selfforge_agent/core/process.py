@@ -38,7 +38,7 @@ def _validate_command(command: list[str]) -> None:
             raise TypeError(f"command argument {i} must be a string, got {type(arg).__name__}")
         if "\0" in arg:
             raise ValueError(f"command argument {i} must not contain null bytes")
-        if len(arg) > MAX_ARG_LENGTH:
+        if len(arg) > MAX_ARG_LENGTH or len(os.fsencode(arg)) + 1 > MAX_ARG_LENGTH:
             raise ValueError(f"command argument {i} is too long (maximum length is {MAX_ARG_LENGTH} bytes)")
     if not command[0].strip():
         raise ValueError("command binary name must not be empty or whitespace")
@@ -80,8 +80,8 @@ def _validate_timeout(timeout: float) -> float:
     if (
         type(timeout) is bool
         or not isinstance(timeout, (int, float))
-        or not math.isfinite(timeout)
         or not 0 < timeout <= MAX_TIMEOUT_SECONDS
+        or not math.isfinite(timeout)
     ):
         raise ValueError(
             f"Process timeout must be a finite positive number up to {int(MAX_TIMEOUT_SECONDS)} seconds"
@@ -149,11 +149,7 @@ def run_bounded(
                 for key, _ in events:
                     index = key.data
                     room = limits[index] - len(buffers[index])
-                    try:
-                        chunk = os.read(key.fileobj.fileno(), min(8192, room + 1))
-                    except OSError:
-                        selector.unregister(key.fileobj)
-                        continue
+                    chunk = os.read(key.fileobj.fileno(), min(8192, room + 1))
                     if not chunk:
                         selector.unregister(key.fileobj)
                         continue
