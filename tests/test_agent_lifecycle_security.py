@@ -366,9 +366,10 @@ def test_missing_call_id_is_repaired_in_both_native_messages(tmp_path):
     assert agent.run("inspect").status == "unverified"
 
 
-@pytest.mark.parametrize('malformed', ['function', 'name', 'arguments', 'type'])
+@pytest.mark.parametrize('malformed', ['function', 'name', 'name_control', 'name_long', 'name_limit', 'arguments', 'type'])
 def test_native_adapter_never_resends_malformed_tool_envelopes(tmp_path, monkeypatch, malformed):
     import json
+    import re
 
     from selfforge_agent.integrations.model_http import ProviderHTTPError
     from selfforge_agent.providers import ProviderConfig
@@ -381,6 +382,12 @@ def test_native_adapter_never_resends_malformed_tool_envelopes(tmp_path, monkeyp
         call['function'] = None
     elif malformed == 'name':
         call['function']['name'] = []
+    elif malformed == 'name_control':
+        call['function']['name'] = 'bad name\n'
+    elif malformed == 'name_long':
+        call['function']['name'] = 'a'*65
+    elif malformed == 'name_limit':
+        call['function']['name'] = 'a'*64
     elif malformed == 'arguments':
         call['function']['arguments'] = {'path': 'fixture.py', 'old_text': '1', 'new_text': '2'}
     else:
@@ -395,6 +402,7 @@ def test_native_adapter_never_resends_malformed_tool_envelopes(tmp_path, monkeyp
                 function = request.get('function')
                 if (request.get('type') != 'function' or not isinstance(function, dict)
                         or not isinstance(function.get('name'), str)
+                        or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', function['name'])
                         or not isinstance(function.get('arguments'), str)):
                     raise ProviderHTTPError('fixture native protocol validation failed')
         return {'choices': [{'message': {'content': 'Handled invalid tool'}, 'finish_reason': 'stop'}]}
@@ -411,4 +419,7 @@ def test_native_adapter_never_resends_malformed_tool_envelopes(tmp_path, monkeyp
     messages, _ = agent.session.load()
     replies = [m for m in messages if m.get('role') == 'tool']
     assert len(replies) == 1
-    assert 'malformed' in replies[0]['content'] or 'JSON string' in replies[0]['content']
+    if malformed == 'name_limit':
+        assert 'Tool error' in replies[0]['content']
+    else:
+        assert 'malformed' in replies[0]['content'] or 'JSON string' in replies[0]['content']
