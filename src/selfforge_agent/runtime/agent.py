@@ -1,11 +1,13 @@
 """Bounded native tool-calling loop shared by coding workflows."""
 
 import json
+import math
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
+from uuid import uuid4
 
 from selfforge_agent.runtime.context import ContextManager
 from selfforge_agent.runtime.control import (
@@ -59,13 +61,30 @@ class CodingAgent:
                  *, max_steps: int = 12, time_budget: float = 300,
                  context_budget: int = 8_000, cancel: threading.Event | None = None,
                  approval_hook: Callable[[str, dict], bool] | None = None) -> None:
-        if not 1 <= max_steps <= 100 or time_budget <= 0:
+        if type(max_steps) is not int or not 1 <= max_steps <= 100:
             raise ValueError("Positive time budget and 1-100 steps are required")
+        if (
+            type(time_budget) not in (int, float)
+            or type(time_budget) is bool
+            or not math.isfinite(time_budget)
+            or time_budget <= 0
+        ):
+            raise ValueError("Positive time budget and 1-100 steps are required")
+        if (
+            type(context_budget) is not int
+            or type(context_budget) is bool
+            or context_budget < 500
+        ):
+            raise ValueError("context_budget must be an integer >= 500")
+        if cancel is not None and not hasattr(cancel, "is_set"):
+            raise TypeError("cancel must be an Event-like object with is_set()")
+        if approval_hook is not None and not callable(approval_hook):
+            raise TypeError("approval_hook must be callable")
         self.model = model
         self.tools = tools
         self.session = session
         self.max_steps = max_steps
-        self.time_budget = time_budget
+        self.time_budget = float(time_budget)
         self.context = ContextManager(context_budget)
         self.cancel = cancel or threading.Event()
         self.approval_hook = approval_hook
@@ -79,36 +98,66 @@ class CodingAgent:
 
     def _finish(self, status: Status, answer: str, steps: int, tools_used: int,
                 error: str = "") -> AgentResult:
+        clean_steps = (
+            max(0, int(steps))
+            if type(steps) in (int, float) and math.isfinite(steps) and type(steps) is not bool
+            else 0
+        )
+        clean_tools = (
+            max(0, int(tools_used))
+            if type(tools_used) in (int, float) and math.isfinite(tools_used) and type(tools_used) is not bool
+            else 0
+        )
         self.session.record_status(status, detail=error)
-        metrics = self.session.token_metrics()
+        metrics = {}
+        try:
+            metrics = self.session.token_metrics()
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError):
+            metrics = {}
         cost = None
-        if metrics.get("cost"):
-            cost = MonetaryCost(**metrics["cost"])
+        if isinstance(metrics.get("cost"), dict):
+            try:
+                cost = MonetaryCost(**metrics["cost"])
+            except (ValueError, TypeError):
+                cost = None
+        total_tokens = metrics.get("total_tokens", 0)
+        if type(total_tokens) is not int or total_tokens < 0:
+            total_tokens = 0
         return AgentResult(
-            self.session.session_id, status, answer, steps, tools_used, error,
-            total_tokens=metrics.get("total_tokens", 0),
+            self.session.session_id, status, str(answer), clean_steps, clean_tools, str(error),
+            total_tokens=total_tokens,
             monetary_cost=cost,
         )
 
     def _resume_pending(self, messages: list[dict]) -> None:
         last_assistant = next((index for index in range(len(messages) - 1, -1, -1)
-                               if messages[index].get("role") == "assistant"), None)
+                               if isinstance(messages[index], dict) and messages[index].get("role") == "assistant"), None)
         if last_assistant is None:
             return
-        calls = messages[last_assistant].get("tool_calls") or []
+        last_msg = messages[last_assistant]
+        calls = last_msg.get("tool_calls") if isinstance(last_msg, dict) else None
+        if not isinstance(calls, list):
+            return
         existing = {item.get("tool_call_id") for item in messages[last_assistant + 1:]
-                    if item.get("role") == "tool"}
+                    if isinstance(item, dict) and item.get("role") == "tool"}
         for call in calls:
-            if call.get("id") not in existing:
+            if not isinstance(call, dict):
+                continue
+            call_id = call.get("id")
+            if not isinstance(call_id, str) or not call_id:
+                continue
+            if call_id not in existing:
                 # Older logs may predate write-ahead invalidation. We cannot know
                 # whether an interrupted call wrote files or completed testing.
                 # Invalidate before recording the synthetic reply so another
                 # interrupted resume cannot conceal that uncertainty.
-                if (call.get("function") or {}).get("name") in {
+                func = call.get("function")
+                func_name = func.get("name") if isinstance(func, dict) else None
+                if func_name in {
                     "edit_file", "bash", "run_tests",
                 }:
                     self.session.record_verification(False)
-                self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),
+                self._append(messages, {"role": "tool", "tool_call_id": call_id,
                                         "content": "Previous run was interrupted before this tool completed"})
 
     def _verification_current(self, snapshot: str | None, deadline: float) -> bool:
@@ -117,7 +166,7 @@ class CodingAgent:
         try:
             current = workspace_fingerprint(self.tools.root, deadline=deadline, cancel=self.cancel)
             valid = current == snapshot
-        except WorkspaceSnapshotError:
+        except (WorkspaceSnapshotError, OSError, ValueError):
             valid = False
         if not valid:
             self.session.record_verification(False)
@@ -125,10 +174,18 @@ class CodingAgent:
         return valid
 
     def run(self, task: str = "", *, resume: bool = False) -> AgentResult:
+        if not isinstance(task, str):
+            raise TypeError("task must be a string")
+        if not isinstance(resume, bool):
+            raise TypeError("resume must be a boolean")
+        if len(task.encode("utf-8")) > 100_000:
+            raise ValueError("task exceeds size limit of 100,000 bytes")
+
         tests_passed = False
         tested_snapshot = None
         if resume:
-            messages, _ = self.session.load()
+            raw_messages, _ = self.session.load()
+            messages = [m for m in raw_messages if isinstance(m, dict)]
             self._resume_pending(messages)
             if task.strip():
                 self.session.record_verification(False)
@@ -223,18 +280,25 @@ class CodingAgent:
                                    duration_seconds=round(time.monotonic() - started, 3),
                                    usage=turn.usage.model_dump() if turn.usage else None,
                                    finish_reason=turn.finish_reason)
-                self._append(messages, turn.message)
-                calls = turn.message.get("tool_calls") or []
+                msg_to_append = (
+                    turn.message
+                    if isinstance(turn.message, dict)
+                    else {"role": "assistant", "content": str(turn.message)}
+                )
+                self._append(messages, msg_to_append)
+                raw_calls = msg_to_append.get("tool_calls") or []
+                calls = raw_calls if isinstance(raw_calls, list) else []
                 if final_only and calls:
                     for call in calls:
-                        self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),
+                        cid = call.get("id") if isinstance(call, dict) else "tool_exhausted"
+                        self._append(messages, {"role": "tool", "tool_call_id": cid,
                                                 "content": "Tool budget exhausted; no tool was run"})
                     return self._finish("max_steps", "", step, tools_used)
                 if not calls:
                     if turn.finish_reason not in {"stop", "end_turn"}:
                         return self._finish("failed", "", step, tools_used,
                                             f"Model stopped with {turn.finish_reason}")
-                    answer = str(turn.message.get("content") or "").strip()
+                    answer = str(msg_to_append.get("content") or "").strip()
                     if not answer:
                         return self._finish("failed", "", step, tools_used,
                                             "Model returned an empty final answer")
@@ -243,13 +307,23 @@ class CodingAgent:
                     status: Status = "completed" if tests_passed else "unverified"
                     return self._finish(status, answer, step, tools_used)
                 for call in calls:
+                    if not isinstance(call, dict):
+                        continue
                     if self.cancel.is_set():
                         return self._finish("cancelled", "", step, tools_used)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return self._finish("timed_out", "", step, tools_used)
-                    function = call.get("function") or {}
-                    name = function.get("name", "")
+                    call_id = str(call.get("id") or f"call_{uuid4().hex[:8]}")
+                    function = call.get("function")
+                    if not isinstance(function, dict):
+                        outcome = ToolOutcome("Tool call function definition is malformed", False)
+                        tools_used += 1
+                        self.session.trace("tool", name="unknown", ok=False, duration_seconds=0.0)
+                        self._append(messages, {"role": "tool", "tool_call_id": call_id,
+                                                "content": outcome.content})
+                        continue
+                    name = str(function.get("name") or "")
                     # Persist invalidation before any side effects. A cancelled
                     # or killed tool may never return, and failed writes may be
                     # partial. A new test attempt supersedes earlier evidence.
@@ -259,17 +333,33 @@ class CodingAgent:
                         tests_passed = False
                         tested_snapshot = None
                         self.session.record_verification(False)
-                    try:
-                        arguments = json.loads(function.get("arguments") or "{}")
-                        if not isinstance(arguments, dict):
-                            raise TypeError("Tool arguments must be an object")
-                        if self.approval_hook is not None and not self.approval_hook(name, arguments):
-                            outcome = ToolOutcome("Action rejected: operator approval denied", False)
-                        else:
-                            if self.cancel.is_set():
-                                return self._finish("cancelled", "", step, tools_used)
-                            if deadline <= time.monotonic():
-                                return self._finish("timed_out", "", step, tools_used)
+                    raw_args = function.get("arguments")
+                    if raw_args is None or raw_args == "":
+                        raw_args = "{}"
+                    outcome = None
+                    if not isinstance(raw_args, str):
+                        outcome = ToolOutcome("Tool arguments must be a JSON string", False)
+                    else:
+                        try:
+                            arguments = json.loads(raw_args)
+                            if not isinstance(arguments, dict):
+                                raise TypeError("Tool arguments must be an object")
+                        except (ValueError, TypeError, RecursionError) as exc:
+                            outcome = ToolOutcome(f"Tool arguments error: {exc}", False)
+
+                    if outcome is None:
+                        try:
+                            if self.approval_hook is not None and not self.approval_hook(name, arguments):
+                                outcome = ToolOutcome("Action rejected: operator approval denied", False)
+                        except Exception as exc:  # noqa: BLE001 - user approval hook can raise arbitrary exception
+                            outcome = ToolOutcome(f"Action rejected: approval hook error: {exc}", False)
+
+                    if outcome is None:
+                        if self.cancel.is_set():
+                            return self._finish("cancelled", "", step, tools_used)
+                        if deadline <= time.monotonic():
+                            return self._finish("timed_out", "", step, tools_used)
+                        try:
                             if name == "run_tests":
                                 before_tests = workspace_fingerprint(
                                     self.tools.root, deadline=deadline, cancel=self.cancel)
@@ -286,10 +376,11 @@ class CodingAgent:
                                     outcome = ToolOutcome(
                                         "Workspace changed during test execution; verification "
                                         "was revoked. Run tests again.", False, outcome.elapsed_seconds)
-                    except WorkspaceSnapshotError as exc:
-                        outcome = ToolOutcome(f"Workspace verification unavailable: {exc}", False)
-                    except (ValueError, TypeError) as exc:
-                        outcome = ToolOutcome(f"Tool arguments error: {exc}", False)
+                        except WorkspaceSnapshotError as exc:
+                            outcome = ToolOutcome(f"Workspace verification unavailable: {exc}", False)
+                        except (ValueError, TypeError) as exc:
+                            outcome = ToolOutcome(f"Tool arguments error: {exc}", False)
+
                     tools_used += 1
                     if name == "run_tests":
                         tests_passed = outcome.ok
@@ -297,7 +388,7 @@ class CodingAgent:
                                                          workspace_sha256=tested_snapshot)
                     self.session.trace("tool", name=name, ok=outcome.ok,
                                        duration_seconds=round(outcome.elapsed_seconds, 3))
-                    self._append(messages, {"role": "tool", "tool_call_id": call.get("id"),
+                    self._append(messages, {"role": "tool", "tool_call_id": call_id,
                                             "content": outcome.content})
             return self._finish("max_steps", "", self.max_steps, tools_used)
         except KeyboardInterrupt:
