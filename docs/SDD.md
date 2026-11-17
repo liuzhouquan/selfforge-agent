@@ -151,6 +151,7 @@ flowchart LR
 | 41 | [SF-BMDIFF-01](#sf-bmdiff-01) | Merged | Codex（审查整合） | 无 | [PR #98](https://github.com/liuzhouquan/selfforge-agent/pull/98)：基准评测报告解析与差异分析加固：非普通文件与符链路径防御、报告指标Fail-Closed校验与SHA-256规范化、Markdown表格注入防御与结构化导出 |
 | 42 | [SF-JOB-01](#sf-job-01) | Merged | Codex（审查整合） | 无 | [PR #99](https://github.com/liuzhouquan/selfforge-agent/pull/99)：本地异步编码任务管理与取消标记加固：取消标记防符链与FIFO阻塞、作业记录序列化/反序列化校验与状态白名单防御、任务并发上限与工作区锁防泄露加固 |
 | 43 | [SF-FDBK-01](#sf-fdbk-01) | Merged | Codex（审查整合） | 无 | [PR #100](https://github.com/liuzhouquan/selfforge-agent/pull/100)：测试失败反馈与修复反馈安全加固：严格输入类型与有限上限防御、空字节与终端控制字符脱敏、单行折叠防摘要伪造注入、严格长度不变式与有界修复反馈格式化 |
+| 44 | [SF-VERIF-02](#sf-verif-02) | In Review | Codex（本轮开发） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1876,6 +1877,47 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #100 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44008150709（最终组合；各源PR见审查记录） / 80f7f85809494f5d34dba855a691b66403157216
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-VERIF-02
+
+**目标：** 对测试执行器（`TestRunner`、`DockerTestRunner`）与 JUnit XML 解析器（`parse_junit`）进行二次深度安全加固，封堵大小写不敏感 DTD/实体绕过、非 XML 处理指令注入、测试套件无界堆叠、嵌套失败详情截断、路径符链递归循环（ELOOP）、进程组超时回收竞态与测试关键字选项注入。
+
+**范围/入口：** 改动 `src/selfforge_agent/verification/junit.py`、`src/selfforge_agent/verification/runner.py` 与专项复现安全测试 `tests/test_verification_hardening.py`；保持对 `ReviewService`、`CodingAgent` 与既有测试套件调用契约的完全向后兼容。
+
+**行为：** 
+1. `parse_junit` 采用正则忽略大小写拦截 `<!DOCTYPE`、`<!ENTITY` 与非法 `<?` 处理指令，防止 DTD 注入与 XXE 展开；
+2. 设定 `MAX_TEST_SUITES = 1_000` 上限，校验每套件中子用例数量不超过声明的测试总数（`len(testcases) <= total`）；
+3. 提取失败详情时采用 `child.itertext()` 确保多层嵌套标签中的调用栈与断言信息完整保留，并将空白/无效 `test_id` 规范化回退为 `"unknown"`；
+4. `_test_target` 显式拦截绝对路径、路径空字节及超过 4096 字符的超长路径，对 `(repo / test_path).resolve()` 出现的 `OSError`（如符链死循环 ELOOP）进行受控捕获并映射为 `ValueError`；
+5. 新增 `_validate_keyword` 严格防范选项注入（禁止以 `-` 开头）、空字节与控制字符/换行，并限制最大 512 字符；
+6. `DockerTestRunner` 构造函数对 `image` 格式、空白字符与长度执行 Fail-Closed 校验；
+7. `TestRunner.run` 在超时触发 `os.killpg` 时优雅处理 `ProcessLookupError`，杜绝进程恰好死亡导致的异常崩溃。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-VERIF-02-A1 | 大小写混写 DTD / 实体声明及非标准处理指令被拒，测试套件上限 1000 与用例数量一致性校验生效 | `tests/test_verification_hardening.py::TestJUnitSecurityAndParsingHardening` 相关用例 | E1 |
+| SF-VERIF-02-A2 | 失败详情提取保留嵌套子标签调用栈文本，空白或纯空格 test_id 安全规范化回退为 `"unknown"` | `tests/test_verification_hardening.py::TestJUnitSecurityAndParsingHardening` 详情与标识用例 | E2 |
+| SF-VERIF-02-A3 | 符链死循环（ELOOP）、绝对路径、空字节与超长路径在目标校验入口受控捕获并抛出 ValueError | `tests/test_verification_hardening.py::TestRunnerSubprocessAndTargetHardening` 目标与路径用例 | E3 |
+| SF-VERIF-02-A4 | 子进程超时终止时的 ProcessLookupError 优雅捕获降级，关键字选项注入拦截与 Docker 镜像校验生效 | `tests/test_verification_hardening.py::TestKeywordAndDockerRunnerHardening` 与超时竞态用例 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-VERIF-02-A1 | `tests/test_verification_hardening.py::TestJUnitSecurityAndParsingHardening::test_case_insensitive_doctype_and_entity_rejected`、`tests/test_verification_hardening.py::TestJUnitSecurityAndParsingHardening::test_excessive_testsuite_count_rejected`、`tests/test_verification_hardening.py::TestJUnitSecurityAndParsingHardening::test_inconsistent_testcase_count_vs_total_rejected` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_verification_hardening.py`；GitHub Actions CI `Unit tests` | `ea083e7004d8740c8a0c91bbfdef8aa1cf4980c1`；passed；CI [Run #44069680703](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44069680703) |
+| E2 | SF-VERIF-02-A2 | `tests/test_verification_hardening.py::TestJUnitSecurityAndParsingHardening::test_child_itertext_extracts_nested_failure_detail`、`tests/test_verification_hardening.py::TestJUnitSecurityAndParsingHardening::test_whitespace_only_test_id_falls_back_to_unknown` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_verification_hardening.py`；GitHub Actions CI `Unit tests` | `ea083e7004d8740c8a0c91bbfdef8aa1cf4980c1`；passed；CI [Run #44069680703](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44069680703) |
+| E3 | SF-VERIF-02-A3 | `tests/test_verification_hardening.py::TestRunnerSubprocessAndTargetHardening::test_test_target_rejects_symlink_loop_with_value_error`、`tests/test_verification_hardening.py::TestRunnerSubprocessAndTargetHardening::test_test_target_rejects_absolute_path_and_null_bytes`、`tests/test_verification_hardening.py::TestRunnerSubprocessAndTargetHardening::test_test_target_rejects_excessive_test_path_length` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_verification_hardening.py`；GitHub Actions CI `Unit tests` | `ea083e7004d8740c8a0c91bbfdef8aa1cf4980c1`；passed；CI [Run #44069680703](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44069680703) |
+| E4 | SF-VERIF-02-A4 | `tests/test_verification_hardening.py::TestRunnerSubprocessAndTargetHardening::test_runner_process_lookup_error_on_timeout_handled_gracefully`、`tests/test_verification_hardening.py::TestKeywordAndDockerRunnerHardening::test_keyword_validation_rejects_leading_dash_and_option_injection`、`tests/test_verification_hardening.py::TestKeywordAndDockerRunnerHardening::test_keyword_validation_rejects_null_bytes_and_control_chars`、`tests/test_verification_hardening.py::TestKeywordAndDockerRunnerHardening::test_docker_test_runner_rejects_invalid_image` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_verification_hardening.py`；GitHub Actions CI `Unit tests`、`Docker integration tests` | `ea083e7004d8740c8a0c91bbfdef8aa1cf4980c1`；passed；CI [Run #44069680703](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44069680703) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+
+执行记录：Base=`015dc6a75f0671a3537edc7706937a0826128bf9`；Branch=`feat/sf-verif-02`；Worktree=`selfforge-sf-verif-02`；PR=[#106](https://github.com/liuzhouquan/selfforge-agent/pull/106)。源码提交 `ea083e7004d8740c8a0c91bbfdef8aa1cf4980c1` 已通过本地回归与 CI `Run #44069680703` 全套验证。
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：015dc6a75f0671a3537edc7706937a0826128bf9 / feat/sf-verif-02 (worktree: selfforge-sf-verif-02) / 已验证源码 ea083e7004d8740c8a0c91bbfdef8aa1cf4980c1；本次状态提交仅文档
+已完成验收与证据 ID：SF-VERIF-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地及CI全量测试通过；等待合并
+PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44069680703（head commit ea083e7004d8740c8a0c91bbfdef8aa1cf4980c1） / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #106 审查合并。
 ```
 
 ## 5. 验收追踪与执行记录格式
