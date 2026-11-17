@@ -145,6 +145,7 @@ flowchart LR
 | 35 | [SF-REPAIR-01](#sf-repair-01) | In Review | Codex | SF-CORE-01 / SF-REV-01（Merged） | [PR #92](https://github.com/liuzhouquan/selfforge-agent/pull/92)：RepairAgent 修复循环与参数边界防御加固：构造与任务守门、变更源安全提取、编辑异常隔离与遥测状态机对齐 |
 | 36 | [SF-SESS-01](#sf-sess-01) | In Review | Codex（审查整合） | 无 | [PR #93](https://github.com/liuzhouquan/selfforge-agent/pull/93)：SessionStore 输入防御、安全写入/读取与指标鲁棒性加固 |
 | 37 | [SF-DELIV-01](#sf-deliv-01) | In Review | Codex（审查整合） | 无 | [PR #94](https://github.com/liuzhouquan/selfforge-agent/pull/94)：工作区交付工作流（commit/revert/pr）输入守门、配置注入防御与证据绑定加固 |
+| 38 | [SF-IMG-01](#sf-img-01) | In Review | Antigravity | 无 | [PR #95](https://github.com/liuzhouquan/selfforge-agent/pull/95)：离线依赖镜像构建器输入门禁、wheelhouse扫描校验与Docker子进程安全执行加固 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1598,6 +1599,38 @@ Owner / 状态：Codex（审查整合） / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #94 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43847067146 / 未合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待 PR #94 审查与合并。
+```
+
+### SF-IMG-01
+
+**目标：** 加固离线依赖镜像构建器（`build_dependency_image` 及底层工具函数），防御非信任输入、路径遍历、符号链接绕过、损坏 wheel 文件与非受控进程崩溃，确保镜像上下文确定性与 Docker 执行生命周期安全。
+
+**范围/入口：** `src/selfforge_agent/runtime/images.py`（`_read`、`_remaining`、`parse_locked_requirements`、`scan_wheelhouse`、`validate_image_tag`、`_docker`、`build_dependency_image`）。复用 `tests/test_dependency_images.py`，新增专项安全与生命周期测试 `tests/test_images_security.py`。
+
+**行为：** `_read` 校验 `path` 必须为 `Path` 实例，`limit` 必须为正整数；全面防御符号链接及其父目录符号链接；使用 `O_NOFOLLOW | O_NONBLOCK` 与 `S_ISREG` 校验，防御非常规文件（FIFO/字符设备/目录）；`parse_locked_requirements` 严格校验 `lock` 必须为 bytes，防御非法 UTF-8、空字节与超限输入，受控映射解析异常；`scan_wheelhouse` 严格类型守门，检查 `deadline` 有限正数，拒绝 wheelhouse 为软链接或其父目录含软链接，扫描过程拒绝 0 字节损坏 wheel 文件与非常规文件，严格校验 wheel 哈希存在于锁文件中，提供 `diagnose` 诊断模式；`_docker` 严格校验参数列表（字符串且无空字节）与有限正超时，捕获未安装 Docker 的 `FileNotFoundError` 并受控映射为 `ValueError`，捕获 `TimeoutExpired` 映射为受控错误；`validate_image_tag` 校验字符串格式、长度（<=255）、空字节并防御 `-` 开头的选项注入；`build_dependency_image` 全面输入校验，超时限制在 `(0, 1800]` 秒内，生成 `mtime=0` 的确定性 Tar 归档，并在 `finally` 块中始终清理临时 alias 镜像标签。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-IMG-01-A1 | 输入门禁与类型安全防御：`_read` 校验 `path` 为 `Path` 且 `limit` 为正整数，拒绝符号链接及其父目录符号链接与非普通文件；`parse_locked_requirements` 校验 bytes 输入并防御非法 UTF-8、空字节与超限输入 | `tests/test_images_security.py::TestReadAndParseLockSecurity` 6 个反例测试 | E1 |
+| SF-IMG-01-A2 | Wheelhouse 目录扫描、期限检查与 wheel 校验：`scan_wheelhouse` 严格类型守门，检查 deadline 有限正数，拒绝软链接目录及其父目录软链接，拒绝 0 字节 wheel 文件与非常规文件，哈希严格核对锁文件 | `tests/test_images_security.py::TestWheelhouseScanSecurity` 7 个反例与诊断测试 | E2 |
+| SF-IMG-01-A3 | Docker 子进程安全执行与参数防御：`_docker` 校验参数列表与超时有限正数，捕获 `FileNotFoundError` 与 `TimeoutExpired` 受控映射为 `ValueError`；`validate_image_tag` 防御选项注入、超长与非法字符 | `tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity` 9 个反例与映射测试 | E3 |
+| SF-IMG-01-A4 | 确定性归档与完整构建流程：`build_dependency_image` 参数合法性校验，生成确定性 Tar 归档（`mtime=0`），`finally` 保证清理临时 alias，端到端完整构建与失败清理验证 | `tests/test_images_security.py::TestBuildDependencyImageGatingAndIntegrity` 4 个测试与既有 `tests/test_dependency_images.py` | E4 |
+
+| 记录 | 验收 ID | 验证代码节点 / 检查项 | 命令 / 证据源 | 验证结果 / 提交 SHA |
+| --- | --- | --- | --- | --- |
+| E1 | SF-IMG-01-A1 | `tests/test_images_security.py::TestReadAndParseLockSecurity::test_read_rejects_non_path`、`tests/test_images_security.py::TestReadAndParseLockSecurity::test_read_rejects_invalid_limit`、`tests/test_images_security.py::TestReadAndParseLockSecurity::test_read_rejects_symlinked_parent_directory`、`tests/test_images_security.py::TestReadAndParseLockSecurity::test_read_rejects_fifo`、`tests/test_images_security.py::TestReadAndParseLockSecurity::test_parse_locked_requirements_rejects_non_bytes`、`tests/test_images_security.py::TestReadAndParseLockSecurity::test_parse_locked_requirements_rejects_invalid_utf8`、`tests/test_images_security.py::TestReadAndParseLockSecurity::test_parse_locked_requirements_rejects_null_byte` | `pytest -v tests/test_images_security.py -k TestReadAndParseLockSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `3a929d188aba6b5414e0a679d3d519e940b06748`；passed；CI [R1 43869514581](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43869514581) |
+| E2 | SF-IMG-01-A2 | `tests/test_images_security.py::TestWheelhouseScanSecurity::test_scan_wheelhouse_rejects_non_path_wheelhouse`、`tests/test_images_security.py::TestWheelhouseScanSecurity::test_scan_wheelhouse_rejects_symlinked_wheelhouse_or_parent`、`tests/test_images_security.py::TestWheelhouseScanSecurity::test_scan_wheelhouse_rejects_invalid_deadline`、`tests/test_images_security.py::TestWheelhouseScanSecurity::test_scan_wheelhouse_rejects_empty_wheel_file`、`tests/test_images_security.py::TestWheelhouseScanSecurity::test_scan_wheelhouse_rejects_non_regular_file_in_wheelhouse`、`tests/test_images_security.py::TestWheelhouseScanSecurity::test_scan_wheelhouse_rejects_symlinked_wheel`、`tests/test_images_security.py::TestWheelhouseScanSecurity::test_scan_wheelhouse_rejects_hash_mismatch` | `pytest -v tests/test_images_security.py -k TestWheelhouseScanSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `3a929d188aba6b5414e0a679d3d519e940b06748`；passed；CI [R1 43869514581](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43869514581) |
+| E3 | SF-IMG-01-A3 | `tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_validate_image_tag_rejects_non_string`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_validate_image_tag_rejects_empty_or_whitespace`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_validate_image_tag_rejects_null_byte`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_validate_image_tag_rejects_oversized_tag`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_validate_image_tag_rejects_option_injection`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_docker_rejects_non_list_or_non_string_args`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_docker_rejects_null_byte_in_args`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_docker_rejects_invalid_timeout`、`tests/test_images_security.py::TestImageTagAndDockerInvocationSecurity::test_docker_maps_missing_binary_to_value_error` | `pytest -v tests/test_images_security.py -k TestImageTagAndDockerInvocationSecurity`；GitHub Actions CI `Unit tests` | 源码 SHA `3a929d188aba6b5414e0a679d3d519e940b06748`；passed；CI [R1 43869514581](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43869514581) |
+| E4 | SF-IMG-01-A4 | `tests/test_images_security.py::TestBuildDependencyImageGatingAndIntegrity::test_build_dependency_image_rejects_non_path_inputs`、`tests/test_images_security.py::TestBuildDependencyImageGatingAndIntegrity::test_build_dependency_image_rejects_invalid_timeout`、`tests/test_images_security.py::TestBuildDependencyImageGatingAndIntegrity::test_build_dependency_image_rejects_invalid_base_image`、`tests/test_images_security.py::TestBuildDependencyImageGatingAndIntegrity::test_build_dependency_image_cleans_alias_on_failure`、`tests/test_dependency_images.py::test_build_uses_frozen_inputs_no_network_and_cleans_only_alias` | `pytest -v tests/test_images_security.py tests/test_dependency_images.py`；GitHub Actions CI `Unit tests` 与 `Build sandbox and locked dependency images` | 源码 SHA `3a929d188aba6b5414e0a679d3d519e940b06748`；passed；CI [R1 43869514581](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43869514581) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeffe332964d08b712036919873aeb1e13f46 / feat/sf-img-01 (worktree: selfforge-sf-img-01) / 源码 3a929d188aba6b5414e0a679d3d519e940b06748
+已完成验收与证据 ID：SF-IMG-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交内容；测试集 1050 单元测试全部通过；Docker 构建与集成测试在 GitHub Actions CI 真实执行通过；不调用付费模型
+PR / 准确 head CI / merge SHA（有则填）：[PR #95](https://github.com/liuzhouquan/selfforge-agent/pull/95) / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43869514581 / 待合并后回填
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #95 审查与合并；合并后回填 merge SHA 与最终 main CI。
 ```
 
 ## 5. 验收追踪与执行记录格式
