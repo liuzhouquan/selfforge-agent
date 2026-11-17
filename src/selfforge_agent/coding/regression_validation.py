@@ -6,6 +6,7 @@ import errno
 import hashlib
 import math
 import os
+import re
 import secrets
 import stat
 import subprocess
@@ -41,6 +42,9 @@ DEFAULT_REGRESSION_TIMEOUT = 60.0
 MIN_REGRESSION_TIMEOUT = 1.0
 MAX_REGRESSION_TIMEOUT = 180.0
 _IMAGE_CHECK_CAP_SECONDS = 10.0
+HEX_SHA_REGEX = re.compile(r"^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
+MAX_PATH_CHARS = 4096
+MAX_SESSION_ID_CHARS = 256
 
 RegressionStatus = Literal["confirmed", "inconclusive", "error"]
 RegressionReason = Literal[
@@ -84,9 +88,39 @@ class RegressionRunSummary(BaseModel):
 class ValidateRegressionRequest(BaseModel):
     """API request payload for validating a candidate regression test."""
 
-    repository: str = Field(min_length=1)
-    test_file: str = Field(min_length=1)
+    repository: str = Field(min_length=1, max_length=MAX_PATH_CHARS)
+    test_file: str = Field(min_length=1, max_length=MAX_PATH_CHARS)
     timeout: int | float = DEFAULT_REGRESSION_TIMEOUT
+
+    @field_validator("repository", mode="before")
+    @classmethod
+    def _validate_repository_field(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("repository must be a string")  # noqa: TRY004 - Pydantic wraps ValueError as request validation
+        clean = value.strip()
+        if not clean:
+            raise ValueError("repository cannot be empty or whitespace only")
+        if "\0" in clean:
+            raise ValueError("repository cannot contain null bytes")
+        if len(clean) > MAX_PATH_CHARS:
+            raise ValueError(f"repository exceeds maximum length of {MAX_PATH_CHARS}")
+        return clean
+
+    @field_validator("test_file", mode="before")
+    @classmethod
+    def _validate_test_file_field(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("test_file must be a string")  # noqa: TRY004 - Pydantic wraps ValueError as request validation
+        clean = value.strip()
+        if not clean:
+            raise ValueError("test_file cannot be empty or whitespace only")
+        if "\0" in clean:
+            raise ValueError("test_file cannot contain null bytes")
+        if clean.endswith(("/", "\\")):
+            raise ValueError("test_file must name a file, not a directory")
+        if len(clean) > MAX_PATH_CHARS:
+            raise ValueError(f"test_file exceeds maximum length of {MAX_PATH_CHARS}")
+        return clean
 
     @field_validator("timeout", mode="before")
     @classmethod
@@ -106,6 +140,13 @@ class RegressionValidationReport(BaseModel):
     base_result: RegressionRunSummary | None = None
     repaired_result: RegressionRunSummary | None = None
 
+    @field_validator("test_sha256")
+    @classmethod
+    def _validate_test_sha256(cls, value: str) -> str:
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
+            raise ValueError(f"Invalid test_sha256: {value!r}")
+        return value.strip().lower()
+
 
 def validate_timeout(value: object) -> float:
     """Validate total regression budget strictly within ``1..180`` seconds."""
@@ -114,8 +155,10 @@ def validate_timeout(value: object) -> float:
             f"Timeout must be a number between {int(MIN_REGRESSION_TIMEOUT)} and "
             f"{int(MAX_REGRESSION_TIMEOUT)} seconds"
         )
+    if not (MIN_REGRESSION_TIMEOUT <= value <= MAX_REGRESSION_TIMEOUT):
+        raise RegressionValidationError("Timeout must be between 1 and 180 seconds")
     seconds = float(value)
-    if not math.isfinite(seconds) or not (MIN_REGRESSION_TIMEOUT <= seconds <= MAX_REGRESSION_TIMEOUT):
+    if not math.isfinite(seconds):
         raise RegressionValidationError(
             f"Timeout must be between {int(MIN_REGRESSION_TIMEOUT)} and "
             f"{int(MAX_REGRESSION_TIMEOUT)} seconds"
@@ -201,9 +244,17 @@ def _validate_candidate_components(rel_path: Path) -> None:
         raise RegressionValidationError("Candidate test path must name a Python file")
     if rel_path.suffix != ".py":
         raise RegressionValidationError("Candidate test must be a .py file")
+    if rel_path.name == ".py":
+        raise RegressionValidationError("Candidate test filename must not be empty before .py extension")
     for part in rel_path.parts:
         if part in {"", ".", ".."}:
             raise RegressionValidationError("Candidate test path must not contain traversal segments")
+        if "\0" in part:
+            raise RegressionValidationError("Null byte detected in candidate test path")
+        if any(ord(c) < 32 for c in part):
+            raise RegressionValidationError(f"Control character detected in candidate test path component: {part!r}")
+        if part.startswith("-"):
+            raise RegressionValidationError(f"Path component must not start with hyphen: {part}")
         if _protected(part) or workspace_entry_excluded(part):
             raise RegressionValidationError(f"Protected or excluded path component: {part}")
 
@@ -402,11 +453,17 @@ def _load_bound_docker_image(
 
 
 def _validate_base_commit(workspace: CodingWorkspace, *, deadline: float) -> None:
+    base_sha = workspace.base_sha
+    if not isinstance(base_sha, str) or not HEX_SHA_REGEX.match(base_sha):
+        raise RegressionValidationError(
+            f"Workspace base_sha {base_sha!r} is not a valid commit SHA"
+        )
+    clean_sha = base_sha.lower()
     try:
-        git(workspace.repository, "cat-file", "-e", f"{workspace.base_sha}^{{commit}}", deadline=deadline)
+        git(workspace.repository, "cat-file", "-e", f"{clean_sha}^{{commit}}", deadline=deadline)
     except WorktreeError as exc:
         raise RegressionValidationError(
-            f"Workspace base_sha {workspace.base_sha!r} is not a valid commit in the bound repository"
+            f"Workspace base_sha {clean_sha!r} is not a valid commit in the bound repository"
         ) from exc
 
 
@@ -419,10 +476,13 @@ def _resolve_workspace(
     if (
         not isinstance(session_id, str)
         or not session_id
+        or not session_id.strip()
+        or len(session_id) > MAX_SESSION_ID_CHARS
         or "\x00" in session_id
         or "/" in session_id
         or "\\" in session_id
         or ".." in session_id
+        or any(ord(c) < 32 for c in session_id)
     ):
         raise RegressionValidationError("Invalid session_id")
 
@@ -472,6 +532,11 @@ def _run_snapshot_test(
     *,
     deadline: float,
 ) -> TestResult:
+    if not isinstance(snapshot_dir, Path):
+        snapshot_dir = Path(snapshot_dir)
+    if snapshot_dir.is_symlink() or not snapshot_dir.is_dir():
+        raise RegressionValidationError(f"Invalid snapshot directory: {snapshot_dir}")
+
     staged_name = _stage_candidate_filename(snapshot_dir)
     staged_path = snapshot_dir / staged_name
     fd = os.open(
@@ -545,6 +610,29 @@ def validate_workspace_regression(
     budget_seconds = validate_timeout(timeout)
     deadline = time.monotonic() + budget_seconds
 
+    if not isinstance(repository, (str, Path)):
+        raise RegressionValidationError("Repository path must be a string or Path")
+    repo_str = os.fspath(repository)
+    if not repo_str or not repo_str.strip() or "\0" in repo_str or len(repo_str) > MAX_PATH_CHARS:
+        raise RegressionValidationError("Repository path is invalid")
+
+    if not isinstance(test_file, (str, Path)):
+        raise RegressionValidationError("Candidate test path must be a string or Path")
+    test_file_str = os.fspath(test_file)
+    if not test_file_str or not test_file_str.strip() or "\0" in test_file_str or len(test_file_str) > MAX_PATH_CHARS:
+        raise RegressionValidationError("Candidate test path is invalid")
+    if test_file_str.endswith(("/", "\\")):
+        raise RegressionValidationError("Candidate test path must name a file, not a directory")
+
+    if workspace_manager is not None and not isinstance(workspace_manager, CodingWorkspaceManager):
+        raise RegressionValidationError(f"Invalid workspace_manager: {type(workspace_manager).__name__}")
+
+    if not isinstance(legacy_session_roots, (list, tuple, set)):
+        raise RegressionValidationError("legacy_session_roots must be a sequence")
+    for root_item in legacy_session_roots:
+        if not isinstance(root_item, (str, Path)):
+            raise RegressionValidationError("legacy_session_roots elements must be Path or str")
+
     manager = workspace_manager or CodingWorkspaceManager()
     raw_repo = Path(repository)
     workspace = _resolve_workspace(manager, raw_repo, session_id, deadline=deadline)
@@ -600,7 +688,7 @@ def _execute_isolated_validation(
 ) -> RegressionValidationReport:
     try:
         before_fp = workspace_fingerprint(workspace.path, deadline=deadline)
-    except (WorkspaceSnapshotError, TimeoutError, ValueError) as exc:
+    except (WorkspaceSnapshotError, TimeoutError, ValueError, OSError) as exc:
         timed_out = isinstance(exc, TimeoutError) or time.monotonic() >= deadline
         status, reason = _classify_outcome(None, None, changed=False, timed_out=timed_out)
         report = RegressionValidationReport(
@@ -621,7 +709,7 @@ def _execute_isolated_validation(
     timed_out = False
     snapshot_failed = False
 
-    with tempfile.TemporaryDirectory(prefix="selfforge-regression-") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix="selfforge-regression-", ignore_cleanup_errors=True) as tmp_dir:
         scratch = Path(tmp_dir)
         base_snapshot = scratch / "base_snapshot"
         repaired_snapshot = scratch / "repaired_snapshot"
