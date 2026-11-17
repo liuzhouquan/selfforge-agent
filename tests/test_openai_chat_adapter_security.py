@@ -323,3 +323,18 @@ def test_provider_finish_reason_type_is_not_silently_coerced(monkeypatch, finish
         'choices': [{'message': {'content': 'fixture'}, 'finish_reason': finish_reason}]})
     with pytest.raises(RuntimeError):
         OpenAIChatAdapter([_make_provider()]).complete([{'role': 'user'}], [], 10)
+
+
+def test_agent_total_budget_can_exceed_a_single_model_turn(tmp_path, monkeypatch):
+    from selfforge_agent.runtime.agent import CodingAgent
+    from selfforge_agent.runtime.session import SessionStore
+    from selfforge_agent.runtime.tools import ToolRegistry
+
+    calls = []
+    monkeypatch.setattr(model_module, 'request_json', lambda *_a, **kw: calls.append(kw['timeout']) or {
+        'choices': [{'message': {'content': 'fixture'}, 'finish_reason': 'stop'}]})
+    adapter = OpenAIChatAdapter([_make_provider()])
+    result = CodingAgent(adapter, ToolRegistry(tmp_path), SessionStore(tmp_path), time_budget=7200).run('inspect fixture')
+    assert result.status == 'unverified'
+    assert len(calls) == 1
+    assert 0 < calls[0] <= 300
