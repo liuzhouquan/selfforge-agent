@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import math
 import os
 import re
 import stat
@@ -22,6 +23,12 @@ _REQUIREMENT = re.compile(
 
 
 def _remaining(deadline: float) -> float:
+    if (
+        not isinstance(deadline, (int, float))
+        or type(deadline) is bool
+        or not math.isfinite(deadline)
+    ):
+        raise ValueError("Invalid deadline")
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise ValueError("Dependency image preparation timed out")
@@ -29,6 +36,13 @@ def _remaining(deadline: float) -> float:
 
 
 def _read(path: Path, limit: int) -> bytes:
+    if not isinstance(path, Path):
+        raise TypeError("path must be a Path instance")
+    if not isinstance(limit, int) or type(limit) is bool or limit <= 0:
+        raise ValueError("limit must be a positive integer")
+    if path.is_symlink() or any(p.is_symlink() for p in (path, *path.parents)):
+        raise ValueError("Dependency inputs must be regular files, not symlinks")
+
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
@@ -57,9 +71,17 @@ def _read(path: Path, limit: int) -> bytes:
 
 def parse_locked_requirements(lock: bytes) -> list[dict]:
     """Parse the same deliberately small lock format for planning and building."""
+    if not isinstance(lock, bytes):
+        raise TypeError("lock must be bytes")
     if len(lock) > MAX_LOCK_BYTES:
         raise ValueError("Dependency input size limit exceeded")
-    lines = lock.decode("utf-8").replace("\r\n", "\n").replace("\\\n", " ").splitlines()
+    try:
+        decoded = lock.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Invalid UTF-8 encoding in lockfile: {exc}") from exc
+    if "\0" in decoded:
+        raise ValueError("Lockfile must not contain null bytes")
+    lines = decoded.replace("\r\n", "\n").replace("\\\n", " ").splitlines()
     packages = []
     names = set()
     for line in lines:
@@ -84,7 +106,14 @@ def parse_locked_requirements(lock: bytes) -> list[dict]:
 def scan_wheelhouse(lock: bytes, packages: list[dict], wheelhouse: Path,
                     deadline: float, *, diagnose: bool = False) -> tuple[dict, list, list]:
     """Share byte/count/deadline limits between builder, plan and diagnostics."""
-    if wheelhouse.is_symlink() or not wheelhouse.is_dir():
+    if not isinstance(lock, bytes):
+        raise TypeError("lock must be bytes")
+    if not isinstance(packages, list):
+        raise TypeError("packages must be a list")
+    if not isinstance(wheelhouse, Path):
+        raise TypeError("wheelhouse must be a Path instance")
+    _remaining(deadline)
+    if wheelhouse.is_symlink() or any(p.is_symlink() for p in (wheelhouse, *wheelhouse.parents)) or not wheelhouse.is_dir():
         raise ValueError("Wheelhouse must be a directory, not a symlink")
     paths = []
     with os.scandir(wheelhouse) as entries:
@@ -102,12 +131,19 @@ def scan_wheelhouse(lock: bytes, packages: list[dict], wheelhouse: Path,
     for path in sorted(paths):
         _remaining(deadline)
         reason = None
-        if path.is_symlink() or not path.is_file():
+        if path.is_symlink() or any(p.is_symlink() for p in (path, *path.parents)) or not path.is_file():
             reason = "Dependency inputs must be regular files, not symlinks"
         elif not re.fullmatch(r"[A-Za-z0-9_.+!-]+\.whl", path.name):
             reason = "Unsupported wheel filename"
-        elif path.stat().st_size > min(MAX_WHEEL_BYTES, MAX_CONTEXT_BYTES - total):
-            reason = "Dependency input size limit exceeded"
+        else:
+            try:
+                st = path.stat()
+                if st.st_size == 0:
+                    reason = "Wheel file must not be empty"
+                elif st.st_size > min(MAX_WHEEL_BYTES, MAX_CONTEXT_BYTES - total):
+                    reason = "Dependency input size limit exceeded"
+            except OSError as exc:
+                reason = f"Cannot stat wheel file: {exc}"
         if reason:
             if not diagnose:
                 raise ValueError(reason)
@@ -147,18 +183,40 @@ def _inputs(requirements: Path, wheelhouse: Path, deadline: float) -> tuple[byte
 
 
 def validate_image_tag(tag: str) -> None:
+    if not isinstance(tag, str):
+        raise TypeError("tag must be a string")
+    if not tag or tag.startswith("-") or "\0" in tag or len(tag) > 255:
+        raise ValueError("Invalid image tag: must be non-empty, up to 255 chars, and not start with '-'")
     if not re.fullmatch(r"[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9_.-]+)?", tag):
         raise ValueError("Use a local image name with an optional tag")
 
 
 def _docker(arguments: list[str], timeout: float, payload: bytes | None = None) -> str:
     # Build logs can be large. Keep them off the session/trace and read only a tail.
+    if not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments):
+        raise TypeError("arguments must be a list of strings")
+    if any("\0" in a for a in arguments):
+        raise ValueError("docker arguments must not contain null bytes")
+    if (
+        not isinstance(timeout, (int, float))
+        or type(timeout) is bool
+        or not math.isfinite(timeout)
+        or timeout <= 0
+    ):
+        raise ValueError("timeout must be a positive finite number")
+    if payload is not None and not isinstance(payload, bytes):
+        raise TypeError("payload must be bytes or None")
+
     with tempfile.TemporaryFile() as output:
         try:
             result = subprocess.run(["docker", *arguments], input=payload, stdout=output,
                                     stderr=subprocess.STDOUT, timeout=timeout, check=False)
+        except FileNotFoundError as exc:
+            raise ValueError("Docker is not installed or not in PATH") from exc
         except subprocess.TimeoutExpired as exc:
             raise ValueError("Docker dependency image operation timed out") from exc
+        except OSError as exc:
+            raise ValueError(f"Docker execution failed: {exc}") from exc
         output.seek(0, 2)
         output.seek(max(0, output.tell() - 6_000))
         detail = output.read().decode("utf-8", "replace").strip()
@@ -171,11 +229,30 @@ def build_dependency_image(requirements: Path, wheelhouse: Path, *,
                            tag: str, base_image: str = "selfforge-agent-sandbox:latest",
                            timeout: float = 300) -> dict:
     """Build only from explicit wheels; never execute repository build scripts."""
-    validate_image_tag(tag)
-    if not base_image or base_image.startswith("-") or any(c.isspace() for c in base_image):
-        raise ValueError("Invalid base image reference")
-    if not 0 < timeout <= 1_800:
+    if not isinstance(requirements, Path):
+        raise TypeError("requirements must be a Path instance")
+    if not isinstance(wheelhouse, Path):
+        raise TypeError("wheelhouse must be a Path instance")
+    if not isinstance(base_image, str):
+        raise TypeError("base_image must be a string")
+    if (
+        not isinstance(timeout, (int, float))
+        or type(timeout) is bool
+        or not math.isfinite(timeout)
+        or not 0 < timeout <= 1_800
+    ):
         raise ValueError("Image build timeout must be in (0, 1800]")
+
+    validate_image_tag(tag)
+    if (
+        not base_image
+        or base_image.startswith("-")
+        or any(c.isspace() for c in base_image)
+        or "\0" in base_image
+        or len(base_image) > 255
+    ):
+        raise ValueError("Invalid base image reference")
+
     deadline = time.monotonic() + timeout
     lock, wheels = _inputs(requirements, wheelhouse, deadline)
     base_id = _docker(["image", "inspect", "--format", "{{.Id}}", base_image],
@@ -209,6 +286,7 @@ def build_dependency_image(requirements: Path, wheelhouse: Path, *,
             entry = tarfile.TarInfo(name)
             entry.size = len(data)
             entry.mode = 0o644
+            entry.mtime = 0
             archive.addfile(entry, io.BytesIO(data))
     try:
         _docker(["tag", base_id, alias], _remaining(deadline))
