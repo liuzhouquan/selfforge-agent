@@ -282,3 +282,68 @@ class TestCliSharedExportCollisions:
         assert exc.value.code == 2
         captured = capsys.readouterr().err
         assert "regular file" in captured.lower() or "collide" in captured.lower()
+
+
+@pytest.mark.parametrize("mode", ["text", "json", "file"])
+def test_code_serializes_real_configured_cost(tmp_path, monkeypatch, capsys, mode):
+    from selfforge_agent import cli
+    from selfforge_agent.runtime.agent import AgentResult
+    from selfforge_agent.runtime.pricing import MonetaryCost
+
+    repo = _setup_git_repo(tmp_path)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(cli, "OpenAIChatAdapter", lambda _: OfflineFixtureModel(CASES[0]))
+    cost = MonetaryCost(prompt_cost_usd=0.1, completion_cost_usd=0.2, total_cost_usd=0.3)
+    monkeypatch.setattr(cli.CodingAgent, "run", lambda *a, **kw: AgentResult(
+        session_id="fixture", status="completed", answer="Done", steps=1, tools_used=0,
+        monetary_cost=cost,
+    ))
+    output = tmp_path / "report.json"
+    extra = {"text": [], "json": ["--json"], "file": ["--output", str(output)]}[mode]
+    assert main([
+        "code", "--repo", str(repo), "--task", "Fix add", "--workspace", "direct",
+        "--sandbox", "host", "--trust-local", "--model", "fixture",
+        "--base-url", "http://localhost/v1", *extra,
+    ]) == 0
+    stdout = capsys.readouterr().out
+    if mode == "text":
+        assert "completed" in stdout
+    else:
+        payload = json.loads(stdout if mode == "json" else output.read_text())
+        assert payload["monetary_cost"] == cost.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("flag,value", [
+    ("--max-steps", "101"), ("--context-tokens", "499"), ("--time-budget", "0.05"),
+])
+def test_code_rejects_invalid_shared_budgets_before_model(tmp_path, monkeypatch, capsys, flag, value):
+    from selfforge_agent import cli
+
+    repo = _setup_git_repo(tmp_path)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid budget reached model construction")
+
+    monkeypatch.setattr(cli, "OpenAIChatAdapter", unexpected)
+    with pytest.raises(SystemExit) as exc:
+        main(["code", "--repo", str(repo), "--task", "Fix add", "--model", "fixture",
+              "--base-url", "http://localhost/v1", flag, value])
+    assert exc.value.code == 2
+    assert flag in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("sandbox,timeout", [("host", "3601"), ("docker", "181")])
+def test_test_rejects_timeout_before_runner_construction(tmp_path, monkeypatch, capsys, sandbox, timeout):
+    from selfforge_agent import cli
+
+    repo = _setup_git_repo(tmp_path)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid timeout reached runner construction")
+
+    monkeypatch.setattr(cli, "TestRunner", unexpected)
+    monkeypatch.setattr(cli, "DockerExecutor", unexpected)
+    with pytest.raises(SystemExit) as exc:
+        main(["test", "--repo", str(repo), "--sandbox", sandbox, "--trust-local", "--timeout", timeout])
+    assert exc.value.code == 2
+    assert "--timeout" in capsys.readouterr().err

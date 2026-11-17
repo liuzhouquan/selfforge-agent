@@ -62,12 +62,12 @@ from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, Tr
 def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not args.task and not args.resume:
         parser.error("code requires --task or --resume")
-    if args.max_steps < 1 or args.max_steps > 1000:
-        parser.error("--max-steps must be an integer between 1 and 1000")
-    if not math.isfinite(args.time_budget) or args.time_budget <= 0 or args.time_budget > 86400:
-        parser.error("--time-budget must be a finite positive number up to 86400")
-    if args.context_tokens < 100 or args.context_tokens > 1_000_000:
-        parser.error("--context-tokens must be an integer between 100 and 1000000")
+    if args.max_steps < 1 or args.max_steps > 100:
+        parser.error("--max-steps must be an integer between 1 and 100")
+    if not math.isfinite(args.time_budget) or args.time_budget < 0.1 or args.time_budget > 86400:
+        parser.error("--time-budget must be between 0.1 and 86400")
+    if args.context_tokens < 500 or args.context_tokens > 1_000_000:
+        parser.error("--context-tokens must be an integer between 500 and 1000000")
     if getattr(args, "output", None):
         try:
             _validate_cli_output_target(args.output)
@@ -144,7 +144,7 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         "steps": result.steps,
         "tools_used": result.tools_used,
         "total_tokens": result.total_tokens,
-        "monetary_cost": result.monetary_cost,
+        "monetary_cost": result.monetary_cost.model_dump(mode="json") if result.monetary_cost else None,
         "answer": result.answer,
         "error": result.error,
         "workspace": {
@@ -174,10 +174,11 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 
 def _run_test(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    max_timeout = 3600 if args.sandbox == "host" else 180
     if getattr(args, "timeout", None) is not None and (
-        not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 86400
+        not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > max_timeout
     ):
-        parser.error("--timeout must be a finite positive number")
+        parser.error(f"--timeout must be finite, positive and at most {max_timeout} seconds")
     if getattr(args, "output", None):
         try:
             _validate_cli_output_target(args.output)
