@@ -291,6 +291,7 @@ class CodingAgent:
                 )
                 msg_to_append = dict(msg_to_append)
                 native_calls = msg_to_append.get("tool_calls")
+                call_errors: dict[str, str] = {}
                 if isinstance(native_calls, list):
                     normalized = []
                     seen_ids = set()
@@ -302,9 +303,29 @@ class CodingAgent:
                         if not isinstance(cid, str) or not cid or cid in seen_ids:
                             cid = f"call_{uuid4().hex}"
                         call["id"] = cid
+                        function = call.get("function")
+                        if (not isinstance(function, dict)
+                                or not isinstance(function.get("name"), str) or not function["name"]):
+                            call_errors[cid] = "Tool call function definition is malformed"
+                            function = {"name": "invalid_tool_call", "arguments": "{}"}
+                        else:
+                            function = dict(function)
+                            arguments = function.get("arguments")
+                            if arguments is None or arguments == "":
+                                arguments = "{}"
+                            elif not isinstance(arguments, str):
+                                call_errors[cid] = "Tool arguments must be a JSON string"
+                                arguments = "{}"
+                            function["arguments"] = arguments
+                        if call.get("type", "function") != "function":
+                            call_errors.setdefault(cid, "Tool call type is malformed")
+                        call["type"] = "function"
+                        call["function"] = function
                         seen_ids.add(cid)
                         normalized.append(call)
                     msg_to_append["tool_calls"] = normalized
+                elif native_calls is not None:
+                    msg_to_append.pop("tool_calls", None)
                 self._append(messages, msg_to_append)
                 raw_calls = msg_to_append.get("tool_calls") or []
                 calls = raw_calls if isinstance(raw_calls, list) else []
@@ -356,7 +377,7 @@ class CodingAgent:
                     raw_args = function.get("arguments")
                     if raw_args is None or raw_args == "":
                         raw_args = "{}"
-                    outcome = None
+                    outcome = ToolOutcome(call_errors[call_id], False) if call_id in call_errors else None
                     if not isinstance(raw_args, str):
                         outcome = ToolOutcome("Tool arguments must be a JSON string", False)
                     else:
