@@ -285,3 +285,44 @@ class TestTelemetryAndMetricsHardening:
         metrics = store.token_metrics()
         assert metrics["total_tokens"] == 15
         assert metrics["usage_complete"] is False
+
+
+@pytest.mark.parametrize('location', ['root', 'ancestor', 'metadata'])
+def test_store_rejects_symlink_at_every_directory_boundary(tmp_path, location):
+    real = tmp_path / 'real'
+    real.mkdir()
+    if location == 'root':
+        root = tmp_path / 'alias'
+        root.symlink_to(real, target_is_directory=True)
+    elif location == 'ancestor':
+        alias = tmp_path / 'alias'
+        alias.symlink_to(real, target_is_directory=True)
+        root = alias / 'child'
+    else:
+        root = tmp_path / 'root'
+        root.mkdir()
+        (root / '.selfforge').symlink_to(real, target_is_directory=True)
+    with pytest.raises((ValueError, OSError)):
+        SessionStore(root, 'fixture').record_message({'role': 'user', 'content': 'private'})
+    assert not list(real.rglob('*.jsonl'))
+
+
+@pytest.mark.parametrize('trace', [False, True])
+def test_writer_refuses_overflow_without_losing_readable_history(tmp_path, monkeypatch, trace):
+    import selfforge_agent.runtime.session as module
+
+    monkeypatch.setattr(module, 'MAX_SESSION_BYTES', 1024)
+    store = SessionStore(tmp_path, 'fixture')
+    path = store.trace_path if trace else store.path
+    append = (lambda: store.trace('fixture', detail='x'*300)) if trace else (
+        lambda: store.record_message({'role': 'user', 'content': 'x'*300}))
+    append()
+    append()
+    before = path.read_bytes()
+    if trace:
+        append()  # Metadata traces are best effort; overflow must leave prior bytes intact.
+    else:
+        with pytest.raises(ValueError, match='size|limit|maximum'):
+            append()
+    assert path.read_bytes() == before
+    assert list(store._complete_events(path))

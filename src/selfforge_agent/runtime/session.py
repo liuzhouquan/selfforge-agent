@@ -22,6 +22,35 @@ MAX_SESSION_LINE_BYTES = 1024 * 1024
 MAX_SESSION_ID_LENGTH = 64
 
 
+def _directory_fd(path: Path, *, create: bool = False) -> int:
+    """Open every directory component without following aliases, including parents."""
+    absolute = path.absolute()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(absolute.anchor, flags)
+    try:
+        for part in absolute.parts[1:]:
+            if create:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _state_open(path: Path, flags: int, mode: int = 0o600) -> int:
+    directory = _directory_fd(path.parent)
+    try:
+        return os.open(path.name, flags, mode, dir_fd=directory)
+    finally:
+        os.close(directory)
+
+
 class RegressionJournalCorruptError(ValueError):
     """The last committed journal entry cannot be decoded as a JSON object."""
 
@@ -30,12 +59,11 @@ class SessionStore:
     def __init__(self, root: Path, session_id: str | None = None) -> None:
         if not isinstance(root, Path):
             raise TypeError("root must be a Path instance")
-        try:
-            self.root = root.resolve()
-        except OSError as exc:
-            raise ValueError(f"Cannot resolve root path: {exc}") from exc
-        if self.root.is_symlink() or (self.root.exists() and not self.root.is_dir()):
-            raise ValueError(f"Session root is not a directory or is a symlink: {self.root}")
+        if any(part.is_symlink() for part in (root, *root.parents)):
+            raise ValueError("Session root and ancestors must not be symlinks")
+        self.root = root.absolute()
+        if self.root.exists() and not self.root.is_dir():
+            raise ValueError("Session root is not a directory")
 
         if session_id is not None:
             if not isinstance(session_id, str):
@@ -53,10 +81,11 @@ class SessionStore:
             self.session_id = uuid4().hex[:12]
 
         directory = self.root / ".selfforge" / "sessions"
-        if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        if any(part.is_symlink() for part in (directory, *directory.parents)) or (directory.exists() and not directory.is_dir()):
             raise ValueError(f"Session directory path is invalid or a symlink: {directory}")
         try:
-            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory_fd = _directory_fd(directory, create=True)
+            os.close(directory_fd)
         except OSError as exc:
             raise ValueError(f"Failed to create session directory: {exc}") from exc
         self.path = directory / f"{self.session_id}.jsonl"
@@ -82,7 +111,7 @@ class SessionStore:
             raise ValueError(f"Cannot append to symlinked path: {path}")
 
         try:
-            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+            fd = _state_open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
         except OSError as exc:
             raise OSError(f"Failed to open session file: {exc}") from exc
 
@@ -105,9 +134,14 @@ class SessionStore:
                     position = start
                 else:
                     os.ftruncate(fd, 0)
+            end = os.lseek(fd, 0, os.SEEK_END)
+            if end + len(payload) > MAX_SESSION_BYTES:
+                raise ValueError(f"Session file exceeds maximum size of {MAX_SESSION_BYTES} bytes")
             view = memoryview(payload)
             while view:
                 written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("Session write made no progress")
                 view = view[written:]
         finally:
             os.close(fd)
@@ -120,7 +154,7 @@ class SessionStore:
             raise ValueError(f"Cannot read symlinked session file: {path}")
         fd = None
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = _state_open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
                 raise ValueError(f"Session path is not a regular file: {path}")
@@ -247,7 +281,7 @@ class SessionStore:
         try:
             if any(part.is_symlink() for part in (path, *path.parents)):
                 return [], None, False
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = _state_open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_REGRESSION_BYTES:
