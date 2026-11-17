@@ -141,6 +141,7 @@ flowchart LR
 | 31 | [SF-RISK-01](#sf-risk-01) | Merged | Codex（审查整合） | 无 | [PR #88](https://github.com/liuzhouquan/selfforge-agent/pull/88)：PR风险优先级排序与RiskTarget契约边界加固：上下文与发现类型Fail-Closed校验、扫描深度与代码行有界防御、PrioritizedRisk模式与空字节防御、确定性排序与有效转换 |
 | 32 | [SF-FPR-01](#sf-fpr-01) | Merged | Codex（审查整合） | 无 | [PR #89](https://github.com/liuzhouquan/selfforge-agent/pull/89)：工作区快照指纹哈希安全加固：root输入防御与斜杠绕过软链接防御、有限正数deadline与cancel状态机对齐、目录递归自循环防御、非普通文件与负大小防御 |
 | 33 | [SF-CTX-01](#sf-ctx-01) | Merged | Codex（审查整合） | 无 | [PR #90](https://github.com/liuzhouquan/selfforge-agent/pull/90)：模型上下文管理器与结构化压缩防御加固（`estimate_tokens` / `estimate_message_tokens` / `_recent_interactions` / `ContextManager`） |
+| 34 | [SF-BMDIFF-01](#sf-bmdiff-01) | In Review | Codex（审查整合） | 无 | [PR #98](https://github.com/liuzhouquan/selfforge-agent/pull/98)：基准评测报告解析与差异分析加固：非普通文件与符链路径防御、报告指标Fail-Closed校验与SHA-256规范化、Markdown表格注入防御与结构化导出 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1462,6 +1463,38 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #90 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43793394572（最终组合；各源 PR 见审查记录） / 224a147e6abe6810edafb6bab0bb91f2dd89b663
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终 main CI 准确结论回填十二个 PR 的交付描述
 下一步：后续开发先核对远端与开放 PR，按当前用户任务选择未认领事项；不要自动运行付费模型测量。
+```
+
+### SF-BMDIFF-01
+
+**目标：** 基准评测报告解析（`read_eval_report`）、指标结构校验（`_checked`）与差异对比输出格式化（`format_eval_diff`）安全防御加固，防范不可信文件路径穿透、畸形与溢出度量指标注入、以及 Markdown 报告表格破坏。
+
+**范围/入口：** `src/selfforge_agent/runtime/benchmark_diff.py`（`read_eval_report`、`_checked`、`diff_eval_reports`、`format_eval_diff`）。复用 `tests/test_benchmark_diff.py`，新增专项安全与边界复现测试 `tests/test_benchmark_diff_security.py`。
+
+**行为：** `read_eval_report` 严格校验输入为 `pathlib.Path`（拒绝非 Path 类型抛出 `TypeError`），严格杜绝空字节 `\0`；检查目标文件及所有祖先目录，拒绝任何符号链接；以 `O_RDONLY | O_NONBLOCK | O_NOFOLLOW` 安全打开并基于 `stat.S_ISREG` 校验必须为常规文件（杜绝 FIFO、字符/块设备、套接字与目录阻塞）；限制报告大小不超过 32 MiB，严格校验解析结果必须为 JSON 对象（`dict`），将非 dict 外部输入安全映射为 `ValueError`；`_checked` 统一对 `manifest_sha256` 进行去空与小写规范化（保证下游一致哈希比对），限制用例总数上限（`<= 10000`）与失败原因条目上限（`<= 1000`），严格拒绝用例名称与失败原因中的空字节与超长字符串；`format_eval_diff` 严格校验 `diff` 为字典且包含有效 `summary` 结构，严格拒绝非受支持的格式名称并抛出 `ValueError`（合法格式：`markdown`、`text`、`plain`），对 Markdown 表格单元格中的管道符 `|` 与换行符进行转义与清洗，防止表格结构破坏与注入。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-BMDIFF-01-A1 | `read_eval_report` 路径与文件防御：非 `Path` 输入抛出 `TypeError`，空字节、目标与父目录符号链接抛出 `ValueError`，拒绝 FIFO/非普通文件并限制 <= 32 MiB，非字典 JSON 映射为 `ValueError` | `tests/test_benchmark_diff_security.py::TestReadEvalReportSecurity`（含 `test_read_eval_report_rejects_non_path`、`test_read_eval_report_rejects_symlinked_parent_directory`、`test_read_eval_report_rejects_non_dict_json`、`test_read_eval_report_rejects_null_byte_in_path`、`test_read_eval_report_rejects_fifo`） | E1 |
+| SF-BMDIFF-01-A2 | `_checked` 指标入口规范化与完整性校验：`manifest_sha256` 自动去除首尾空白并转换为小写，用例名与失败原因禁止空字节，有界用例上限（<= 10000）与失败原因上限（<= 1000） | `tests/test_benchmark_diff_security.py::TestReportMetricsAndStructureSecurity`（含 `test_checked_normalizes_manifest_sha`、`test_checked_rejects_null_byte_in_case_name`、`test_checked_rejects_null_byte_in_failure_reason`、`test_checked_rejects_excessive_case_records`） | E2 |
+| SF-BMDIFF-01-A3 | `diff_eval_reports` 差异分析契约防御：拒绝非 dict 输入，正确识别 manifest 差异并标记 `manifest_mismatch` / `comparable=False`，非负运行数与成功数安全计算，检测出 provenance 不一致 | `tests/test_benchmark_diff_security.py::TestDiffAnalysisSecurity`、`tests/test_benchmark_diff.py`（含 `test_diff_eval_reports_manifest_mismatch_and_case_diffs`） | E3 |
+| SF-BMDIFF-01-A4 | `format_eval_diff` 格式校验与 Markdown 表格注入防御：严格校验 `diff` 与 `summary` 结构，拒绝不支持格式（`ValueError`），对 Markdown 单元格中管道符 `\|` 与换行符进行安全转义，保持表格结构完好 | `tests/test_benchmark_diff_security.py::TestFormattingDefenseSecurity`（含 `test_format_eval_diff_rejects_invalid_diff_type_or_missing_summary`、`test_format_eval_diff_rejects_unsupported_format`、`test_format_eval_diff_escapes_markdown_table_injection`）、`tests/test_benchmark_diff.py::test_format_eval_diff_markdown` | E4 |
+
+| 记录 | 验收 ID | 验证代码节点 / 检查项 | 命令 / 证据源 | 验证结果 / 提交 SHA |
+| --- | --- | --- | --- | --- |
+| E1 | SF-BMDIFF-01-A1 | `tests/test_benchmark_diff_security.py::TestReadEvalReportSecurity::test_read_eval_report_rejects_non_path`、`tests/test_benchmark_diff_security.py::TestReadEvalReportSecurity::test_read_eval_report_rejects_symlinked_parent_directory`、`tests/test_benchmark_diff_security.py::TestReadEvalReportSecurity::test_read_eval_report_rejects_non_dict_json`、`tests/test_benchmark_diff_security.py::TestReadEvalReportSecurity::test_read_eval_report_rejects_null_byte_in_path`、`tests/test_benchmark_diff_security.py::TestReadEvalReportSecurity::test_read_eval_report_rejects_fifo` | `PYTHONPATH=src pytest tests/test_benchmark_diff_security.py`；GitHub Actions CI `Unit tests` | `a2dcf6ab489699726164125f5314ea67dfb8f6ab`；passed；CI [R1 43905452868](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43905452868) |
+| E2 | SF-BMDIFF-01-A2 | `tests/test_benchmark_diff_security.py::TestReportMetricsAndStructureSecurity::test_checked_normalizes_manifest_sha`、`tests/test_benchmark_diff_security.py::TestReportMetricsAndStructureSecurity::test_checked_rejects_null_byte_in_case_name`、`tests/test_benchmark_diff_security.py::TestReportMetricsAndStructureSecurity::test_checked_rejects_null_byte_in_failure_reason`、`tests/test_benchmark_diff_security.py::TestReportMetricsAndStructureSecurity::test_checked_rejects_excessive_case_records` | `PYTHONPATH=src pytest tests/test_benchmark_diff_security.py`；GitHub Actions CI `Unit tests` | `a2dcf6ab489699726164125f5314ea67dfb8f6ab`；passed；CI [R1 43905452868](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43905452868) |
+| E3 | SF-BMDIFF-01-A3 | `tests/test_benchmark_diff_security.py::TestDiffAnalysisSecurity::test_diff_eval_reports_rejects_non_dict_inputs`、`tests/test_benchmark_diff_security.py::TestDiffAnalysisSecurity::test_diff_eval_reports_detects_provenance_mismatch`、`tests/test_benchmark_diff.py::test_diff_eval_reports_manifest_mismatch_and_case_diffs` | `PYTHONPATH=src pytest tests/test_benchmark_diff_security.py tests/test_benchmark_diff.py`；GitHub Actions CI `Unit tests` | `a2dcf6ab489699726164125f5314ea67dfb8f6ab`；passed；CI [R1 43905452868](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43905452868) |
+| E4 | SF-BMDIFF-01-A4 | `tests/test_benchmark_diff_security.py::TestFormattingDefenseSecurity::test_format_eval_diff_rejects_invalid_diff_type_or_missing_summary`、`tests/test_benchmark_diff_security.py::TestFormattingDefenseSecurity::test_format_eval_diff_rejects_unsupported_format`、`tests/test_benchmark_diff_security.py::TestFormattingDefenseSecurity::test_format_eval_diff_escapes_markdown_table_injection`、`tests/test_benchmark_diff.py::test_format_eval_diff_markdown` | `PYTHONPATH=src pytest tests/test_benchmark_diff_security.py tests/test_benchmark_diff.py`；GitHub Actions CI `Unit tests` | `a2dcf6ab489699726164125f5314ea67dfb8f6ab`；passed；CI [R1 43905452868](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43905452868) |
+
+```text
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeff9b972c3d5e2d634ea8448ec1712a2a0eb / feat/sf-bmdiff-01 (worktree: selfforge-sf-bmdiff-01) / 源码 a2dcf6ab489699726164125f5314ea67dfb8f6ab
+已完成验收与证据 ID：SF-BMDIFF-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；本地单测 24 passed、非集成 1035 passed；Ruff passed；Docker 集成由 CI 完整执行通过（6m6s）
+PR / 准确 head CI / merge SHA（有则填）：PR #98 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43905452868 / 待合入
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #98 审查与合入。
 ```
 
 ## 5. 验收追踪与执行记录格式
