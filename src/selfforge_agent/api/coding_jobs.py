@@ -307,7 +307,9 @@ class CodingJobManager:
             raise ValueError("Task must be a non-empty string")
         if "\x00" in task:
             raise ValueError("Task string contains null byte")
-        if len(task) > MAX_TASK_LENGTH:
+        if type(resume) is not bool:
+            raise TypeError("resume must be a boolean")
+        if len(task.encode("utf-8")) > MAX_TASK_LENGTH:
             raise ValueError(f"Task string exceeds maximum length ({MAX_TASK_LENGTH})")
         if agent.tools.root.is_symlink() or any(p.is_symlink() for p in (agent.tools.root, *agent.tools.root.parents)):
             raise ValueError("Workspace root cannot be a symlink or reside in a symlink")
@@ -356,14 +358,15 @@ class CodingJobManager:
             except Exception as exc:  # noqa: BLE001 - worker boundary must always finalize the job
                 try:
                     agent.session.record_status("failed")
-                except OSError:
+                except (OSError, ValueError, TypeError, RuntimeError):
                     pass
                 with self._lock:
+                    job.result = None
                     job.state = "failed"
                     job.error = f"Unexpected {type(exc).__name__}"
                     try:
                         self._write_record(self._record(job))
-                    except OSError:
+                    except (OSError, ValueError, TypeError):
                         pass
             finally:
                 with self._lock:

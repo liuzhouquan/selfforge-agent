@@ -231,3 +231,51 @@ class TestJobLifecycleSecurity:
         for invalid in ["not_a_path", 12345, []]:
             with pytest.raises(TypeError, match="[Pp]ath"):
                 mgr.list_jobs(repository=invalid)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize('input_kind', ['unicode_task', 'resume_type'])
+def test_start_rejects_invalid_cross_layer_inputs_before_scheduling(tmp_path, input_kind):
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    agent = _make_dummy_agent(workspace, tmp_path / 'sessions')
+    manager = CodingJobManager(root=tmp_path / 'jobs')
+    with pytest.raises((ValueError, TypeError)):
+        if input_kind == 'unicode_task':
+            manager.start(agent, '界'*50000)
+        else:
+            manager.start(agent, 'fixture', resume='false')
+    assert manager.list_jobs() == []
+
+
+@pytest.mark.parametrize('failure', ['oversized_result', 'session_status'])
+def test_worker_publishes_bounded_failure_when_result_or_session_write_fails(tmp_path, failure):
+    import time
+
+    from selfforge_agent.runtime.agent import AgentResult
+
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    agent = _make_dummy_agent(workspace, tmp_path / 'sessions')
+    if failure == 'oversized_result':
+        agent.run = lambda *_a, **_k: AgentResult(agent.session.session_id, 'unverified', 'x'*70000, 1, 0)
+    else:
+        def fail_run(*_a, **_k):
+            raise RuntimeError('fixture worker failure')
+
+        def fail_status(*_a, **_k):
+            raise ValueError('fixture full session')
+
+        agent.run = fail_run
+        agent.session.record_status = fail_status
+    manager = CodingJobManager(root=tmp_path / 'jobs')
+    job = manager.start(agent, 'fixture')
+    for _ in range(200):
+        if job.lock_fd < 0:
+            break
+        time.sleep(0.005)
+    assert job.lock_fd == -1
+    record = manager._load_record(job.job_id)
+    assert record['state'] == 'failed'
+    assert record['error'].startswith('Unexpected ')
+    assert record['answer'] == ''
+    assert manager.get(job.job_id)['state'] == 'failed'
