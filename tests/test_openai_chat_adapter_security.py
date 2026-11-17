@@ -271,3 +271,55 @@ class TestModelTurnInvariants:
         assert turn.finish_reason == "stop"
         assert turn.provider == "openai"
         assert turn.usage is not None and turn.usage.total_tokens == 30
+
+
+def test_long_turn_budget_respects_transport_timeout_ceiling(monkeypatch):
+    import io
+    import json
+
+    from selfforge_agent.integrations import model_http
+
+    received = []
+
+    def open_fixture(request, timeout):
+        received.append(timeout)
+        return io.BytesIO(json.dumps({'choices': [{'message': {'content': 'fixture'}}]}).encode())
+
+    monkeypatch.setattr(model_http, 'urlopen', open_fixture)
+    turn = OpenAIChatAdapter([_make_provider()]).complete([{'role': 'user', 'content': 'fixture'}], [], 600)
+    assert turn.message['content'] == 'fixture'
+    assert len(received) == 1
+    assert 0 < received[0] <= 300
+
+
+@pytest.mark.parametrize('timeout', [10**1000, 0.0001], ids=['huge_integer', 'below_minimum'])
+def test_timeout_validation_is_controlled_and_matches_bounds(monkeypatch, timeout):
+    monkeypatch.setattr(model_module, 'request_json', lambda *_a, **_k: {'choices': [{'message': {'content': 'fixture'}}]})
+    with pytest.raises(ValueError):
+        OpenAIChatAdapter([_make_provider()]).complete([{'role': 'user'}], [], timeout)
+
+
+@pytest.mark.parametrize('tool', [{}, {'function': None}, {'function': {}}, {'function': {'name': ''}},
+                                 {'function': {'name': 17}}, {'function': {'name': 'bad name'}},
+                                 {'type': 'other', 'function': {'name': 'read_file'}}])
+def test_tool_definitions_are_validated_before_any_provider_call(monkeypatch, tool):
+    calls = []
+    monkeypatch.setattr(model_module, 'request_json', lambda *_a, **_k: calls.append(1) or {'choices': [{'message': {'content': 'fixture'}}]})
+    with pytest.raises((TypeError, ValueError)):
+        OpenAIChatAdapter([_make_provider()]).complete([{'role': 'user'}], [tool], 10)
+    assert calls == []
+
+
+@pytest.mark.parametrize('content', [{'text': 'not a string'}, [1], 7, True])
+def test_non_text_provider_content_cannot_become_a_final_answer(monkeypatch, content):
+    monkeypatch.setattr(model_module, 'request_json', lambda *_a, **_k: {'choices': [{'message': {'content': content}}]})
+    with pytest.raises(RuntimeError):
+        OpenAIChatAdapter([_make_provider()]).complete([{'role': 'user'}], [], 10)
+
+
+@pytest.mark.parametrize('finish_reason', [0, True, {'stop': True}])
+def test_provider_finish_reason_type_is_not_silently_coerced(monkeypatch, finish_reason):
+    monkeypatch.setattr(model_module, 'request_json', lambda *_a, **_k: {
+        'choices': [{'message': {'content': 'fixture'}, 'finish_reason': finish_reason}]})
+    with pytest.raises(RuntimeError):
+        OpenAIChatAdapter([_make_provider()]).complete([{'role': 'user'}], [], 10)

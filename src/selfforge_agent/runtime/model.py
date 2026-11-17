@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
-from selfforge_agent.integrations.model_http import ProviderHTTPError, request_json
+from selfforge_agent.integrations.model_http import (
+    MAX_HTTP_TIMEOUT,
+    ProviderHTTPError,
+    request_json,
+)
 from selfforge_agent.providers import (
     ProviderConfig,
     TokenUsage,
@@ -121,10 +126,8 @@ class OpenAIChatAdapter:
         # 1. Entry validation for timeout
         if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
             raise TypeError(f"timeout must be a real number, got {type(timeout).__name__}")
-        if not math.isfinite(timeout) or timeout <= 0:
+        if timeout > MAX_MODEL_TIMEOUT or timeout < MIN_MODEL_TIMEOUT or not math.isfinite(timeout):
             raise ValueError(f"timeout must be a finite positive number, got {timeout}")
-        if timeout > MAX_MODEL_TIMEOUT:
-            raise ValueError(f"timeout cannot exceed {MAX_MODEL_TIMEOUT} seconds, got {timeout}")
 
         # 2. Entry validation for messages
         if not isinstance(messages, (list, tuple)):
@@ -158,12 +161,12 @@ class OpenAIChatAdapter:
                 if not isinstance(tool, dict):
                     raise TypeError(f"each tool definition must be a dictionary, got {type(tool).__name__} at index {idx}")
                 fn = tool.get("function")
-                if isinstance(fn, dict):
-                    name = fn.get("name")
-                    if isinstance(name, str):
-                        _check_no_null_bytes(name, f"tools[{idx}].function.name")
-                        if len(name) > MAX_TOOL_NAME_LEN:
-                            raise ValueError(f"tool function name exceeds {MAX_TOOL_NAME_LEN} characters at index {idx}")
+                if tool.get("type", "function") != "function" or not isinstance(fn, dict):
+                    raise ValueError(f"Invalid tool function definition at index {idx}")
+                name = fn.get("name")
+                if (not isinstance(name, str) or not name or len(name) > MAX_TOOL_NAME_LEN
+                        or not re.fullmatch(r"[A-Za-z0-9_-]+", name)):
+                    raise ValueError(f"Tool function name must be valid and non-empty at index {idx}")
 
         deadline = monotonic() + timeout
         errors: list[str] = []
@@ -193,7 +196,7 @@ class OpenAIChatAdapter:
                     provider.base_url.rstrip("/") + "/chat/completions",
                     provider.key,
                     payload=payload,
-                    timeout=remaining,
+                    timeout=min(remaining, MAX_HTTP_TIMEOUT),
                     max_bytes=2_000_000,
                 )
                 self._remaining(deadline)
@@ -212,10 +215,10 @@ class OpenAIChatAdapter:
                 if not isinstance(raw, dict):
                     raise TypeError("Invalid assistant message")
 
-                message_dict: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": raw.get("content") or "",
-                }
+                content = raw.get("content")
+                if content is not None and not isinstance(content, str):
+                    raise TypeError("Invalid assistant content")
+                message_dict: dict[str, Any] = {"role": "assistant", "content": content or ""}
 
                 if "reasoning_content" in raw:
                     reasoning_val = raw["reasoning_content"]
@@ -238,7 +241,10 @@ class OpenAIChatAdapter:
                     message_dict["tool_calls"] = tool_calls
 
                 self.active_index = index
-                finish_reason = str(choice.get("finish_reason") or "stop")
+                finish_reason = choice.get("finish_reason")
+                if finish_reason is not None and not isinstance(finish_reason, str):
+                    raise TypeError("Invalid finish_reason")
+                finish_reason = finish_reason or "stop"
                 return ModelTurn(
                     message_dict,
                     finish_reason,
