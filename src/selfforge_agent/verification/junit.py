@@ -1,5 +1,6 @@
 """Parse counts and bounded diagnostics from the same pytest JUnit document."""
 
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -8,6 +9,10 @@ from selfforge_agent.models import TestFailure
 MAX_JUNIT_BYTES = 8 * 1024 * 1024
 MAX_FAILURE_DETAILS = 5
 MAX_TEST_COUNT = 100_000
+MAX_TEST_SUITES = 1_000
+
+_UNSAFE_XML_PATTERN = re.compile(rb"<!(?:doctype|entity)", re.IGNORECASE)
+_UNSAFE_PI_PATTERN = re.compile(rb"<\?(?!xml[\s\?])", re.IGNORECASE)
 
 
 @dataclass
@@ -34,12 +39,14 @@ def parse_junit(xml: bytes | None, timed_out: bool) -> JUnitEvidence:
     try:
         if len(xml) > MAX_JUNIT_BYTES:
             raise ValueError("JUnit report exceeds 8 MiB")
-        if b"\x00" in xml or b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
+        if b"\x00" in xml or _UNSAFE_XML_PATTERN.search(xml) or _UNSAFE_PI_PATTERN.search(xml):
             raise ValueError("JUnit requires UTF-8 XML without DTD or entity declarations")
         root = ET.fromstring(xml)
         suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
         if not suites:
             raise ValueError("No testsuite element")
+        if len(suites) > MAX_TEST_SUITES:
+            raise ValueError(f"Testsuite count exceeds limit ({MAX_TEST_SUITES})")
         total_tests = 0
         for suite in suites:
             # pytest emits flat suites. Do not double-count nested aggregate totals.
@@ -50,6 +57,9 @@ def parse_junit(xml: bytes | None, timed_out: bool) -> JUnitEvidence:
             )
             if min(total, failed, errors, skipped) < 0 or failed + errors + skipped > total:
                 raise ValueError("Inconsistent testsuite counts")
+            testcases = suite.findall("testcase")
+            if len(testcases) > total:
+                raise ValueError("Inconsistent testcase count vs testsuite total")
             total_tests += total
             if total_tests > MAX_TEST_COUNT:
                 raise ValueError(f"Test count exceeds maximum limit ({MAX_TEST_COUNT})")
@@ -68,10 +78,14 @@ def parse_junit(xml: bytes | None, timed_out: bool) -> JUnitEvidence:
                 if len(evidence.failures) >= MAX_FAILURE_DETAILS:
                     evidence.truncated = True
                     continue
-                raw_id = "::".join(filter(None, (case.get("classname"), case.get("name"))))
+                raw_parts = [p.strip() for p in (case.get("classname"), case.get("name")) if p and p.strip()]
+                raw_id = "::".join(raw_parts) if raw_parts else "unknown"
                 test_id, id_cut = _bounded(raw_id or "unknown", 256)
+                if not test_id or test_id == "::":
+                    test_id = "unknown"
                 message, message_cut = _bounded(child.get("message") or "", 256)
-                detail, detail_cut = _bounded(child.text or "", 1200, multiline=True)
+                detail_text = "".join(child.itertext())
+                detail, detail_cut = _bounded(detail_text, 1200, multiline=True)
                 evidence.truncated |= id_cut or message_cut or detail_cut
                 evidence.failures.append(TestFailure(test_id=test_id, kind=child.tag,
                                                       message=message, detail=detail))
