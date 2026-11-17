@@ -364,3 +364,51 @@ def test_missing_call_id_is_repaired_in_both_native_messages(tmp_path):
     agent = _make_agent(tmp_path, model=Model())
     (agent.tools.root / "fixture.py").write_text("value = 1\n")
     assert agent.run("inspect").status == "unverified"
+
+
+@pytest.mark.parametrize('malformed', ['function', 'name', 'arguments', 'type'])
+def test_native_adapter_never_resends_malformed_tool_envelopes(tmp_path, monkeypatch, malformed):
+    import json
+
+    from selfforge_agent.integrations.model_http import ProviderHTTPError
+    from selfforge_agent.providers import ProviderConfig
+    from selfforge_agent.runtime.model import OpenAIChatAdapter
+
+    requests = []
+    call = {'id': 'bad', 'type': 'function', 'function': {
+        'name': 'edit_file', 'arguments': json.dumps({'path': 'fixture.py', 'old_text': '1', 'new_text': '2'})}}
+    if malformed == 'function':
+        call['function'] = None
+    elif malformed == 'name':
+        call['function']['name'] = []
+    elif malformed == 'arguments':
+        call['function']['arguments'] = {'path': 'fixture.py', 'old_text': '1', 'new_text': '2'}
+    else:
+        call['type'] = 'invalid'
+
+    def response(_url, _key, *, payload, **_kwargs):
+        requests.append(payload)
+        if len(requests) == 1:
+            return {'choices': [{'message': {'tool_calls': [call]}, 'finish_reason': 'tool_calls'}]}
+        for message in payload['messages']:
+            for request in message.get('tool_calls', []):
+                function = request.get('function')
+                if (request.get('type') != 'function' or not isinstance(function, dict)
+                        or not isinstance(function.get('name'), str)
+                        or not isinstance(function.get('arguments'), str)):
+                    raise ProviderHTTPError('fixture native protocol validation failed')
+        return {'choices': [{'message': {'content': 'Handled invalid tool'}, 'finish_reason': 'stop'}]}
+
+    monkeypatch.setattr('selfforge_agent.runtime.model.request_json', response)
+    model = OpenAIChatAdapter([ProviderConfig(name='deepseek', label='fixture', key='', status_url='', model='fixture', base_url='http://localhost:1234')])
+    agent = _make_agent(tmp_path, model=model)
+    target = agent.tools.root / 'fixture.py'
+    target.write_text('VALUE = 1\n')
+    result = agent.run('Inspect fixture')
+    assert result.status == 'unverified'
+    assert target.read_text() == 'VALUE = 1\n'
+    assert len(requests) == 2
+    messages, _ = agent.session.load()
+    replies = [m for m in messages if m.get('role') == 'tool']
+    assert len(replies) == 1
+    assert 'malformed' in replies[0]['content'] or 'JSON string' in replies[0]['content']
