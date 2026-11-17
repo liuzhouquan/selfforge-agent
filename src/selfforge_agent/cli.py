@@ -278,6 +278,8 @@ def main(argv: list[str] | None = None) -> int:
     evaluation.add_argument("--provider", choices=provider_choices, default="auto")
     evaluation.add_argument("--max-steps", type=int, default=10)
     evaluation.add_argument("--time-budget", type=float, default=180)
+    evaluation.add_argument("--test-timeout", type=float, default=30.0, help="Per-case pytest timeout in seconds")
+    evaluation.add_argument("--output", type=Path, help="Optional path to write JSON evaluation report")
     suite = subcommands.add_parser("eval-suite", help="Repeat pinned Git tasks with unseen tests")
     suite_source = suite.add_mutually_exclusive_group(required=True)
     suite_source.add_argument("--manifest", type=Path, help="Path to evaluation suite manifest JSON")
@@ -889,17 +891,30 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(exc))
         return 0
     if args.command == "eval":
+        if getattr(args, "output", None):
+            try:
+                _validate_cli_output_target(args.output)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
         try:
             if args.offline:
                 factory = OfflineFixtureModel
             else:
                 providers = route_providers(args.provider, False)
                 factory = lambda _case: OpenAIChatAdapter(providers)
+            test_timeout = getattr(args, "test_timeout", 30.0)
             report = evaluate(factory, max_steps=args.max_steps,
-                              time_budget=args.time_budget)
-        except ValueError as exc:
+                              time_budget=args.time_budget,
+                              test_timeout=test_timeout)
+        except (ValueError, TypeError, RuntimeError, OSError) as exc:
             parser.error(str(exc))
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        output_text = json.dumps(report, ensure_ascii=False, indent=2)
+        if getattr(args, "output", None):
+            try:
+                _write_cli_output(args.output, output_text)
+            except (ValueError, OSError) as exc:
+                parser.error(str(exc))
+        print(output_text)
         return 0 if report["successes"] == report["tasks"] else 1
     if args.command == "eval-suite":
         if getattr(args, "output", None):
