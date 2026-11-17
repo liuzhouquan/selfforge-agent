@@ -151,6 +151,7 @@ flowchart LR
 | 41 | [SF-BMDIFF-01](#sf-bmdiff-01) | Merged | Codex（审查整合） | 无 | [PR #98](https://github.com/liuzhouquan/selfforge-agent/pull/98)：基准评测报告解析与差异分析加固：非普通文件与符链路径防御、报告指标Fail-Closed校验与SHA-256规范化、Markdown表格注入防御与结构化导出 |
 | 42 | [SF-JOB-01](#sf-job-01) | Merged | Codex（审查整合） | 无 | [PR #99](https://github.com/liuzhouquan/selfforge-agent/pull/99)：本地异步编码任务管理与取消标记加固：取消标记防符链与FIFO阻塞、作业记录序列化/反序列化校验与状态白名单防御、任务并发上限与工作区锁防泄露加固 |
 | 43 | [SF-FDBK-01](#sf-fdbk-01) | Merged | Codex（审查整合） | 无 | [PR #100](https://github.com/liuzhouquan/selfforge-agent/pull/100)：测试失败反馈与修复反馈安全加固：严格输入类型与有限上限防御、空字节与终端控制字符脱敏、单行折叠防摘要伪造注入、严格长度不变式与有界修复反馈格式化 |
+| 44 | [SF-REGRESS-01](#sf-regress-01) | In Review | Codex（审查整合） | 无 | [PR #102](https://github.com/liuzhouquan/selfforge-agent/pull/102)：回归验证执行器与隔离加固：基线Commit SHA十六进制严格校验与参数防注入、候选测试路径与非普通文件防御、快照目录隔离与安全执行及模型契约不变式保障 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1876,6 +1877,38 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #100 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44008150709（最终组合；各源PR见审查记录） / 80f7f85809494f5d34dba855a691b66403157216
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-REGRESS-01
+
+**目标：** 在回归验证模块 `selfforge_agent.coding.regression_validation` 中贯彻 fail-closed 与无特权安全隔离原则。强化 `validate_workspace_regression` 入口参数与路径校验，消除非字符串、空字节、空串及目录路径风险；在 `_validate_base_commit` 中对基线 Commit SHA 实施严格的 40/64 位十六进制正则校验，彻底杜绝 Git 参数/选项注入攻击与非受控符号引用；在 `_validate_candidate_components` 与 `_open_and_read_relative_candidate` 中增强对空文件名、前导连字符、控制字符与非普通文件的防御；强化快照目录与临时工作区生命周期隔离与清理，确保异常与超时路径下资源可靠释放。
+
+**范围/入口：** 改动 `src/selfforge_agent/coding/regression_validation.py` 及专项安全复现测试 `tests/test_regression_validation_security.py`；保持对 `src/selfforge_agent/cli.py` 与既有 `tests/test_coding_regression_validation.py` 现有调用契约的完全向后兼容。
+
+**行为：** `validate_workspace_regression` 严格校验输入 `repository` 与 `test_file` 为字符串或 Path 实例，路径非空且长度不超过 4096 字符，拒绝空字节 `\0` 与测试路径尾部斜杠（目录标识）；严格校验 `session_id` 长度不超过 256 字符、无空字节、路径遍历或控制字符；严格校验 `workspace_manager` 与 `legacy_session_roots` 类型；`ValidateRegressionRequest` 模型对请求载荷字段执行严格非空白、无空字节及长度校验；`_validate_base_commit` 严格要求 `workspace.base_sha` 必须符合 40 或 64 位十六进制小写/大写正则 `^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`，阻断 `--batch` 等参数注入，非合法 SHA 抛出受控 `RegressionValidationError`；`_validate_candidate_components` 拒绝 `.py` 隐藏文件、以 `-` 开头的路径片段、空字节与控制字符；`_run_snapshot_test` 校验快照目录必须为真实非软链接目录；`RegressionValidationReport` 确保 `test_sha256` 始终为 64 位合法十六进制小写哈希。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-REGRESS-01-A1 | `validate_workspace_regression` 入口与请求载荷防御：非字符串/Path参数、空字节、尾部斜杠、空或超长路径拒绝；非法 `session_id` 拒绝；非法管理器/会话根类型拒绝；API请求模型强校验 | `tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects` 与 `tests/test_regression_validation_security.py::TestValidateRegressionRequestModelDefects` 全量用例 | E1 |
+| SF-REGRESS-01-A2 | `_validate_base_commit` 基线提交防注入：严格校验 40/64 位十六进制 SHA 格式，阻断前导连字符参数注入（如 `--batch`）与符号引用，非法提交抛出受控 `RegressionValidationError` | `tests/test_regression_validation_security.py::TestBaseCommitValidationDefects` 全量用例 | E2 |
+| SF-REGRESS-01-A3 | 候选测试路径与快照执行隔离防御：拒绝隐藏文件 `.py`、前导连字符路径片段、空字节与控制字符；快照目录软链接防御；临时工作区安全清理 | `tests/test_regression_validation_security.py::TestCandidatePathValidationDefects` 与 `tests/test_regression_validation_security.py::TestSnapshotTestIsolationDefects` 全量用例 | E3 |
+| SF-REGRESS-01-A4 | `RegressionValidationReport` 不变式与全量回归兼容：`test_sha256` 强制 64 位十六进制哈希；全量既有回归验证测试及 CI 真实集成套件完全通过 | `tests/test_regression_validation_security.py::TestRegressionValidationReportModelInvariants` 全量用例、`tests/test_coding_regression_validation.py` | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-REGRESS-01-A1 | `tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects::test_rejects_non_str_path_repository`、`tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects::test_rejects_blank_or_null_byte_repository`、`tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects::test_rejects_non_str_path_test_file`、`tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects::test_rejects_trailing_slash_in_test_file`、`tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects::test_rejects_invalid_workspace_manager_type`、`tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects::test_rejects_invalid_legacy_session_roots`、`tests/test_regression_validation_security.py::TestRegressionValidationEntryDefects::test_rejects_malformed_session_id`、`tests/test_regression_validation_security.py::TestValidateRegressionRequestModelDefects::test_request_rejects_blank_or_null_or_excessive_repository`、`tests/test_regression_validation_security.py::TestValidateRegressionRequestModelDefects::test_request_rejects_blank_or_null_or_excessive_test_file` | `PYTHONPATH=src pytest -v tests/test_regression_validation_security.py`；GitHub Actions CI `Unit tests` | `7b4f854537722c7057070f59a667e0f25e5bb5f1`；passed；CI [Run #44044099561](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44044099561) |
+| E2 | SF-REGRESS-01-A2 | `tests/test_regression_validation_security.py::TestBaseCommitValidationDefects::test_validate_base_commit_rejects_non_hex_sha_or_flag_injection` | `PYTHONPATH=src pytest -v tests/test_regression_validation_security.py`；GitHub Actions CI `Unit tests` | `7b4f854537722c7057070f59a667e0f25e5bb5f1`；passed；CI [Run #44044099561](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44044099561) |
+| E3 | SF-REGRESS-01-A3 | `tests/test_regression_validation_security.py::TestCandidatePathValidationDefects::test_rejects_empty_stem_dot_py`、`tests/test_regression_validation_security.py::TestCandidatePathValidationDefects::test_rejects_leading_hyphen_in_parts`、`tests/test_regression_validation_security.py::TestCandidatePathValidationDefects::test_rejects_control_characters_in_parts`、`tests/test_regression_validation_security.py::TestSnapshotTestIsolationDefects::test_run_snapshot_test_rejects_symlinked_snapshot_dir` | `PYTHONPATH=src pytest -v tests/test_regression_validation_security.py`；GitHub Actions CI `Unit tests` | `7b4f854537722c7057070f59a667e0f25e5bb5f1`；passed；CI [Run #44044099561](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44044099561) |
+| E4 | SF-REGRESS-01-A4 | `tests/test_regression_validation_security.py::TestRegressionValidationReportModelInvariants::test_report_validates_test_sha256`、`tests/test_regression_validation_security.py::TestRegressionValidationReportModelInvariants::test_report_rejects_invalid_test_sha256`、`tests/test_coding_regression_validation.py::test_confirmed_regression_via_service_cli_and_api`、`tests/test_coding_regression_validation.py::test_non_confirming_outcomes_preserve_runner_status_and_exit_codes`、`tests/test_coding_regression_validation.py::test_isolation_tampering_cleanup_and_session_evidence_preservation` | `PYTHONPATH=src pytest -v tests/test_regression_validation_security.py tests/test_coding_regression_validation.py`；GitHub Actions CI `Unit tests` | `7b4f854537722c7057070f59a667e0f25e5bb5f1`；passed；CI [Run #44044099561](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44044099561) |
+
+```text
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：015dc6a75f0671a3537edc7706937a0826128bf9 / feat/sf-regress-01 (worktree: selfforge-sf-regress-01) / 源码 7b4f854537722c7057070f59a667e0f25e5bb5f1
+已完成验收与证据 ID：SF-REGRESS-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交源码；本地专项 62 passed、相关单元回归 21 passed 通过；Ruff passed；CI 全流程（Lint、SDD、单元测试、Docker集成测试）已在 Run #44044099561 完整通过（7m23s）
+PR / 准确 head CI / merge SHA（有则填）：PR #102 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44044099561 / 待合入
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #102 审查与合入。
 ```
 
 ## 5. 验收追踪与执行记录格式
