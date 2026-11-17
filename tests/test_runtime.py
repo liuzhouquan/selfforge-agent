@@ -510,7 +510,7 @@ def test_native_model_adapter_falls_back_and_keeps_tool_call(monkeypatch) -> Non
     turn = OpenAIChatAdapter(providers).complete([{"role": "assistant", "content": "",
                                                    "reasoning_content": "private reasoning"},
                                                   {"role": "user", "content": "task"}],
-                                                  [{"type": "function"}], 5)
+                                                  [{"type": "function", "function": {"name": "read_file"}}], 5)
     assert turn.provider == "openrouter"
     assert turn.message["tool_calls"][0]["function"]["name"] == "read_file"
     assert len(seen) == 2
@@ -537,7 +537,7 @@ def test_deepseek_reasoning_survives_tool_round_trip_and_session_resume(
 
     monkeypatch.setattr("selfforge_agent.runtime.model.request_json", fake_request)
     adapter = OpenAIChatAdapter([provider])
-    first = adapter.complete([{"role": "user", "content": "task"}], [{"type": "function"}], 5)
+    first = adapter.complete([{"role": "user", "content": "task"}], [{"type": "function", "function": {"name": "read_file"}}], 5)
     session = SessionStore(tmp_path)
     session.record_message(first.message)
     session.record_message({"role": "tool", "tool_call_id": "1", "content": "source"})
