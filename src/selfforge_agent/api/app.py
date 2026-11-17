@@ -999,7 +999,7 @@ def github_repair(request: GitHubRepairRequest, client: Request) -> GitHubRepair
             checkout=checkout, report=report,
             model_provider=model.selected_provider, model_attempts=model.attempts,
         )
-    except (GitHubPRError, GitContextError, ValueError) as exc:
+    except (GitHubPRError, GitContextError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
