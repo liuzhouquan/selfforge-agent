@@ -1,5 +1,6 @@
 """Bounded repair loop with objective base/head/repaired pytest evidence."""
 
+import math
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -7,6 +8,7 @@ from uuid import uuid4
 
 from selfforge_agent.coding.model_client import CodingModel, ModelError
 from selfforge_agent.coding.models import (
+    CodeEdit,
     RepairAttempt,
     RepairObservation,
     RepairReport,
@@ -17,11 +19,14 @@ from selfforge_agent.core.git_context import build_context
 from selfforge_agent.models import PRContext, TestResult
 from selfforge_agent.review.baseline import BaselineReviewer
 from selfforge_agent.runtime.session import SessionStore
-from selfforge_agent.runtime.tools import EditPolicy, ToolRegistry
+from selfforge_agent.runtime.tools import EditPolicy, ToolRegistry, _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
 _MAX_SOURCE_BYTES = 16_384
 _MAX_FILES = 8
+_MAX_TASK_BYTES = 100_000
+_MAX_TIMEOUT_SECONDS = 3_600
+_MAX_ATTEMPTS = 3
 
 
 class EditRejected(ValueError):
@@ -30,58 +35,107 @@ class EditRejected(ValueError):
 
 def _editable_files(context: PRContext, worktree: Path) -> list[SourceFile]:
     files: list[SourceFile] = []
+    seen: set[str] = set()
+    try:
+        worktree_resolved = worktree.resolve()
+    except OSError:
+        return []
+
+    reader = ToolRegistry(worktree_resolved)
     for change in context.files:
+        if not change.path or change.path in seen:
+            continue
         relative = Path(change.path)
         if (
-            relative.suffix != ".py"
+            relative.is_absolute()
+            or ".." in relative.parts
+            or relative.suffix != ".py"
+            or any(_protected(part) for part in relative.parts)
             or "tests" in relative.parts
             or relative.name.startswith("test_")
             or relative.name.endswith("_test.py")
             or change.status.startswith("D")
         ):
             continue
-        path = worktree / relative
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_SOURCE_BYTES:
-            continue
         try:
-            files.append(SourceFile(path=change.path, content=path.read_text(encoding="utf-8")))
-        except UnicodeError:
+            path = worktree / relative
+            resolved = path.resolve()
+            if not resolved.is_relative_to(worktree_resolved):
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            content = reader._read_source(worktree_resolved / relative, _MAX_SOURCE_BYTES)
+        except (OSError, UnicodeError, ValueError):
             continue
+        seen.add(change.path)
+        files.append(SourceFile(path=change.path, content=content))
         if len(files) == _MAX_FILES:
             break
     return files
 
 
 def _safe_patch(worktree: Path, allowed: set[str]) -> str:
-    changed = git(worktree, "diff", "--name-only", "-z", "HEAD").split("\0")
+    try:
+        changed = git(worktree, "diff", "--name-only", "-z", "HEAD").split("\0")
+    except Exception as exc:
+        raise EditRejected(f"Git diff failed: {exc}") from exc
     unexpected = {path for path in changed if path and path not in allowed}
     if unexpected:
         raise EditRejected("Tests or unrelated tracked files changed: " + ", ".join(sorted(unexpected)))
-    patch = git(worktree, "diff", "--no-ext-diff", "HEAD")
+    try:
+        patch = git(worktree, "diff", "--no-ext-diff", "HEAD")
+    except Exception as exc:
+        raise EditRejected(f"Git diff failed: {exc}") from exc
     if not patch.strip():
         raise EditRejected("No source change remains after test execution")
-    git(worktree, "diff", "--check")
+    try:
+        git(worktree, "diff", "--check")
+    except Exception as exc:
+        raise EditRejected(f"Patch contains whitespace/format errors: {exc}") from exc
     return patch
 
 
-def _test_output(result: TestResult) -> str:
-    return (result.stdout + "\n" + result.stderr)[-8000:]
+def _test_output(result: TestResult | None) -> str:
+    if result is None:
+        return ""
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    return (stdout + "\n" + stderr)[-8000:]
 
 
 class RepairAgent:
-    def __init__(self, model: CodingModel, runner: TestRunner | DockerTestRunner | None = None,
-                 session: SessionStore | None = None) -> None:
+    def __init__(
+        self,
+        model: CodingModel,
+        runner: TestRunner | DockerTestRunner | None = None,
+        session: SessionStore | None = None,
+    ) -> None:
+        if model is None or not hasattr(model, "propose") or not callable(model.propose):
+            raise TypeError("A valid CodingModel with a callable propose(...) method is required")
+        if runner is not None and (not hasattr(runner, "run") or not callable(runner.run)):
+            raise TypeError("runner must be None or have a callable run(...) method")
+        if session is not None and (not hasattr(session, "record_status") or not hasattr(session, "trace")):
+            raise TypeError("session must be None or have callable record_status and trace methods")
         self.model = model
         self.runner = runner or TestRunner()
         self.session = session
 
-    def _trace_test(self, stage: str, result: TestResult) -> None:
-        if self.session:
-            self.session.trace("repair_test", stage=stage, status=result.status,
-                               passed=result.passed, failed=result.failed,
-                               errors=result.errors, exit_code=result.exit_code,
-                               duration_seconds=result.duration_seconds,
-                               environment=result.environment)
+    def _trace_test(self, stage: str, result: TestResult | None) -> None:
+        if self.session and result is not None:
+            try:
+                self.session.trace(
+                    "repair_test",
+                    stage=stage,
+                    status=getattr(result, "status", "unknown"),
+                    passed=getattr(result, "passed", 0),
+                    failed=getattr(result, "failed", 0),
+                    errors=getattr(result, "errors", 0),
+                    exit_code=getattr(result, "exit_code", 1),
+                    duration_seconds=getattr(result, "duration_seconds", 0.0),
+                    environment=getattr(result, "environment", "unknown"),
+                )
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
 
     def run(
         self,
@@ -95,11 +149,56 @@ class RepairAgent:
         timeout: float = 60,
         max_attempts: int = 2,
     ) -> RepairReport:
+        if type(trusted) is not bool:
+            raise TypeError("trusted must be a boolean")
         if not trusted and getattr(self.runner, "requires_trust", True):
             raise TrustRequiredError("Host repair requires --trust-local-tests")
-        if not task.strip() or not 1 <= max_attempts <= 3:
+        if not isinstance(task, str):
+            raise TypeError("A task string is required")
+        task_clean = task.strip()
+        if not task_clean:
             raise ValueError("A task and 1–3 repair attempts are required")
-        context = build_context(repository, base, head)
+        if len(task.encode("utf-8", errors="replace")) > _MAX_TASK_BYTES:
+            raise ValueError(f"Task exceeds maximum length of {_MAX_TASK_BYTES} bytes")
+        if type(max_attempts) is not int or not (1 <= max_attempts <= _MAX_ATTEMPTS):
+            raise ValueError("A task and 1–3 repair attempts are required")
+        if (
+            type(timeout) is bool
+            or not isinstance(timeout, (int, float))
+            or timeout <= 0
+            or timeout > _MAX_TIMEOUT_SECONDS
+            or not math.isfinite(timeout)
+        ):
+            raise ValueError(f"timeout must be a finite positive number <= {_MAX_TIMEOUT_SECONDS}")
+        if (
+            not isinstance(test_path, str)
+            or not test_path.strip()
+            or test_path.startswith("/")
+            or ".." in Path(test_path).parts
+            or "\0" in test_path
+        ):
+            raise ValueError("test_path must be a valid relative test directory without traversal")
+        if (
+            not isinstance(base, str)
+            or not base.strip()
+            or base.startswith("-")
+            or any(c in base for c in ("\0", "\r", "\n"))
+        ):
+            raise ValueError("base must be a valid non-empty revision string without control characters")
+        if (
+            not isinstance(head, str)
+            or not head.strip()
+            or head.startswith("-")
+            or any(c in head for c in ("\0", "\r", "\n"))
+        ):
+            raise ValueError("head must be a valid non-empty revision string without control characters")
+        if not isinstance(repository, (Path, str)):
+            raise TypeError("repository must be a Path or str")
+        repo_path = Path(repository)
+        if not repo_path.exists() or not repo_path.is_dir():
+            raise ValueError(f"Repository path does not exist or is not a directory: {repository}")
+
+        context = build_context(repo_path, base, head)
         findings = BaselineReviewer().review(context)
         report = RepairReport(
             run_id=self.session.session_id if self.session else str(uuid4()),
@@ -131,19 +230,35 @@ class RepairAgent:
                     detached_worktree(repo, context.head_sha, root / "head") as head_tree,
                     detached_worktree(repo, context.head_sha, root / "repair") as repair_tree,
                 ):
-                    report.base_test = self.runner.run(
-                        base_tree, trusted=trusted, timeout=timeout, test_path=test_path
-                    )
+                    try:
+                        report.base_test = self.runner.run(
+                            base_tree, trusted=trusted, timeout=timeout, test_path=test_path
+                        )
+                    except Exception as exc:  # noqa: BLE001 - runner execution failure fail-closed
+                        report.status = "error"
+                        report.errors.append(f"Base test runner failed: {exc}")
+                        return report
                     self._trace_test("base", report.base_test)
-                    report.head_test = self.runner.run(
-                        head_tree, trusted=trusted, timeout=timeout, test_path=test_path
-                    )
+
+                    try:
+                        report.head_test = self.runner.run(
+                            head_tree, trusted=trusted, timeout=timeout, test_path=test_path
+                        )
+                    except Exception as exc:  # noqa: BLE001 - runner execution failure fail-closed
+                        report.status = "error"
+                        report.errors.append(f"Head test runner failed: {exc}")
+                        return report
                     self._trace_test("head", report.head_test)
+
                     for stage, result in (("Base", report.base_test), ("Head", report.head_test)):
-                        if result.status in {"error", "timeout"}:
+                        if result is None or getattr(result, "status", None) in {"error", "timeout"}:
                             report.status = "error"
+                            err_msg = (
+                                getattr(result, "error_message", None)
+                                or (getattr(result, "stdout", "") or "")[-500:]
+                            ) if result is not None else "Runner returned None"
                             report.errors.append(
-                                f"{stage} test execution failed: {result.error_message or result.stdout[-500:]}"
+                                f"{stage} test execution failed: {err_msg}"
                             )
                             return report
                     if report.base_test.status != "passed":
@@ -187,7 +302,26 @@ class RepairAgent:
                             self.session.trace("repair_attempt", number=number)
                         try:
                             edit = self.model.propose(observation)
-                            attempt.edit = edit
+                            if edit is None:
+                                raise EditRejected("Model returned None instead of a CodeEdit")
+                            if (
+                                not hasattr(edit, "path")
+                                or not hasattr(edit, "old_text")
+                                or not hasattr(edit, "new_text")
+                            ):
+                                raise EditRejected("Model proposal missing required CodeEdit attributes")
+                            if (
+                                not isinstance(edit.path, str)
+                                or not isinstance(edit.old_text, str)
+                                or not isinstance(edit.new_text, str)
+                            ):
+                                raise EditRejected("CodeEdit attributes must be strings")
+                            attempt.edit = edit if isinstance(edit, CodeEdit) else CodeEdit(
+                                path=edit.path,
+                                old_text=edit.old_text,
+                                new_text=edit.new_text,
+                                rationale=getattr(edit, "rationale", "repair") or "repair",
+                            )
                             if self.session:
                                 self.session.trace("repair_edit", number=number, path=edit.path)
                             outcome = tools.execute("edit_file", {
@@ -202,12 +336,17 @@ class RepairAgent:
                             if not outcome.ok:
                                 raise EditRejected(outcome.content.removeprefix("Tool error: "))
                             attempt.patch = _safe_patch(repair_tree, allowed)
-                            attempt.test_result = self.runner.run(
-                                repair_tree, trusted=trusted, timeout=timeout, test_path=test_path
-                            )
+                            try:
+                                attempt.test_result = self.runner.run(
+                                    repair_tree, trusted=trusted, timeout=timeout, test_path=test_path
+                                )
+                            except Exception as run_exc:
+                                raise EditRejected(f"Runner execution failed on repaired tree: {run_exc}") from run_exc
                             self._trace_test("repaired", attempt.test_result)
+                            if attempt.test_result is None:
+                                raise EditRejected("Runner returned None on repaired tree")
                             attempt.patch = _safe_patch(repair_tree, allowed)
-                        except (EditRejected, ModelError, OSError, ValueError) as exc:
+                        except (EditRejected, ModelError, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
                             attempt.error = str(exc)
                             if self.session:
                                 self.session.trace("repair_attempt_error", number=number,
@@ -233,21 +372,43 @@ class RepairAgent:
             return report
         finally:
             report.finished_at = datetime.now(UTC)
-            from selfforge_agent.runtime.pricing import estimate_monetary_cost, sum_monetary_costs
+            try:
+                from selfforge_agent.runtime.pricing import (
+                    estimate_monetary_cost,
+                    sum_monetary_costs,
+                )
 
-            attempts = getattr(self.model, "attempts", None)
-            records = []
-            if isinstance(attempts, list):
-                records = [(att.provider, att.model, att.usage)
-                           for att in attempts[attempt_offset:]]
-            elif isinstance(getattr(self.model, "usage_history", None), list):
-                records = [("custom", self.model.model, usage)
-                           for usage in self.model.usage_history[usage_offset:]]
-            report.total_tokens = sum(usage.total_tokens for _, _, usage in records
-                                      if usage is not None)
-            report.monetary_cost = sum_monetary_costs([
-                estimate_monetary_cost(model, usage, provider=provider)
-                for provider, model, usage in records
-            ])
+                attempts = getattr(self.model, "attempts", None)
+                records = []
+                if isinstance(attempts, list):
+                    for att in attempts[attempt_offset:]:
+                        if att is not None:
+                            provider = getattr(att, "provider", "custom") or "custom"
+                            model_name = getattr(att, "model", "") or ""
+                            usage = getattr(att, "usage", None)
+                            records.append((provider, model_name, usage))
+                elif isinstance(getattr(self.model, "usage_history", None), list):
+                    for usage in self.model.usage_history[usage_offset:]:
+                        records.append(("custom", getattr(self.model, "model", "") or "", usage))
+
+                tokens = 0
+                cost_items = []
+                for provider, model_name, usage in records:
+                    t = getattr(usage, "total_tokens", 0)
+                    if type(t) is int and t > 0:
+                        tokens += t
+                    try:
+                        cost_items.append(estimate_monetary_cost(model_name, usage, provider=provider))
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        cost_items.append(None)
+                report.total_tokens = tokens
+                report.monetary_cost = sum_monetary_costs(cost_items) if cost_items else None
+            except (ValueError, TypeError, KeyError, AttributeError, OSError):
+                report.total_tokens = max(0, getattr(report, "total_tokens", 0))
+                report.monetary_cost = None
+
             if self.session:
-                self.session.record_status(report.status)
+                try:
+                    self.session.record_status(report.status)
+                except (OSError, ValueError, RuntimeError):
+                    pass
