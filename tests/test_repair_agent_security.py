@@ -203,10 +203,15 @@ class TestSafeSourceAndPatchDefense:
             files=[ChangedFile(path="valid.py", status="M", hunks=[])],
         )
 
-        def bad_read_text(*args, **kwargs):
-            raise OSError("I/O error during read")
+        import os
+        real_open = os.open
 
-        monkeypatch.setattr(Path, "read_text", bad_read_text)
+        def bad_open(path, *args, **kwargs):
+            if path == "valid.py" and kwargs.get("dir_fd") is not None:
+                raise OSError("I/O error during read")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", bad_open)
         sources = _editable_files(ctx, worktree)
         assert len(sources) == 0
 
@@ -395,3 +400,45 @@ class TestTelemetryAndStatusAlignment:
         # Should not raise exception
         agent._trace_test("test", None)
         agent._trace_test("test", SimpleNamespace(status="passed"))
+
+
+@pytest.mark.parametrize("alias", ["tests", ".env.private"])
+def test_editable_observation_rejects_directory_aliases(tmp_path, alias):
+    tree = tmp_path / 'tree'
+    tree.mkdir()
+    protected = tree / alias
+    protected.mkdir()
+    (protected / 'secret.py').write_text('private_fixture = 1\n')
+    (tree / 'src').symlink_to(protected, target_is_directory=True)
+    context = PRContext(repository=str(tree), base_sha='a'*40, head_sha='b'*40,
+                        files=[ChangedFile(path='src/secret.py', status='M', hunks=[])])
+    assert _editable_files(context, tree) == []
+
+
+@pytest.mark.parametrize("missing", ['usage', 'rate'])
+def test_repair_withholds_partial_cost_for_unknown_calls(demo_repo, monkeypatch, missing):
+    import json
+
+    from selfforge_agent.providers import ModelAttempt, TokenUsage
+
+    monkeypatch.setenv('SELFFORGE_PRICING_JSON', json.dumps({'deepseek': {'fixture': {
+        'prompt_per_million': 1, 'completion_per_million': 1, 'currency': 'USD',
+        'source': 'fixture', 'as_of': '2026-11-17'}}}))
+    usage = TokenUsage(prompt_tokens=100, completion_tokens=0, total_tokens=100)
+
+    class Model(DummyValidModel):
+        def __init__(self):
+            self.attempts = []
+
+        def propose(self, observation):
+            self.attempts.extend([
+                ModelAttempt(provider='deepseek', model='fixture', status='success', usage=usage),
+                ModelAttempt(provider='deepseek', model='unpriced' if missing == 'rate' else 'fixture',
+                             status='error', usage=usage if missing == 'rate' else None)])
+            return super().propose(observation)
+
+    repo, base, head = demo_repo
+    result = RepairAgent(Model()).run(repo, base, head, 'fix regression', trusted=True, max_attempts=1)
+    assert result.status == 'verified'
+    assert result.total_tokens == (200 if missing == 'rate' else 100)
+    assert result.monetary_cost is None

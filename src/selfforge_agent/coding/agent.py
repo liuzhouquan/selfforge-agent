@@ -19,7 +19,7 @@ from selfforge_agent.core.git_context import build_context
 from selfforge_agent.models import PRContext, TestResult
 from selfforge_agent.review.baseline import BaselineReviewer
 from selfforge_agent.runtime.session import SessionStore
-from selfforge_agent.runtime.tools import EditPolicy, ToolRegistry
+from selfforge_agent.runtime.tools import EditPolicy, ToolRegistry, _protected
 from selfforge_agent.verification.runner import DockerTestRunner, TestRunner, TrustRequiredError
 
 _MAX_SOURCE_BYTES = 16_384
@@ -41,6 +41,7 @@ def _editable_files(context: PRContext, worktree: Path) -> list[SourceFile]:
     except OSError:
         return []
 
+    reader = ToolRegistry(worktree_resolved)
     for change in context.files:
         if not change.path or change.path in seen:
             continue
@@ -49,6 +50,7 @@ def _editable_files(context: PRContext, worktree: Path) -> list[SourceFile]:
             relative.is_absolute()
             or ".." in relative.parts
             or relative.suffix != ".py"
+            or any(_protected(part) for part in relative.parts)
             or "tests" in relative.parts
             or relative.name.startswith("test_")
             or relative.name.endswith("_test.py")
@@ -62,10 +64,7 @@ def _editable_files(context: PRContext, worktree: Path) -> list[SourceFile]:
                 continue
             if path.is_symlink() or not path.is_file():
                 continue
-            st = path.stat()
-            if st.st_size > _MAX_SOURCE_BYTES or st.st_size < 0:
-                continue
-            content = path.read_text(encoding="utf-8")
+            content = reader._read_source(worktree_resolved / relative, _MAX_SOURCE_BYTES)
         except (OSError, UnicodeError, ValueError):
             continue
         seen.add(change.path)
@@ -166,9 +165,9 @@ class RepairAgent:
         if (
             type(timeout) is bool
             or not isinstance(timeout, (int, float))
-            or not math.isfinite(timeout)
             or timeout <= 0
             or timeout > _MAX_TIMEOUT_SECONDS
+            or not math.isfinite(timeout)
         ):
             raise ValueError(f"timeout must be a finite positive number <= {_MAX_TIMEOUT_SECONDS}")
         if (
@@ -395,16 +394,13 @@ class RepairAgent:
                 tokens = 0
                 cost_items = []
                 for provider, model_name, usage in records:
-                    if usage is not None:
-                        t = getattr(usage, "total_tokens", 0)
-                        if isinstance(t, int) and t > 0:
-                            tokens += t
-                        try:
-                            c = estimate_monetary_cost(model_name, usage, provider=provider)
-                            if c is not None:
-                                cost_items.append(c)
-                        except (ValueError, TypeError, KeyError, AttributeError):
-                            pass
+                    t = getattr(usage, "total_tokens", 0)
+                    if type(t) is int and t > 0:
+                        tokens += t
+                    try:
+                        cost_items.append(estimate_monetary_cost(model_name, usage, provider=provider))
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        cost_items.append(None)
                 report.total_tokens = tokens
                 report.monetary_cost = sum_monetary_costs(cost_items) if cost_items else None
             except (ValueError, TypeError, KeyError, AttributeError, OSError):
