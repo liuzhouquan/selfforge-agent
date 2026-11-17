@@ -151,6 +151,7 @@ flowchart LR
 | 41 | [SF-BMDIFF-01](#sf-bmdiff-01) | Merged | Codex（审查整合） | 无 | [PR #98](https://github.com/liuzhouquan/selfforge-agent/pull/98)：基准评测报告解析与差异分析加固：非普通文件与符链路径防御、报告指标Fail-Closed校验与SHA-256规范化、Markdown表格注入防御与结构化导出 |
 | 42 | [SF-JOB-01](#sf-job-01) | Merged | Codex（审查整合） | 无 | [PR #99](https://github.com/liuzhouquan/selfforge-agent/pull/99)：本地异步编码任务管理与取消标记加固：取消标记防符链与FIFO阻塞、作业记录序列化/反序列化校验与状态白名单防御、任务并发上限与工作区锁防泄露加固 |
 | 43 | [SF-FDBK-01](#sf-fdbk-01) | Merged | Codex（审查整合） | 无 | [PR #100](https://github.com/liuzhouquan/selfforge-agent/pull/100)：测试失败反馈与修复反馈安全加固：严格输入类型与有限上限防御、空字节与终端控制字符脱敏、单行折叠防摘要伪造注入、严格长度不变式与有界修复反馈格式化 |
+| 44 | [SF-MODEL-02](#sf-model-02) | In Review | Codex（审查整合） | 无 | [PR #101](https://github.com/liuzhouquan/selfforge-agent/pull/101)：模型适配层与ModelTurn安全加固：严格输入防御与类型守门、取消检查与fallback重置、提供商响应Schema校验防御、空字节与超长reasoning内容防御及ModelTurn不变式保障 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1876,6 +1877,38 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #100 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44008150709（最终组合；各源PR见审查记录） / 80f7f85809494f5d34dba855a691b66403157216
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-MODEL-02
+
+**目标：** 在模型适配层 `selfforge_agent.runtime.model` 与模型轮次数据结构 `ModelTurn` 中贯彻 fail-closed 与防篡改安全隔离原则。增强 `OpenAIChatAdapter` 构造函数对 `providers` 与 `cancelled` 的严格类型守门，支持安全重置 fallback 状态；在 `complete` 入口执行严格的输入类型与范围校验（有限正数超时、非空合规消息序列、消息字典与非空角色、空字节防御、工具定义结构防御）；对模型提供商返回的响应 Schema 实施严格校验防御（非空字典、非空选择列表、字典消息、有效推理文本长度有界、列表结构 `tool_calls`）；在 `ModelTurn` 构造时强制校验所有字段类型不变式。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/model.py` 及专项安全复现测试 `tests/test_openai_chat_adapter_security.py`；保持对 `src/selfforge_agent/runtime/agent.py` 与既有测试完全向后兼容。
+
+**行为：** `OpenAIChatAdapter.__init__` 严格校验 `providers` 必须为非空序列且元素均为 `ProviderConfig` 实例（否则抛出 `TypeError` 或 `ValueError`），上限 50 个；校验 base_url 并防范 provider 名称与模型名称中的空字节 `\0`；校验 `cancelled` 必须为 callable 或 None（否则抛出 `TypeError`）；新增 `reset()` 方法将 fallback `active_index` 安全重置回 0；`complete` 入口严格校验 `timeout` 必须为有效正浮点数/整数且在 `[0.001, 3600.0]` 范围内（布尔值 `bool`、`NaN`、`inf`、非正数或超限均抛出 `TypeError` 或 `ValueError`）；`messages` 严格校验为非空序列且长度不超过 10,000，元素为包含非空有效 `role` 字符串的字典，拒绝角色或内容中的空字节；`tools` 严格校验为元素为字典的序列，工具函数名非空且不超过 64 字符且无空字节；提供商响应解析严格校验为包含非空 `choices` 列表的字典，choice 及 message 为字典，`reasoning_content` 若存在必须为字符串或 None 且长度不超过 1,000,000 字符，`tool_calls` 若存在必须为包含字典元素的列表；`ModelTurn` 在 `__post_init__` 中严格校验 `message` 为字典、`finish_reason` 为字符串、`provider` 为字符串、`model` 为字符串、`usage` 为 `TokenUsage` 或 None。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-MODEL-02-A1 | `OpenAIChatAdapter` 构造与取消校验防御：非序列/空/非 `ProviderConfig` 元素抛出 `TypeError`/`ValueError`，提供商名称/模型拒绝空字节，非 callable 取消检查抛出 `TypeError`，支持 `reset()` 方法安全重置活动提供商索引 | `tests/test_openai_chat_adapter_security.py::TestAdapterInitAndCancelValidation` 全量用例 | E1 |
+| SF-MODEL-02-A2 | `complete` 入口参数严格防御：非数值/bool/NaN/inf/非正/超限超时抛出 `TypeError`/`ValueError`，非序列/空/超限/非字典/无有效角色消息抛出 `TypeError`/`ValueError`，消息与工具拒绝空字节，工具结构严格校验 | `tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation` 全量用例 | E2 |
+| SF-MODEL-02-A3 | 提供商响应 Schema 校验防御：非字典响应/空或非法 choices/非字典 message 拒绝并转为受控错误，`reasoning_content` 非字符串或超限拒绝，非列表/非字典元素 `tool_calls` 拒绝 | `tests/test_openai_chat_adapter_security.py::TestProviderResponseValidation` 全量用例 | E3 |
+| SF-MODEL-02-A4 | `ModelTurn` 不变式与全量回归兼容：`ModelTurn` 构造强制校验所有字段类型，全量既有 model/runtime 测试与端到端调用完全兼容 | `tests/test_openai_chat_adapter_security.py::TestModelTurnInvariants` 全量用例、`tests/test_model_deadline.py`、`tests/test_runtime.py` | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-MODEL-02-A1 | `tests/test_openai_chat_adapter_security.py::TestAdapterInitAndCancelValidation::test_init_rejects_non_sequence_providers`、`tests/test_openai_chat_adapter_security.py::TestAdapterInitAndCancelValidation::test_init_rejects_empty_providers_with_value_error`、`tests/test_openai_chat_adapter_security.py::TestAdapterInitAndCancelValidation::test_init_rejects_elements_not_provider_config`、`tests/test_openai_chat_adapter_security.py::TestAdapterInitAndCancelValidation::test_init_rejects_non_callable_cancelled`、`tests/test_openai_chat_adapter_security.py::TestAdapterInitAndCancelValidation::test_set_cancel_check_rejects_non_callable`、`tests/test_openai_chat_adapter_security.py::TestAdapterInitAndCancelValidation::test_reset_method_restores_active_index_to_zero` | `PYTHONPATH=src pytest -v tests/test_openai_chat_adapter_security.py`；GitHub Actions CI `Unit tests` | `2556342da5e58bc26b01d494879d52505da05bf0`；passed；CI [Run #44037665708](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44037665708) |
+| E2 | SF-MODEL-02-A2 | `tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_non_numeric_timeout`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_non_positive_or_non_finite_or_excessive_timeout`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_non_sequence_messages`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_empty_messages`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_non_dict_message_elements`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_missing_or_invalid_role`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_null_bytes_in_messages`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_non_sequence_tools`、`tests/test_openai_chat_adapter_security.py::TestAdapterCompleteEntryValidation::test_complete_rejects_non_dict_tool_elements` | `PYTHONPATH=src pytest -v tests/test_openai_chat_adapter_security.py`；GitHub Actions CI `Unit tests` | `2556342da5e58bc26b01d494879d52505da05bf0`；passed；CI [Run #44037665708](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44037665708) |
+| E3 | SF-MODEL-02-A3 | `tests/test_openai_chat_adapter_security.py::TestProviderResponseValidation::test_complete_rejects_empty_choices_list`、`tests/test_openai_chat_adapter_security.py::TestProviderResponseValidation::test_complete_rejects_non_dict_choice_element`、`tests/test_openai_chat_adapter_security.py::TestProviderResponseValidation::test_complete_rejects_non_dict_message_in_choice`、`tests/test_openai_chat_adapter_security.py::TestProviderResponseValidation::test_complete_rejects_non_list_tool_calls`、`tests/test_openai_chat_adapter_security.py::TestProviderResponseValidation::test_complete_rejects_malformed_tool_call_item`、`tests/test_openai_chat_adapter_security.py::TestProviderResponseValidation::test_complete_rejects_excessive_reasoning_content` | `PYTHONPATH=src pytest -v tests/test_openai_chat_adapter_security.py`；GitHub Actions CI `Unit tests` | `2556342da5e58bc26b01d494879d52505da05bf0`；passed；CI [Run #44037665708](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44037665708) |
+| E4 | SF-MODEL-02-A4 | `tests/test_openai_chat_adapter_security.py::TestModelTurnInvariants::test_model_turn_rejects_non_dict_message`、`tests/test_openai_chat_adapter_security.py::TestModelTurnInvariants::test_model_turn_rejects_non_str_metadata_fields`、`tests/test_openai_chat_adapter_security.py::TestModelTurnInvariants::test_model_turn_rejects_invalid_usage_type`、`tests/test_openai_chat_adapter_security.py::TestModelTurnInvariants::test_model_turn_valid_instantiation`、`tests/test_model_deadline.py::test_fallback_passes_only_remaining_time_to_next_provider`、`tests/test_runtime.py::test_native_model_adapter_falls_back_and_keeps_tool_call`、`tests/test_runtime.py::test_deepseek_reasoning_survives_tool_round_trip_and_session_resume` | `PYTHONPATH=src pytest -v tests/test_openai_chat_adapter_security.py tests/test_model_deadline.py tests/test_runtime.py`；GitHub Actions CI `Unit tests` | `2556342da5e58bc26b01d494879d52505da05bf0`；passed；CI [Run #44037665708](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44037665708) |
+
+```text
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：015dc6a75f0671a3537edc7706937a0826128bf9 / feat/sf-model-02 (worktree: selfforge-sf-model-02) / 源码 2556342da5e58bc26b01d494879d52505da05bf0
+已完成验收与证据 ID：SF-MODEL-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交源码；本地专项 66 passed、相关单元回归 103 passed 通过；Ruff passed；CI 全流程（Lint、SDD、单元测试、Docker集成测试）已在 Run #44037665708 完整通过（8m28s）
+PR / 准确 head CI / merge SHA（有则填）：PR #101 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44037665708 / 待合入
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #101 审查与合入。
 ```
 
 ## 5. 验收追踪与执行记录格式
