@@ -182,3 +182,28 @@ class TestKeywordAndDockerRunnerHardening:
         for bad_img in ("", "   ", "image with space", "image\x00null", "image\ninjection", "a" * 257):
             with pytest.raises(ValueError, match="image|Docker image"):
                 DockerTestRunner(image=bad_img)
+
+
+def test_docker_runner_accepts_immutable_named_digest():
+    image = "registry.example/team/python@sha256:" + "a" * 64
+    assert DockerTestRunner(image=image).image == image
+
+
+def test_docker_runner_rejects_leading_option_at_construction():
+    with pytest.raises(ValueError, match="image"):
+        DockerTestRunner(image="--privileged")
+
+
+@pytest.mark.parametrize("runner_class", [TestRunner, DockerTestRunner])
+@pytest.mark.parametrize("timeout", [10**400, True, "60"], ids=["huge_integer", "boolean", "string"])
+def test_runner_rejects_invalid_timeout_before_execution(tmp_path, monkeypatch, runner_class, timeout):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_ok.py").write_text("def test_ok(): pass\n")
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid timeout reached process or Docker construction")
+
+    monkeypatch.setattr(runner_mod.subprocess, "Popen", unexpected)
+    monkeypatch.setattr(runner_mod, "DockerExecutor", unexpected)
+    with pytest.raises(ValueError, match="timeout"):
+        runner_class().run(tmp_path, trusted=True, timeout=timeout)

@@ -22,7 +22,7 @@ PROTECTED_TARGETS = {
     ".npmrc", ".pypirc", ".netrc",
 }
 
-_IMAGE_PATTERN = re.compile(r"^[a-zA-Z0-9_.:/-]{1,256}\Z")
+_IMAGE_PATTERN = re.compile(r"[a-zA-Z0-9_.:/-]+(?:@sha256:[a-fA-F0-9]{64})?\Z")
 
 
 def _is_protected(name: str) -> bool:
@@ -66,7 +66,8 @@ def _result_status(returncode: int | None, timed_out: bool, counts: dict[str, in
 
 
 def _test_target(repository: Path, test_path: str, timeout: float) -> tuple[Path, Path]:
-    if not math.isfinite(timeout) or timeout <= 0 or timeout > 3600:
+    if (type(timeout) not in (int, float) or not 0 < timeout <= 3600
+            or not math.isfinite(timeout)):
         raise ValueError("timeout must be a finite positive number not exceeding 3600 seconds")
     if "\x00" in str(repository):
         raise ValueError("repository must not contain null bytes")
@@ -207,7 +208,8 @@ class DockerTestRunner:
             or any(char.isspace() or ord(char) < 32 for char in image)
             or "\x00" in image
             or len(image) > 256
-            or not _IMAGE_PATTERN.match(image)
+            or image.startswith("-")
+            or not _IMAGE_PATTERN.fullmatch(image)
         ):
             raise ValueError(f"Invalid Docker image name: {image!r}")
         self.image = image
