@@ -113,17 +113,19 @@ def _run_code(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         approval_hook = None
         if getattr(args, "interactive", False):
             def cli_approval_hook(name: str, arguments: dict) -> bool:
-                print(f"\n[APPROVAL REQUIRED] Tool: {name}")
+                stream = sys.stderr if getattr(args, "json", False) else sys.stdout
+                print(f"\n[APPROVAL REQUIRED] Tool: {name}", file=stream)
                 for k, v in arguments.items():
                     val_str = str(v)
                     if len(val_str) > 120:
                         val_str = val_str[:117] + "..."
-                    print(f"  {k}: {val_str}")
+                    print(f"  {k}: {val_str}", file=stream)
                 try:
-                    choice = input(f"Execute {name}? [y/N]: ").strip().lower()
+                    print(f"Execute {name}? [y/N]: ", end="", file=stream, flush=True)
+                    choice = input().strip().lower()
                     return choice in {"y", "yes"}
                 except (EOFError, KeyboardInterrupt):
-                    print("\nAction denied by operator.")
+                    print("\nAction denied by operator.", file=stream)
                     return False
             approval_hook = cli_approval_hook
 
