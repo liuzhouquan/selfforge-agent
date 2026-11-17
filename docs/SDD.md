@@ -150,6 +150,7 @@ flowchart LR
 | 40 | [SF-PROC-01](#sf-proc-01) | In Review | Antigravity | 无 | [PR #97](https://github.com/liuzhouquan/selfforge-agent/pull/97)：有界原生子进程执行安全加固、参数与目录防御及进程组生命周期管理 |
 | 41 | [SF-BMDIFF-01](#sf-bmdiff-01) | In Review | Codex（审查整合） | 无 | [PR #98](https://github.com/liuzhouquan/selfforge-agent/pull/98)：基准评测报告解析与差异分析加固：非普通文件与符链路径防御、报告指标Fail-Closed校验与SHA-256规范化、Markdown表格注入防御与结构化导出 |
 | 42 | [SF-JOB-01](#sf-job-01) | In Review | Codex（审查整合） | 无 | [PR #99](https://github.com/liuzhouquan/selfforge-agent/pull/99)：本地异步编码任务管理与取消标记加固：取消标记防符链与FIFO阻塞、作业记录序列化/反序列化校验与状态白名单防御、任务并发上限与工作区锁防泄露加固 |
+| 43 | [SF-FDBK-01](#sf-fdbk-01) | In Review | Codex（审查整合） | 无 | [PR #100](https://github.com/liuzhouquan/selfforge-agent/pull/100)：测试失败反馈与修复反馈安全加固：严格输入类型与有限上限防御、空字节与终端控制字符脱敏、单行折叠防摘要伪造注入、严格长度不变式与有界修复反馈格式化 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1763,6 +1764,38 @@ Owner / 状态：Codex（审查整合） / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #99 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43994435802 / 待合入
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待 PR #99 审查与合入。
+```
+
+### SF-FDBK-01
+
+**目标：** 在验证模块 `selfforge_agent.verification.feedback` 中贯彻 fail-closed 与无特权安全隔离原则。增强 `failure_feedback` 针对非受控类型与越界上限的严格校验防御，彻底消除单行折叠缺失导致的多行注入与摘要伪造风险，全面脱敏 ANSI 转义序列、回车换行与控制字符并拒绝空字节，严格保证输出文本绝不超过 `max_length` 设定上限；新增 `format_repair_feedback` 提供受控、有界的修复尝试诊断格式化。
+
+**范围/入口：** 改动 `src/selfforge_agent/verification/feedback.py` 及专项安全复现测试 `tests/test_feedback_security.py`；保持对 `src/selfforge_agent/cli.py` 与 `src/selfforge_agent/runtime/tools.py` 现有调用契约的完全向后兼容。
+
+**行为：** `failure_feedback` 严格校验输入 `result` 必须为 `TestResult` 实例（否则抛出 `TypeError`），`max_length` 必须为有效正整数且满足 `100 <= max_length <= 100_000`（否则抛出 `TypeError` 或 `ValueError`）；严格校验 `failure_details` 列表元素必须为 `TestFailure` 实例，遇到空列表安全返回空字符串 `""`；对 `test_id`、`kind`、`message`、`detail` 严格校验拒绝空字节 `\0`（抛出 `ValueError`），脱敏 ANSI 控制字符与回车换行（`\r`），将摘要行 `test_id` 与 `message` 中的换行统一折叠为空格，阻断多行摘要行伪造攻击；规范化 `kind` 属于 `{"failure", "error"}`；严格保证返回值长度 `<= max_length`，当摘要过长时安全追加截断标记 `[failures summary truncated]`，当无详细信息或详情空间不足时安全略去详情标题；`format_repair_feedback` 严格校验 `attempt` 为 `RepairAttempt` 实例，校验 `max_length` 在 50 到 50,000 之间，对 `attempt.error` 及 `attempt.test_result` 统一执行空字节防御与 ANSI 脱敏，严格保证有界输出。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-FDBK-01-A1 | `failure_feedback` 输入防御：非 `TestResult` 抛出 `TypeError`，非整数或越界 `max_length` 抛出 `TypeError`/`ValueError`，空字节 `\0` 抛出 `ValueError`，非 `TestFailure` 元素抛出 `TypeError`，空列表安全返回 `""` | `tests/test_feedback_security.py::TestFeedbackInputValidation` 全量用例 | E1 |
+| SF-FDBK-01-A2 | `failure_feedback` 脱敏与防注入：脱敏 ANSI 转义序列与回车换行，单行折叠换行防止伪造摘要行，规范化 `kind`，保留中文与合规 Unicode | `tests/test_feedback_security.py::TestFeedbackSanitization` 全量用例 | E2 |
+| SF-FDBK-01-A3 | `failure_feedback` 严格长度与截断不变式：任意超长用例或收紧预算下 `len(output) <= max_length` 恒成立，支持摘要截断标记与详情截断标记，无详情时不生成空标题 | `tests/test_feedback_security.py::TestFeedbackLengthAndTruncationInvariants` 全量用例 | E3 |
+| SF-FDBK-01-A4 | `format_repair_feedback` 修复反馈与兼容回归：严格类型与长度校验、空字节防御与 ANSI 脱敏，全量既有测试及 CLI/Tools 消费方完全兼容通过 | `tests/test_feedback_security.py::TestRepairFeedbackFormatting`、`tests/test_test_diagnostics.py`、`tests/test_runtime.py` | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-FDBK-01-A1 | `tests/test_feedback_security.py::TestFeedbackInputValidation::test_failure_feedback_rejects_none_and_invalid_types`、`tests/test_feedback_security.py::TestFeedbackInputValidation::test_failure_feedback_rejects_non_int_max_length`、`tests/test_feedback_security.py::TestFeedbackInputValidation::test_failure_feedback_rejects_out_of_range_max_length`、`tests/test_feedback_security.py::TestFeedbackInputValidation::test_failure_feedback_rejects_null_bytes`、`tests/test_feedback_security.py::TestFeedbackInputValidation::test_failure_feedback_rejects_non_failure_in_failure_details`、`tests/test_feedback_security.py::TestFeedbackInputValidation::test_failure_feedback_empty_failures_returns_empty_string` | `PYTHONPATH=src pytest -v tests/test_feedback_security.py`；GitHub Actions CI `Unit tests` | `1f2b9511e0516d60c5fd1282d5fa601e18b74840`；passed；CI [Run #43999666738](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43999666738) |
+| E2 | SF-FDBK-01-A2 | `tests/test_feedback_security.py::TestFeedbackSanitization::test_strips_ansi_escape_sequences_and_carriage_returns`、`tests/test_feedback_security.py::TestFeedbackSanitization::test_preserves_unicode_and_chinese_characters`、`tests/test_feedback_security.py::TestFeedbackSanitization::test_summary_collapses_newlines_to_prevent_fake_failure_injection`、`tests/test_feedback_security.py::TestFeedbackSanitization::test_kind_normalization_to_failure_or_error` | `PYTHONPATH=src pytest -v tests/test_feedback_security.py`；GitHub Actions CI `Unit tests` | `1f2b9511e0516d60c5fd1282d5fa601e18b74840`；passed；CI [Run #43999666738](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43999666738) |
+| E3 | SF-FDBK-01-A3 | `tests/test_feedback_security.py::TestFeedbackLengthAndTruncationInvariants::test_strict_max_length_guarantee_with_massive_failures`、`tests/test_feedback_security.py::TestFeedbackLengthAndTruncationInvariants::test_strict_max_length_guarantee_with_custom_tight_budget`、`tests/test_feedback_security.py::TestFeedbackLengthAndTruncationInvariants::test_omits_detail_heading_when_no_detail_available_or_empty`、`tests/test_feedback_security.py::TestFeedbackLengthAndTruncationInvariants::test_detail_truncated_marker_only_when_actually_truncated` | `PYTHONPATH=src pytest -v tests/test_feedback_security.py`；GitHub Actions CI `Unit tests` | `1f2b9511e0516d60c5fd1282d5fa601e18b74840`；passed；CI [Run #43999666738](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43999666738) |
+| E4 | SF-FDBK-01-A4 | `tests/test_feedback_security.py::TestRepairFeedbackFormatting::test_format_repair_feedback_rejects_none_and_invalid_types`、`tests/test_feedback_security.py::TestRepairFeedbackFormatting::test_format_repair_feedback_rejects_invalid_max_length`、`tests/test_feedback_security.py::TestRepairFeedbackFormatting::test_format_repair_feedback_rejects_null_bytes`、`tests/test_feedback_security.py::TestRepairFeedbackFormatting::test_format_repair_feedback_from_error`、`tests/test_feedback_security.py::TestRepairFeedbackFormatting::test_format_repair_feedback_from_passed_test`、`tests/test_feedback_security.py::TestRepairFeedbackFormatting::test_format_repair_feedback_from_failed_test_with_details`、`tests/test_feedback_security.py::TestRepairFeedbackFormatting::test_format_repair_feedback_from_failed_test_without_details`、`tests/test_test_diagnostics.py::test_failed_test_feedback_drives_edit_retest_without_changing_assertions`、`tests/test_runtime.py::test_objective_evaluation_reports_real_test_results` | `PYTHONPATH=src pytest -v tests/test_feedback_security.py tests/test_test_diagnostics.py tests/test_runtime.py`；GitHub Actions CI `Unit tests` | `1f2b9511e0516d60c5fd1282d5fa601e18b74840`；passed；CI [Run #43999666738](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43999666738) |
+
+```text
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：c5cbeffe332964d08b712036919873aeb1e13f46 / feat/sf-fdbk-01 (worktree: selfforge-sf-fdbk-01) / 源码 1f2b9511e0516d60c5fd1282d5fa601e18b74840
+已完成验收与证据 ID：SF-FDBK-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交源码；本地专项 38 passed、相关全量单元回归通过；Ruff passed；Docker 集成由 CI 完整执行通过（8m2s）
+PR / 准确 head CI / merge SHA（有则填）：PR #100 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/43999666738 / 待合入
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #100 审查与合入。
 ```
 
 ## 5. 验收追踪与执行记录格式
