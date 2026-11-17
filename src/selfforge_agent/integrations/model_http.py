@@ -10,6 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+MAX_HTTP_TIMEOUT = 300
+
 
 class ProviderHTTPError(ValueError):
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
@@ -102,7 +104,7 @@ def request_json(
     _validate_model_url(url)
     _validate_api_key(api_key)
     if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
-            or timeout <= 0 or timeout > 300 or not math.isfinite(timeout)):
+            or timeout <= 0 or timeout > MAX_HTTP_TIMEOUT or not math.isfinite(timeout)):
         raise ValueError("timeout must be a finite positive number not exceeding 300 seconds")
     if (isinstance(max_bytes, bool) or not isinstance(max_bytes, int)
             or max_bytes <= 0 or max_bytes > 16 * 1024 * 1024):
