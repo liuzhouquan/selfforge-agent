@@ -358,3 +358,107 @@ class TestCliEvalIntegrationAndSecurity:
         data = json.loads(out_file.read_text(encoding="utf-8"))
         assert data["tasks"] == 2
         assert data["successes"] == 2
+
+
+def _scripted_model(program, *, run_tests=False):
+    import json
+    import shlex
+    import sys
+
+    from selfforge_agent.runtime.model import ModelTurn
+
+    class Model:
+        step = 0
+
+        def complete(self, _messages, _tools, _timeout):
+            self.step += 1
+            if self.step == 1:
+                name, arguments = 'bash', {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(program)}'}
+            elif run_tests and self.step == 2:
+                name, arguments = 'run_tests', {'path': 'tests'}
+            else:
+                return ModelTurn({'role': 'assistant', 'content': 'fixture done'}, 'stop', 'fixture', 'script', None)
+            return ModelTurn({'role': 'assistant', 'tool_calls': [{'id': f'c{self.step}', 'type': 'function',
+                'function': {'name': name, 'arguments': json.dumps(arguments)}}]}, 'tool_calls', 'fixture', 'script', None)
+
+    return Model()
+
+
+def test_evaluation_cannot_verify_a_wrong_solution_by_weakening_tests():
+    program = "from pathlib import Path; Path('app.py').write_text('def add(a,b): return 0\\n'); Path('tests/test_app.py').write_text('def test_fake(): assert True\\n')"
+    result = evaluate(lambda _case: _scripted_model(program, run_tests=True), cases=[CASES[0]])
+    assert result['results'][0]['status'] == 'completed'
+    assert result['successes'] == 0
+    assert result['results'][0]['test_exit_code'] != 0
+
+
+def test_invalid_source_encoding_fails_one_case_without_aborting_the_suite():
+    def factory(case):
+        return _scripted_model("from pathlib import Path; Path('app.py').write_bytes(bytes([255]))") if case.name == 'addition' else OfflineFixtureModel(case)
+
+    result = evaluate(factory, cases=[CASES[0], CASES[1]])
+    assert result['tasks'] == 2
+    assert result['results'][0]['success'] is False
+    assert result['results'][1]['success'] is True
+
+
+@pytest.mark.parametrize('stage', ['factory', 'model'])
+def test_public_evaluation_reports_only_sanitized_error_categories(stage):
+    import json
+
+    secret = 'Bearer fixture-secret /private/session/path'
+
+    class BrokenModel:
+        def complete(self, *_a, **_k):
+            raise RuntimeError(secret)
+
+    def factory(_case):
+        if stage == 'factory':
+            raise RuntimeError(secret)
+        return BrokenModel()
+
+    result = evaluate(factory, cases=[CASES[0]])
+    assert result['successes'] == 0
+    assert 'fixture-secret' not in json.dumps(result)
+    assert '/private/session' not in json.dumps(result)
+
+
+def test_evaluation_requires_positive_junit_evidence_for_skipped_tests(monkeypatch):
+    from selfforge_agent.runtime.agent import AgentResult, CodingAgent
+
+    case = EvalCase('skipped', 'VALUE = 1\n', 'import pytest\ndef test_skip(): pytest.skip("fixture")\n', 'fix VALUE', '1', '2')
+
+    def pretend_completed(self, _task):
+        (self.tools.root / 'app.py').write_text('VALUE = 2\n')
+        return AgentResult(self.session.session_id, 'completed', 'fixture', 1, 0)
+
+    monkeypatch.setattr(CodingAgent, 'run', pretend_completed)
+    result = evaluate(OfflineFixtureModel, cases=[case])
+    assert result['successes'] == 0
+
+
+def test_preset_cases_cannot_be_modified_in_place():
+    original = tuple(CASES)
+    try:
+        with pytest.raises(TypeError):
+            CASES[0] = CASES[1]
+    finally:
+        if isinstance(CASES, list):
+            CASES[:] = original
+
+
+@pytest.mark.parametrize('name', [' addition', 'addition ', ' '*200+'addition'], ids=['leading', 'trailing', 'raw_overflow'])
+def test_case_names_are_validated_without_hiding_invalid_whitespace(name):
+    with pytest.raises(ValueError):
+        EvalCase(name, 'VALUE = 1\n', 'def test_value(): assert True\n', 'fixture', '1', '2')
+
+
+@pytest.mark.parametrize('parameter', ['time_budget', 'test_timeout'])
+def test_huge_evaluation_budgets_are_controlled(parameter):
+    with pytest.raises(ValueError):
+        evaluate(OfflineFixtureModel, cases=[], **{parameter: 10**1000})
+
+
+def test_evaluation_step_limit_matches_the_shared_agent_contract():
+    with pytest.raises(ValueError):
+        evaluate(OfflineFixtureModel, cases=[], max_steps=101)

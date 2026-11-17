@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import math
 import re
-import shlex
-import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
@@ -18,6 +16,7 @@ from selfforge_agent.runtime.execution import HostExecutor
 from selfforge_agent.runtime.model import ChatModel, ModelTurn
 from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.tools import ToolRegistry
+from selfforge_agent.verification.runner import TestRunner
 
 MAX_CODE_CHARS = 1024 * 1024  # 1 MiB limit for source/test code
 MAX_NAME_CHARS = 128
@@ -54,7 +53,7 @@ class EvalCase:
             raise ValueError("EvalCase name must not be blank")
         if len(clean_name) > MAX_NAME_CHARS:
             raise ValueError(f"EvalCase name exceeds maximum length of {MAX_NAME_CHARS} chars")
-        if not _NAME_RE.fullmatch(clean_name):
+        if not _NAME_RE.fullmatch(self.name):
             raise ValueError(f"EvalCase name contains invalid characters: {clean_name!r}")
         if "/" in self.name or "\\" in self.name:
             raise ValueError(f"EvalCase name must not contain directory slashes: {self.name!r}")
@@ -75,7 +74,7 @@ class EvalCase:
             raise ValueError("EvalCase old_text must be present in source code")
 
 
-CASES: list[EvalCase] = [
+CASES: tuple[EvalCase, ...] = (
     EvalCase(
         "addition",
         "def add(a, b):\n    return a - b\n",
@@ -93,7 +92,7 @@ CASES: list[EvalCase] = [
         "return name.upper()",
         "return name.strip().lower()",
     ),
-]
+)
 
 
 class OfflineFixtureModel:
@@ -191,15 +190,15 @@ def evaluate(
         raise TypeError(f"model_factory must be callable, got {type(model_factory).__name__}")
     if not isinstance(max_steps, int) or isinstance(max_steps, bool):
         raise TypeError("max_steps must be an integer")
-    if not (1 <= max_steps <= 10_000):
-        raise ValueError(f"max_steps must be between 1 and 10000, got {max_steps}")
+    if not (1 <= max_steps <= 100):
+        raise ValueError(f"max_steps must be between 1 and 100, got {max_steps}")
     if not isinstance(time_budget, (int, float)) or isinstance(time_budget, bool):
         raise TypeError("time_budget must be a number")
-    if not math.isfinite(time_budget) or not (0.1 <= time_budget <= 86_400.0):
+    if not (0.1 <= time_budget <= 86_400.0) or not math.isfinite(time_budget):
         raise ValueError(f"time_budget must be a finite number between 0.1 and 86400, got {time_budget}")
     if not isinstance(test_timeout, (int, float)) or isinstance(test_timeout, bool):
         raise TypeError("test_timeout must be a number")
-    if not math.isfinite(test_timeout) or not (0.1 <= test_timeout <= 3600.0):
+    if not (0.1 <= test_timeout <= 3600.0) or not math.isfinite(test_timeout):
         raise ValueError(f"test_timeout must be a finite number between 0.1 and 3600, got {test_timeout}")
 
     if cases is None:
@@ -210,7 +209,7 @@ def evaluate(
         for idx, item in enumerate(cases):
             if not isinstance(item, EvalCase):
                 raise TypeError(f"Case at index {idx} must be an EvalCase instance, got {type(item).__name__}")
-        target_cases = cases
+        target_cases = tuple(cases)
 
     if not target_cases:
         return {
@@ -232,6 +231,7 @@ def evaluate(
 
             executor = HostExecutor(root, trusted=True)
             session = SessionStore(root)
+            tools = ToolRegistry(root, executor)
 
             try:
                 model = model_factory(case)
@@ -242,7 +242,7 @@ def evaluate(
                     status="error",
                     changed=False,
                     test_exit_code=None,
-                    reason=f"model_factory_error:{type(exc).__name__}: {exc}",
+                    reason=f"model_factory_error:{type(exc).__name__}",
                     steps=0,
                     tools=[],
                 ))
@@ -254,7 +254,7 @@ def evaluate(
             try:
                 agent = CodingAgent(
                     model,
-                    ToolRegistry(root, executor),
+                    tools,
                     session,
                     max_steps=max_steps,
                     time_budget=time_budget,
@@ -262,42 +262,51 @@ def evaluate(
                 result = agent.run(case.task)
                 steps = result.steps
                 status = result.status
-                agent_error = result.error
+                agent_error = "agent_failed" if result.error else None
             except (RuntimeError, TypeError, ValueError, OSError, TimeoutError, AttributeError, KeyError) as exc:
                 status = "error"
-                agent_error = f"agent_error:{type(exc).__name__}: {exc}"
+                agent_error = f"agent_error:{type(exc).__name__}"
 
             test_exit_code: int | None = None
-            try:
-                test_cmd = f"{shlex.quote(sys.executable)} -m pytest tests -q"
-                test = executor.run(test_cmd, test_timeout)
-                test_exit_code = test.returncode
-            except (RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
-                test_exit_code = None
-                agent_error = (agent_error or "") + f"; test_execution_error:{type(exc).__name__}"
-
+            verified = False
             changed = False
             try:
-                if source.is_file() and not source.is_symlink():
-                    changed = source.read_text(encoding="utf-8") != case.source
-                else:
-                    agent_error = (agent_error or "") + "; source_file_missing_or_symlink"
-            except OSError as exc:
-                agent_error = (agent_error or "") + f"; source_read_error:{type(exc).__name__}"
+                content = tools._read_source(source, MAX_CODE_CHARS * 4)
+                if len(content) > MAX_CODE_CHARS:
+                    raise ValueError("Source exceeds case limit")
+                changed = content != case.source
+                # This demo has one supplied source file. Rebuild its original
+                # tests outside the Agent tree; do not carry over pytest plugins,
+                # modified tests, configuration or generated bytecode.
+                with tempfile.TemporaryDirectory(prefix="selfforge-eval-verify-", ignore_cleanup_errors=True) as check_dir:
+                    check_root = Path(check_dir)
+                    (check_root / "app.py").write_text(content, encoding="utf-8")
+                    (check_root / "tests").mkdir()
+                    (check_root / "tests" / "test_app.py").write_text(case.test, encoding="utf-8")
+                    verification = TestRunner().run(check_root, trusted=True,
+                                                    timeout=test_timeout, test_path="tests")
+                test_exit_code = verification.exit_code
+                verified = (verification.status == "passed" and test_exit_code == 0
+                            and verification.passed > 0 and verification.failed == 0
+                            and verification.errors == 0)
+                if not verified:
+                    agent_error = agent_error or "independent_verification_failed"
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                agent_error = agent_error or f"verification_error:{type(exc).__name__}"
 
-            success = changed and status == "completed" and test_exit_code == 0
+            success = changed and status == "completed" and verified
             if success:
                 reason = "passed"
             else:
                 reason = agent_error or f"status={status}; changed={changed}; test_exit={test_exit_code}"
 
-            tools: list[str] = []
+            used_tools: list[str] = []
             try:
                 for event in session.trace_events():
                     if isinstance(event, dict) and event.get("event") == "tool":
                         name = event.get("name")
                         if isinstance(name, str) and name:
-                            tools.append(name)
+                            used_tools.append(name)
             except (OSError, RuntimeError, TypeError, ValueError, KeyError):
                 pass
 
@@ -309,7 +318,7 @@ def evaluate(
                 test_exit_code=test_exit_code,
                 reason=reason,
                 steps=max(0, steps),
-                tools=tools,
+                tools=used_tools,
             ))
 
     successes = sum(1 for item in outcomes if item.success)
