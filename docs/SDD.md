@@ -151,6 +151,7 @@ flowchart LR
 | 41 | [SF-BMDIFF-01](#sf-bmdiff-01) | Merged | Codex（审查整合） | 无 | [PR #98](https://github.com/liuzhouquan/selfforge-agent/pull/98)：基准评测报告解析与差异分析加固：非普通文件与符链路径防御、报告指标Fail-Closed校验与SHA-256规范化、Markdown表格注入防御与结构化导出 |
 | 42 | [SF-JOB-01](#sf-job-01) | Merged | Codex（审查整合） | 无 | [PR #99](https://github.com/liuzhouquan/selfforge-agent/pull/99)：本地异步编码任务管理与取消标记加固：取消标记防符链与FIFO阻塞、作业记录序列化/反序列化校验与状态白名单防御、任务并发上限与工作区锁防泄露加固 |
 | 43 | [SF-FDBK-01](#sf-fdbk-01) | Merged | Codex（审查整合） | 无 | [PR #100](https://github.com/liuzhouquan/selfforge-agent/pull/100)：测试失败反馈与修复反馈安全加固：严格输入类型与有限上限防御、空字节与终端控制字符脱敏、单行折叠防摘要伪造注入、严格长度不变式与有界修复反馈格式化 |
+| 44 | [SF-EVAL-11](#sf-eval-11) | In Review | Codex（审查整合） | 无 | [PR #103](https://github.com/liuzhouquan/selfforge-agent/pull/103)：评测执行器参数强类型与数值边界防御、EvalCase 不变式校验、OfflineFixtureModel 协议守卫与异常受控收敛、EvalOutcome 结果真实性断言与 CLI eval 安全导出 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1876,6 +1877,38 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #100 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44008150709（最终组合；各源PR见审查记录） / 80f7f85809494f5d34dba855a691b66403157216
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-EVAL-11
+
+**目标：** 在微型客观编码任务评测执行器（`evaluation.py`）中贯彻 fail-closed 与防篡改隔离准则。在 `evaluate` 入口增加参数强类型与数值边界校验（`model_factory` callable 检查、`max_steps` 1..10000、`time_budget` 0.1..86400、`test_timeout` 0.1..3600 及 `cases` 序列类型），并防范空用例集导致的 `ZeroDivisionError` 除零异常；在 `EvalCase` 中引入结构不变式与不可信输入防御，校验用例名称格式（字母/数字/下划线/中划线非空标识符）、长度限制、杜绝空字节 `\x00` 与路径穿越，校验代码边界并强制校验 `old_text in source` 保证基准参考有效性；在 `OfflineFixtureModel` 中强化入参校验；在 `evaluate` 隔离执行过程中使用 `ignore_cleanup_errors=True` 释放临时目录，全面受控捕获模型构造异常、智能体运行异常及源码文件被篡改/删除等异常，映射为单项失败报告，杜绝未受控异常导致评测套件中断；在 `EvalOutcome` 中强制断言成功真实性（`success=True` 必须要求 `status=="completed" and changed and test_exit_code==0`，严禁虚报成功），并在 CLI `eval` 中接入 `--test-timeout` 与 `--output` 安全非软链接原子写盘导出。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/runtime/evaluation.py`、`src/selfforge_agent/cli.py` 及专项测试 `tests/test_evaluation_security.py`；不破坏既有评测指标、清单格式与测试执行流程。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-EVAL-11-A1 | `evaluate` 入口参数强类型、数值边界与除零防御：对 `model_factory`、`max_steps`、`time_budget`、`test_timeout` 与 `cases` 进行严格防御性校验；空用例集受控返回安全空报告，严格规避 `ZeroDivisionError` | `tests/test_evaluation_security.py` 入口参数强类型、数值边界与空用例除零防御测试 | E1 |
+| SF-EVAL-11-A2 | `EvalCase` 结构不变式与不可信输入防御：严格校验用例名称格式、长度上限、杜绝空字节与路径穿越；校验代码边界并强制要求 `old_text in source`；`CASES` 预设集合不可变保护 | `tests/test_evaluation_security.py` 用例结构不变式、非法字符防御与基准参考有效性测试 | E2 |
+| SF-EVAL-11-A3 | `OfflineFixtureModel` 协议守卫与 `evaluate` 隔离执行异常受控收敛：`OfflineFixtureModel` 校验构造与调用参数；`evaluate` 隔离执行使用 `ignore_cleanup_errors=True`，全面受控捕获模型构造异常、智能体执行异常及源码被篡改/删除异常，受控收敛为单项失败报告，绝不泄露未受控异常 | `tests/test_evaluation_security.py` 协议守卫、隔离执行与异常收敛测试 | E3 |
+| SF-EVAL-11-A4 | `EvalOutcome` 结果不变式校验与 CLI `eval` 安全落盘与规范化：严格校验结果状态、步数与工具追踪类型；强制断言成功真实性（要求 completed、changed 且 test_exit_code 为 0）；CLI `eval` 接入安全参数校验与安全非软链接原子落盘导出 | `tests/test_evaluation_security.py` 结果不变式、虚假成功拦截与 CLI 安全导出测试 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-EVAL-11-A1 | `tests/test_evaluation_security.py::TestEvaluateEntryValidation::test_evaluate_rejects_non_callable_factory`、`tests/test_evaluation_security.py::TestEvaluateEntryValidation::test_evaluate_rejects_invalid_max_steps`、`tests/test_evaluation_security.py::TestEvaluateEntryValidation::test_evaluate_rejects_invalid_time_budget`、`tests/test_evaluation_security.py::TestEvaluateEntryValidation::test_evaluate_rejects_invalid_test_timeout`、`tests/test_evaluation_security.py::TestEvaluateEntryValidation::test_evaluate_rejects_invalid_cases_collection`、`tests/test_evaluation_security.py::TestEvaluateEntryValidation::test_evaluate_handles_empty_cases_without_zero_division` | 本地 `pytest -q tests/test_evaluation_security.py -k "TestEvaluateEntryValidation"`；GitHub Actions `Unit tests` | `4d69f168fa5534c0335e236371cb1ba15a0c9f13`；passed；CI [Run #44049829615](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44049829615) |
+| E2 | SF-EVAL-11-A2 | `tests/test_evaluation_security.py::TestEvalCaseInvariants::test_eval_case_rejects_invalid_name`、`tests/test_evaluation_security.py::TestEvalCaseInvariants::test_eval_case_rejects_invalid_source`、`tests/test_evaluation_security.py::TestEvalCaseInvariants::test_eval_case_rejects_invalid_test`、`tests/test_evaluation_security.py::TestEvalCaseInvariants::test_eval_case_rejects_old_text_not_in_source`、`tests/test_evaluation_security.py::TestEvalCaseInvariants::test_default_cases_integrity` | 本地 `pytest -q tests/test_evaluation_security.py -k "TestEvalCaseInvariants"`；GitHub Actions `Unit tests` | `4d69f168fa5534c0335e236371cb1ba15a0c9f13`；passed；CI [Run #44049829615](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44049829615) |
+| E3 | SF-EVAL-11-A3 | `tests/test_evaluation_security.py::TestOfflineFixtureModelSecurity::test_fixture_model_rejects_non_eval_case`、`tests/test_evaluation_security.py::TestOfflineFixtureModelSecurity::test_fixture_model_rejects_invalid_timeout`、`tests/test_evaluation_security.py::TestOfflineFixtureModelSecurity::test_fixture_model_rejects_invalid_messages`、`tests/test_evaluation_security.py::TestEvaluateExecutionResilience::test_evaluate_catches_model_factory_exception`、`tests/test_evaluation_security.py::TestEvaluateExecutionResilience::test_evaluate_catches_agent_execution_exception`、`tests/test_evaluation_security.py::TestEvaluateExecutionResilience::test_evaluate_handles_removed_source_file_gracefully` | 本地 `pytest -q tests/test_evaluation_security.py -k "TestOfflineFixtureModelSecurity or TestEvaluateExecutionResilience"`；GitHub Actions `Unit tests` | `4d69f168fa5534c0335e236371cb1ba15a0c9f13`；passed；CI [Run #44049829615](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44049829615) |
+| E4 | SF-EVAL-11-A4 | `tests/test_evaluation_security.py::TestEvalOutcomeInvariants::test_eval_outcome_rejects_fraudulent_success_when_status_not_completed`、`tests/test_evaluation_security.py::TestEvalOutcomeInvariants::test_eval_outcome_rejects_fraudulent_success_when_unchanged`、`tests/test_evaluation_security.py::TestEvalOutcomeInvariants::test_eval_outcome_rejects_fraudulent_success_when_test_failed`、`tests/test_evaluation_security.py::TestEvalOutcomeInvariants::test_eval_outcome_rejects_negative_steps`、`tests/test_evaluation_security.py::TestEvalOutcomeInvariants::test_eval_outcome_rejects_invalid_tools`、`tests/test_evaluation_security.py::TestCliEvalIntegrationAndSecurity::test_cli_eval_rejects_invalid_test_timeout`、`tests/test_evaluation_security.py::TestCliEvalIntegrationAndSecurity::test_cli_eval_rejects_symlink_output`、`tests/test_evaluation_security.py::TestCliEvalIntegrationAndSecurity::test_cli_eval_safe_output_writes_valid_json` | 本地 `pytest -q tests/test_evaluation_security.py -k "TestEvalOutcomeInvariants or TestCliEvalIntegrationAndSecurity"`；GitHub Actions `Unit tests` | `4d69f168fa5534c0335e236371cb1ba15a0c9f13`；passed；CI [Run #44049829615](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44049829615) |
+
+执行记录：Base=`015dc6a75f0671a3537edc7706937a0826128bf9`；Branch=`feat/sf-eval-11`；Worktree=`selfforge-sf-eval-11`；PR=[#103](https://github.com/liuzhouquan/selfforge-agent/pull/103)；Source=`4d69f168fa5534c0335e236371cb1ba15a0c9f13`。实现微型评测执行器参数强类型与数值边界防御、EvalCase 不变式与不可信输入校验、OfflineFixtureModel 协议守卫与异常受控收敛、EvalOutcome 结果防篡改真实性断言与 CLI eval 安全导出（源码提交 `4d69f168fa5534c0335e236371cb1ba15a0c9f13`，[R1 CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44049829615) 全绿）。
+
+```text
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：015dc6a75f0671a3537edc7706937a0826128bf9 / feat/sf-eval-11 (worktree: selfforge-sf-eval-11) / 已验证源码 4d69f168fa5534c0335e236371cb1ba15a0c9f13；本提交更新文档
+已完成验收与证据 ID：SF-EVAL-11-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码与专项测试已通过；真 Docker 与完整非集成测试绿灯；无未受控异常泄露
+PR / 准确 head CI / merge SHA（有则填）：PR #103 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44049829615 / 待合入回填
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 R2 CI 运行及审查合入。
 ```
 
 ## 5. 验收追踪与执行记录格式
