@@ -238,6 +238,87 @@ def _escape_md_cell(text: str) -> str:
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
+def _metric_triplet(value: object, *, integer: bool = False) -> None:
+    if not isinstance(value, dict) or not {"before", "after", "delta"} <= value.keys():
+        raise ValueError("Invalid metric summary")
+    before, after, delta = (value[key] for key in ("before", "after", "delta"))
+    if integer:
+        _count(before)
+        _count(after)
+        if type(delta) is not int or abs(delta) > 10**12 or delta != after - before:
+            raise ValueError("Invalid count delta")
+    else:
+        _finite(before)
+        _finite(after)
+        if type(delta) not in (int, float):
+            raise ValueError("Invalid numeric delta")
+        _finite(abs(delta))
+        if not math.isclose(delta, after - before, abs_tol=1e-9):
+            raise ValueError("Inconsistent numeric delta")
+
+
+def _case_label(value: object) -> None:
+    if not isinstance(value, str) or not value or len(value) > 200 or "\0" in value:
+        raise ValueError("Invalid case or failure label")
+
+
+def _display_diff_checked(diff: dict) -> None:
+    summary = diff["summary"]
+    for key in ("runs", "successes"):
+        _metric_triplet(summary.get(key), integer=True)
+    _metric_triplet(summary.get("success_rate"))
+    for side in ("before", "after"):
+        runs, successes = summary["runs"][side], summary["successes"][side]
+        if runs <= 0 or successes > runs or not math.isclose(
+                summary["success_rate"][side], successes / runs, abs_tol=1e-12):
+            raise ValueError("Inconsistent summary counts and rates")
+    if "duration_seconds" in summary:
+        _metric_triplet(summary["duration_seconds"])
+    if "tokens" in summary:
+        tokens = summary["tokens"]
+        if not isinstance(tokens, dict) or not set(tokens) <= {"prompt", "completion", "total"}:
+            raise ValueError("Invalid token summary")
+        for item in tokens.values():
+            _metric_triplet(item, integer=True)
+    for kind in ("improved", "regressed"):
+        cases = diff.get(kind, [])
+        if not isinstance(cases, list) or len(cases) > 10000:
+            raise ValueError("Invalid case changes")
+        for case in cases:
+            if not isinstance(case, dict):
+                raise TypeError("Invalid case change")
+            _case_label(case.get("case"))
+            rates = []
+            for side in ("before", "after"):
+                ratio = case.get(side)
+                if not isinstance(ratio, str) or len(ratio) > 27 or not re.fullmatch(r"[0-9]{1,13}/[0-9]{1,13}", ratio):
+                    raise ValueError("Invalid case ratio")
+                successes, runs = map(int, ratio.split("/"))
+                _count(runs, positive=True)
+                _count(successes)
+                if successes > runs:
+                    raise ValueError("Invalid case counts")
+                rates.append(successes / runs)
+            delta = case.get("delta_rate")
+            if type(delta) not in (int, float):
+                raise ValueError("Invalid case rate delta")
+            _finite(abs(delta))
+            if not math.isclose(delta, rates[1] - rates[0], abs_tol=1e-12):
+                raise ValueError("Inconsistent case rate delta")
+    for kind in ("added", "removed", "unchanged"):
+        cases = diff.get(kind, [])
+        if not isinstance(cases, list) or len(cases) > 10000:
+            raise ValueError("Invalid case labels")
+        for label in cases:
+            _case_label(label)
+    reasons = diff.get("failure_reasons", {})
+    if not isinstance(reasons, dict) or len(reasons) > 1000:
+        raise ValueError("Invalid failure reasons")
+    for label, values in reasons.items():
+        _case_label(label)
+        _metric_triplet(values, integer=True)
+
+
 def format_eval_diff(diff: dict[str, Any], format: str = "markdown") -> str:
     """Format benchmark evaluation diff into markdown or plain text."""
     if not isinstance(diff, dict):
@@ -257,6 +338,7 @@ def format_eval_diff(diff: dict[str, Any], format: str = "markdown") -> str:
         if not ("before" in d and "after" in d and "delta" in d):
             raise ValueError(f"Invalid {field_name} summary in diff")
 
+    _display_diff_checked(diff)
     lines: list[str] = []
 
     if format == "markdown":

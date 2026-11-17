@@ -157,3 +157,35 @@ class TestFormattingDefenseSecurity:
             if "Improved" in line:
                 # Should not have raw unescaped pipe inside the case cell
                 assert r"\|" in line or "injected" not in line or line.count("|") == 6
+
+
+@pytest.mark.parametrize('field', ['runs', 'successes', 'duration_seconds', 'tokens'])
+def test_formatter_rejects_injected_numeric_summary_fields(field):
+    report = _make_valid_report()
+    diff = diff_eval_reports(report, report)
+    bad = '1|x\nFORGED'
+    if field == 'tokens':
+        diff['summary'][field] = {'total': {'before': bad, 'after': 1, 'delta': 0}}
+    elif field == 'duration_seconds':
+        diff['summary'][field] = {'before': bad, 'after': 1, 'delta': 0}
+    else:
+        diff['summary'][field]['before'] = bad
+    with pytest.raises(ValueError):
+        format_eval_diff(diff)
+
+
+def test_formatter_rejects_injected_case_ratio():
+    report = _make_valid_report()
+    diff = diff_eval_reports(report, report)
+    diff['improved'] = [{'case': 'fixture', 'before': '1/2|\nFORGED', 'after': '2/2', 'delta_rate': 0.5}]
+    with pytest.raises(ValueError):
+        format_eval_diff(diff)
+
+
+@pytest.mark.parametrize('value', [True, float('nan'), float('inf')])
+def test_formatter_rejects_non_numeric_or_nonfinite_deltas(value):
+    report = _make_valid_report()
+    diff = diff_eval_reports(report, report)
+    diff['summary']['success_rate']['delta'] = value
+    with pytest.raises(ValueError):
+        format_eval_diff(diff)
