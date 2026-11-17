@@ -111,15 +111,36 @@ def _same_origin(request: Request, origin: str) -> bool:
 
 _MAX_REQUEST_BYTES = 2 * 1024 * 1024  # 2MB
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
+_JOB_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 
 
 def _validate_session_id(session_id: str) -> str:
-    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+    if not isinstance(session_id, str) or not _SESSION_ID_PATTERN.fullmatch(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID")
     return session_id
 
 
+def _validate_job_id(job_id: str) -> str:
+    if not isinstance(job_id, str) or not _JOB_ID_PATTERN.fullmatch(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    return job_id
+
+
+def _validate_git_ref(ref: str) -> str:
+    if (not isinstance(ref, str) or not 1 <= len(ref) <= 128
+            or not ref.isprintable() or any(c.isspace() for c in ref)
+            or ref.startswith("-") or ".." in ref):
+        raise HTTPException(status_code=400, detail="Invalid git reference")
+    # Workspace resolution uses rev-parse --verify --end-of-options in the repository.
+    # Preserve Git commit expressions and valid branch names here.
+    return ref
+
+
 def _validate_repository_dir(repository: str | Path, *, must_be_git: bool = True) -> Path:
+    if not isinstance(repository, (str, Path)):
+        raise HTTPException(status_code=400, detail="Invalid repository path")
+    if isinstance(repository, str) and "\x00" in repository:
+        raise HTTPException(status_code=400, detail="Repository path contains null bytes")
     try:
         repo = Path(repository).expanduser().resolve()
         if not repo.is_dir():
@@ -133,6 +154,8 @@ def _validate_repository_dir(repository: str | Path, *, must_be_git: bool = True
             if result.returncode or Path(result.stdout.strip()).resolve() != repo:
                 raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
         return repo
+    except HTTPException:
+        raise
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         raise HTTPException(status_code=400, detail="Repository directory does not exist") from exc
 
@@ -475,8 +498,18 @@ class ProviderSettingsRequest(BaseModel):
 
 
 def _require_local(client: Request) -> None:
-    if client.client and client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+    if client.client is None or client.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
         raise HTTPException(status_code=403, detail="This operation is available only from localhost")
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(TypeError)
+async def type_error_handler(request: Request, exc: TypeError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.get("/", include_in_schema=False)
@@ -502,14 +535,19 @@ def repository_environment(repository: str, client: Request) -> dict:
 @app.post("/api/sandbox/plan")
 def sandbox_plan(request: EnvironmentPlanRequest, client: Request) -> dict:
     _require_local(client)
-    repo = Path(request.repository).expanduser().absolute()
     try:
+        if "\x00" in request.repository:
+            raise ValueError("Repository path contains null bytes")
+        repo = Path(request.repository).expanduser().absolute()
+        wheelhouse = Path(request.wheelhouse).expanduser().absolute() if request.wheelhouse else None
+        lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
+        requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
         return plan_environment_preparation(
             repo,
-            wheelhouse=Path(request.wheelhouse).expanduser().absolute() if request.wheelhouse else None,
+            wheelhouse=wheelhouse,
             tag=request.tag,
-            lock_file=Path(request.lock_file).expanduser().absolute() if request.lock_file else None,
-            requirements_file=Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None,
+            lock_file=lock_file,
+            requirements_file=requirements_file,
         )
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -520,19 +558,23 @@ def benchmark_diff(request: BenchmarkDiffRequest, client: Request) -> dict:
     _require_local(client)
     try:
         diff = diff_eval_reports(request.before_report, request.after_report)
+        if request.format != "json":
+            return {"diff": diff, "rendered": format_eval_diff(diff, format=request.format)}
+        return diff
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if request.format != "json":
-        return {"diff": diff, "rendered": format_eval_diff(diff, format=request.format)}
-    return diff
+
+
 @app.post("/api/sandbox/audit")
 def sandbox_audit(request: WheelhouseAuditRequest, client: Request) -> dict:
     _require_local(client)
-    repo = Path(request.repository).expanduser().absolute() if request.repository else None
-    wheelhouse = Path(request.wheelhouse).expanduser().absolute()
-    lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
-    requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
     try:
+        if "\x00" in request.wheelhouse or (request.repository and "\x00" in request.repository):
+            raise ValueError("Path contains null bytes")
+        repo = Path(request.repository).expanduser().absolute() if request.repository else None
+        wheelhouse = Path(request.wheelhouse).expanduser().absolute()
+        lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
+        requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
         return audit_wheelhouse(
             repo,
             wheelhouse=wheelhouse,
@@ -547,10 +589,12 @@ def sandbox_audit(request: WheelhouseAuditRequest, client: Request) -> dict:
 @app.post("/api/sandbox/freshness")
 def sandbox_freshness(request: DependencyFreshnessRequest, client: Request) -> dict:
     _require_local(client)
-    repo = Path(request.repository).expanduser().absolute()
-    lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
-    requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
     try:
+        if "\x00" in request.repository:
+            raise ValueError("Repository path contains null bytes")
+        repo = Path(request.repository).expanduser().absolute()
+        lock_file = Path(request.lock_file).expanduser().absolute() if request.lock_file else None
+        requirements_file = Path(request.requirements_file).expanduser().absolute() if request.requirements_file else None
         return check_dependency_freshness(
             repo,
             lock_file=lock_file,
@@ -561,7 +605,8 @@ def sandbox_freshness(request: DependencyFreshnessRequest, client: Request) -> d
 
 
 @app.get("/api/config", response_model=AppConfig)
-def config() -> AppConfig:
+def config(client: Request) -> AppConfig:
+    _require_local(client)
     return AppConfig(
         providers=provider_info(),
         host_tests_enabled=os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") == "1",
@@ -576,9 +621,11 @@ def _coding_session_root(repository: Path) -> Path:
 @app.post("/api/code/jobs", response_model=CodingJobResponse)
 def start_coding_job(request: CodingTaskRequest, client: Request) -> dict:
     _require_local(client)
-    repository = Path(request.repository).expanduser().resolve()
-    if not repository.is_dir() or not (repository / ".git").exists():
-        raise HTTPException(status_code=400, detail="Choose an existing Git repository root")
+    repository = _validate_repository_dir(request.repository, must_be_git=True)
+    if request.resume_session:
+        _validate_session_id(request.resume_session)
+    if "\x00" in request.task:
+        raise HTTPException(status_code=400, detail="Task contains null bytes")
     if request.sandbox == "host" and (
         os.environ.get("SELFFORGE_ENABLE_HOST_TESTS") != "1" or not request.trust_local
     ):
@@ -644,7 +691,7 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
                             client: Request) -> dict[str, str]:
     _require_local(client)
     _validate_session_id(session_id)
-    repository = Path(request.repository).expanduser().resolve()
+    repository = _validate_repository_dir(request.repository, must_be_git=True)
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
         with _CODING_JOBS.workspace_guard(workspace.path):
@@ -659,6 +706,7 @@ def remove_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
 def audit_workspaces(repository: str, client: Request, head_ref: str = "HEAD") -> list[dict]:
     _require_local(client)
     repo = _validate_repository_dir(repository)
+    head_ref = _validate_git_ref(head_ref)
     try:
         return _CODING_WORKSPACES.audit(repo, head_ref=head_ref)
     except (ValueError, OSError, WorktreeError) as exc:
@@ -670,12 +718,13 @@ def audit_workspaces(repository: str, client: Request, head_ref: str = "HEAD") -
 def prune_workspaces(request: WorkspacePruneRequest, client: Request) -> dict:
     _require_local(client)
     repo = _validate_repository_dir(request.repository)
+    head_ref = _validate_git_ref(request.head_ref)
     try:
         return _CODING_WORKSPACES.prune(
             repo,
             dry_run=request.dry_run,
             merged_only=request.merged_only,
-            head_ref=request.head_ref,
+            head_ref=head_ref,
         )
     except (ValueError, OSError, WorktreeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -691,6 +740,7 @@ def audit_workspaces_storage(
 ) -> dict:
     _require_local(client)
     repo = _validate_repository_dir(repository)
+    head_ref = _validate_git_ref(head_ref)
     if quota_bytes is not None and quota_bytes < 0:
         raise HTTPException(status_code=400, detail="quota_bytes must be non-negative")
     try:
@@ -705,7 +755,7 @@ def revert_coding_workspace(session_id: str, request: CodingWorkspaceRequest,
                             client: Request) -> RevertResult:
     _require_local(client)
     _validate_session_id(session_id)
-    repository = Path(request.repository).expanduser().resolve()
+    repository = _validate_repository_dir(request.repository, must_be_git=True)
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
         session_root = _CODING_WORKSPACES.session_root(repository, session_id)
@@ -735,7 +785,7 @@ def commit_coding_workspace(
 ) -> CommitResult:
     _require_local(client)
     _validate_session_id(session_id)
-    repository = Path(request.repository).expanduser().resolve()
+    repository = _validate_repository_dir(request.repository, must_be_git=True)
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
         with _CODING_JOBS.workspace_guard(workspace.path):
@@ -760,7 +810,7 @@ def create_coding_pr(
 ) -> PRResult:
     _require_local(client)
     _validate_session_id(session_id)
-    repository = Path(request.repository).expanduser().resolve()
+    repository = _validate_repository_dir(request.repository, must_be_git=True)
     try:
         workspace = _CODING_WORKSPACES.get(repository, session_id)
         session_root = _CODING_WORKSPACES.session_root(
@@ -798,13 +848,15 @@ def code_workspace_validate_regression(
 ) -> RegressionValidationReport:
     _require_local(client)
     _validate_session_id(session_id)
-    raw_repo = Path(body.repository)
-    legacy_roots = (
-        (_coding_session_root(raw_repo.resolve()),)
-        if (not raw_repo.is_symlink() and raw_repo.is_dir())
-        else ()
-    )
     try:
+        if "\x00" in body.repository:
+            raise ValueError("Repository path contains null bytes")
+        raw_repo = Path(body.repository)
+        legacy_roots = (
+            (_coding_session_root(raw_repo.resolve()),)
+            if (not raw_repo.is_symlink() and raw_repo.is_dir())
+            else ()
+        )
         return validate_workspace_regression(
             raw_repo,
             session_id,
@@ -871,6 +923,7 @@ def coding_jobs(repository: str, client: Request) -> list[dict]:
 @app.get("/api/code/jobs/{job_id}", response_model=CodingJobResponse)
 def coding_job(job_id: str, client: Request) -> dict:
     _require_local(client)
+    _validate_job_id(job_id)
     try:
         return _CODING_JOBS.get(job_id)
     except KeyError as exc:
@@ -880,6 +933,7 @@ def coding_job(job_id: str, client: Request) -> dict:
 @app.post("/api/code/jobs/{job_id}/cancel", response_model=CodingJobResponse)
 def cancel_coding_job(job_id: str, client: Request) -> dict:
     _require_local(client)
+    _validate_job_id(job_id)
     try:
         return _CODING_JOBS.cancel(job_id)
     except KeyError as exc:
@@ -914,7 +968,9 @@ def provider_models(
     client: Request,
 ) -> list[AvailableModel]:
     _require_local(client)
-    item = next(entry for entry in configured_providers() if entry.name == provider)
+    item = next((entry for entry in configured_providers() if entry.name == provider), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not configured")
     try:
         return list_models(item)
     except (ValueError, TypeError, ProviderHTTPError) as exc:
@@ -1081,6 +1137,7 @@ def review(request: ReviewRequest) -> EvidenceReport:
     if not configured:
         raise HTTPException(status_code=503, detail="Repository root is not configured")
     try:
-        return ReviewService().review(Path(configured), request.base, request.head)
-    except GitContextError as exc:
+        repo = _validate_repository_dir(configured, must_be_git=True)
+        return ReviewService().review(repo, request.base, request.head)
+    except (GitContextError, ValueError, TypeError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

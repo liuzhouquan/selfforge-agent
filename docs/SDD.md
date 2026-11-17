@@ -155,6 +155,7 @@ flowchart LR
 | 45 | [SF-REGRESS-01](#sf-regress-01) | In Review | Codex（审查整合） | 无 | [PR #102](https://github.com/liuzhouquan/selfforge-agent/pull/102)：回归验证执行器与隔离加固：基线Commit SHA十六进制严格校验与参数防注入、候选测试路径与非普通文件防御、快照目录隔离与安全执行及模型契约不变式保障 |
 | 46 | [SF-EVAL-11](#sf-eval-11) | In Review | Codex（审查整合） | 无 | [PR #103](https://github.com/liuzhouquan/selfforge-agent/pull/103)：评测执行器参数强类型与数值边界防御、EvalCase 不变式校验、OfflineFixtureModel 协议守卫与异常受控收敛、EvalOutcome 结果真实性断言与 CLI eval 安全导出 |
 | 47 | [SF-CLI-02](#sf-cli-02) | In Review | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
+| 48 | [SF-API-02](#sf-api-02) | In Review | Codex（本轮开发） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控映射（400）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2006,6 +2007,44 @@ Owner / 状态：Codex（审查整合） / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #104 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44054392569 / 待合入回填
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待 R2 CI 运行及审查合入。
+```
+
+### SF-API-02
+
+**目标：** 深度加固 Web Coding API 与会话端点，杜绝路径穿越、空字节注入、非受控 500 异常与 fail-open 访问控制风险。
+
+**范围/入口：** `src/selfforge_agent/api/app.py`、`tests/test_api_hardening.py`。加固 `{job_id}` 与 `resume_session` 会话标识校验；加固工作区操作（`remove`/`revert`/`commit`/`pr`）与环境/沙箱（`plan`/`audit`/`freshness`/`validate-regression`）路径预检；强化 `_require_local` 拒绝无客户端信息的请求；引入全局 `ValueError`/`TypeError` 受控映射为 HTTP 400。
+
+**行为与防御：**
+1. `{job_id}` 路径参数仅接受合法字符（`[A-Za-z0-9_-]{1,64}`），遇到路径穿越（`..`）、控制字符或超长时显式返回 HTTP 400（`Invalid job ID`）；`start_coding_job` 入口校验 `resume_session`（`[A-Za-z0-9_-]{1,64}`）拒绝路径遍历；`provider_models` 在未配置提供者时返回 HTTP 404（而非抛出 `StopIteration` 导致 500）。
+2. 工作区端点（`remove`/`revert`/`commit`/`pr`）统一进行真实 Git 仓库预检（`_validate_repository_dir`），拒绝非目录/非 Git 根并返回 HTTP 400（而非抛出 409/500）；`plan`/`audit`/`freshness`/`validate-regression` 端点防御 `\x00` 空字节注入并显式捕获受控映射为 HTTP 400；`head_ref` 校验防御选项注入（`-`）与路径遍历。
+3. `_require_local` 强化 Fail-Closed 控制：当客户端 IP 不存在或非本地回环地址时直接返回 HTTP 403；全局异常处理器将 `ValueError` 与 `TypeError` 映射为 HTTP 400；`/review` 与 `/api/benchmark/diff` 内部未分类异常受控收敛映射为 HTTP 400。
+4. 全量非集成测试与专项测试通过，代码格式通过 `ruff check .`，严格遵循双提交工作流。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-API-02-A1 | `{job_id}` 路径参数校验仅允许合法字符，遇到路径遍历或特殊字符时返回 HTTP 400（`Invalid job ID`）；`start_coding_job` 校验 `resume_session` 防路径穿越；未配置提供者查询模型返回 HTTP 404 | `tests/test_api_hardening.py` Job ID、Resume Session 与 Provider 模型测试 | E1 |
+| SF-API-02-A2 | 工作区管理端点（`remove`/`revert`/`commit`/`pr`）校验仓库路径，非仓库目录返回 HTTP 400；沙箱与工作区端点拦截空字节（`\x00`）并受控返回 400；`head_ref` 拒绝选项注入与路径穿越 | `tests/test_api_hardening.py` 仓库路径预检、空字节防御与 Git ref 校验测试 | E2 |
+| SF-API-02-A3 | `_require_local` 在缺失客户端或非本地时返回 HTTP 403；全局异常处理器将未受控 `ValueError` / `TypeError` 映射为 HTTP 400；`/review` 与 `/api/benchmark/diff` 端点异常受控映射为 HTTP 400 | `tests/test_api_hardening.py` 本地访问控制、端点异常捕获与格式化测试 | E3 |
+| SF-API-02-A4 | `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、专项测试与全量非集成测试全部通过，双提交工作流完成验证 | 本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-API-02-A1 | `tests/test_api_hardening.py::TestJobIdAndResumeSessionValidation::test_job_id_validation_rejects_path_traversal_and_malformed`、`tests/test_api_hardening.py::TestJobIdAndResumeSessionValidation::test_start_coding_job_rejects_malformed_resume_session`、`tests/test_api_hardening.py::TestJobIdAndResumeSessionValidation::test_provider_models_unconfigured_provider_returns_404` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_api_hardening.py`；GitHub Actions CI `Unit tests` | `d0c926843600769a9bf1dcf2118305e27b35fe5b`；passed；CI [Run #44063426529](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44063426529) |
+| E2 | SF-API-02-A2 | `tests/test_api_hardening.py::TestRepositoryAndWorkspaceInputHardening::test_workspace_endpoints_reject_nonexistent_or_invalid_repository`、`tests/test_api_hardening.py::TestRepositoryAndWorkspaceInputHardening::test_null_bytes_in_paths_return_400_not_500`、`tests/test_api_hardening.py::TestRepositoryAndWorkspaceInputHardening::test_audit_and_storage_reject_option_injection_and_traversal_head_ref` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_api_hardening.py`；GitHub Actions CI `Unit tests` | `d0c926843600769a9bf1dcf2118305e27b35fe5b`；passed；CI [Run #44063426529](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44063426529) |
+| E3 | SF-API-02-A3 | `tests/test_api_hardening.py::TestAccessControlAndExceptionHardening::test_require_local_rejects_missing_client`、`tests/test_api_hardening.py::TestAccessControlAndExceptionHardening::test_review_endpoint_maps_exceptions_to_400`、`tests/test_api_hardening.py::TestAccessControlAndExceptionHardening::test_benchmark_diff_format_eval_diff_error_maps_to_400` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_api_hardening.py`；GitHub Actions CI `Unit tests` | `d0c926843600769a9bf1dcf2118305e27b35fe5b`；passed；CI [Run #44063426529](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44063426529) |
+| E4 | SF-API-02-A4 | `tests/test_api_security.py::test_payload_limit_rejects_oversized_requests`、`tests/test_api_security.py::test_session_id_validation_rejects_path_traversal_and_malformed`、`tests/test_api_security.py::test_corrupted_regression_record_returns_422`、`tests/test_api_security.py::test_storage_audit_rejects_negative_quota`、`tests/test_api_security.py::test_repository_endpoints_reject_invalid_or_nonexistent_repo`、`tests/test_api_hardening.py::TestAccessControlAndExceptionHardening::test_require_local_rejects_missing_client` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest`；GitHub Actions CI `Unit tests`、`Docker integration tests` | `d0c926843600769a9bf1dcf2118305e27b35fe5b`；passed；CI [Run #44063426529](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44063426529) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+
+执行记录：Base=`015dc6a75f0671a3537edc7706937a0826128bf9`；Branch=`feat/sf-api-02`；Worktree=`selfforge-sf-api-02`；PR=[#105](https://github.com/liuzhouquan/selfforge-agent/pull/105)。源码提交 `d0c926843600769a9bf1dcf2118305e27b35fe5b` 已通过本地回归与 CI `Run #44063426529` 全套验证。
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：015dc6a75f0671a3537edc7706937a0826128bf9 / feat/sf-api-02 (worktree: selfforge-sf-api-02) / 已验证源码 d0c926843600769a9bf1dcf2118305e27b35fe5b；本次状态提交仅文档
+已完成验收与证据 ID：SF-API-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地及CI全量测试通过；等待合并
+PR / 准确 head CI / merge SHA（有则填）：PR #105 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44063426529（head commit d0c926843600769a9bf1dcf2118305e27b35fe5b） / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #105 审查合并。
 ```
 
 ## 5. 验收追踪与执行记录格式
