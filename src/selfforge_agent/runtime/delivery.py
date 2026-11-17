@@ -5,12 +5,14 @@ import math
 import os
 import re
 import stat
-import subprocess
+import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from selfforge_agent.coding.worktree import WorktreeError, git, git_bounded
+from selfforge_agent.core.process import run_bounded
 from selfforge_agent.runtime.execution import workspace_entry_excluded
 from selfforge_agent.runtime.fingerprint import WorkspaceSnapshotError, workspace_fingerprint
 from selfforge_agent.runtime.session import SessionStore
@@ -290,35 +292,31 @@ def _run_gh(args: list[str], *, cwd: Path, timeout: float = 60) -> str:
     if (
         not isinstance(timeout, (int, float))
         or type(timeout) is bool
-        or not math.isfinite(timeout)
         or timeout <= 0
         or timeout > MAX_GH_TIMEOUT
+        or not math.isfinite(timeout)
     ):
         raise DeliveryError(f"timeout must be a positive number up to {MAX_GH_TIMEOUT} seconds")
 
     try:
-        result = subprocess.run(
-            ["gh", *args],
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
+        result = run_bounded(["gh", *args], cwd=cwd, timeout=timeout,
+                             max_bytes=MAX_GH_OUTPUT_BYTES)
     except FileNotFoundError as exc:
         raise DeliveryError(
             "GitHub CLI ('gh') is not installed or not in PATH. Please install and authenticate 'gh'."
         ) from exc
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, TimeoutError, ValueError) as exc:
         raise DeliveryError(f"GitHub operation failed: {exc}") from exc
 
+    if result.stdout_limited or result.stderr_limited:
+        raise DeliveryError("GitHub CLI output exceeded maximum allowed size")
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace")
     if result.returncode != 0:
-        raw_error = result.stderr.strip() or result.stdout.strip() or "GitHub operation failed"
+        raw_error = stderr.strip() or stdout.strip() or "GitHub operation failed"
         error_msg = raw_error[:1024] if len(raw_error) > 1024 else raw_error
         raise DeliveryError(f"GitHub PR creation failed: {error_msg}")
-    if len(result.stdout) > MAX_GH_OUTPUT_BYTES:
-        raise DeliveryError("GitHub CLI output exceeded maximum allowed size")
-    return result.stdout
+    return stdout
 
 
 def _existing_pull_request(workspace: CodingWorkspace, base_branch: str | None) -> dict | None:
@@ -505,7 +503,14 @@ def create_pull_request(
     if draft:
         gh_args.append("--draft")
 
-    output = _run_gh(gh_args, cwd=workspace.repository)
+    with ExitStack() as cleanup:
+        if len(pr_body.encode("utf-8")) > 64 * 1024:
+            body_file = cleanup.enter_context(tempfile.NamedTemporaryFile(mode="w", encoding="utf-8"))
+            body_file.write(pr_body)
+            body_file.flush()
+            body_index = gh_args.index("--body")
+            gh_args[body_index:body_index + 2] = ["--body-file", body_file.name]
+        output = _run_gh(gh_args, cwd=workspace.repository)
     match = _PR_URL_PATTERN.search(output)
     if match is None:
         raise DeliveryError("GitHub did not return a valid PR URL; retry to recover an existing PR")

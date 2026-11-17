@@ -271,3 +271,52 @@ class TestCreatePullRequestAndGHOps:
         session = SessionStore(tmp_path / "sessions", managed_workspace.session_id)
         for invalid_sha in ["not-a-sha", "--diff-filter=D", "1234", "a" * 39, "a" * 41, "g" * 40]:
             assert _verified_commit(managed_workspace, session, invalid_sha) is False
+
+
+@pytest.mark.parametrize('stream', ['stdout', 'stderr'])
+def test_gh_output_limit_stops_real_producer(tmp_path, monkeypatch, stream):
+    import os
+
+    import selfforge_agent.runtime.delivery as module
+
+    marker = tmp_path / 'finished'
+    executable = tmp_path / 'gh'
+    executable.write_text('#!/usr/bin/env python3\nimport os\n'
+                          f'os.write({1 if stream == "stdout" else 2}, b"x"*1000000)\n'
+                          f'open({str(marker)!r}, "w").close()\n')
+    executable.chmod(0o755)
+    monkeypatch.setenv('PATH', str(tmp_path) + ':' + os.environ['PATH'])
+    monkeypatch.setattr(module, 'MAX_GH_OUTPUT_BYTES', 1024)
+    with pytest.raises(DeliveryError):
+        _run_gh(['version'], cwd=tmp_path)
+    assert not marker.exists()
+
+
+def test_large_valid_pr_body_crosses_real_cli_boundary(managed_workspace, tmp_path, monkeypatch):
+    import os
+
+    remote = tmp_path / 'remote.git'
+    subprocess.run(['git', 'init', '--bare', '-q', str(remote)], check=True)
+    git(managed_workspace.repository, 'remote', 'add', 'origin', str(remote))
+    (managed_workspace.path / 'app.py').write_text('VALUE = 2\n')
+    commit_workspace(managed_workspace, 'change fixture')
+    executable = tmp_path / 'gh'
+    executable.write_text('''#!/usr/bin/env python3
+import pathlib,sys,stat
+args = sys.argv[1:]
+if args[:2] == ['pr', 'list']:
+    print('[]')
+else:
+    if '--body-file' in args:
+        path = pathlib.Path(args[args.index('--body-file')+1])
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        body = path.read_text()
+    else:
+        body = args[args.index('--body')+1]
+    assert body == 'x'*200000
+    print('https://github.com/fixture/repo/pull/1')
+''')
+    executable.chmod(0o755)
+    monkeypatch.setenv('PATH', str(tmp_path) + ':' + os.environ['PATH'])
+    result = create_pull_request(managed_workspace, 'Fixture', body='x'*200000)
+    assert result.pr_number == 1
