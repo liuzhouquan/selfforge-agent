@@ -3,6 +3,7 @@
 import math
 import os
 import platform
+import re
 import shlex
 import signal
 import stat
@@ -21,6 +22,8 @@ PROTECTED_TARGETS = {
     ".npmrc", ".pypirc", ".netrc",
 }
 
+_IMAGE_PATTERN = re.compile(r"^[a-zA-Z0-9_.:/-]{1,256}\Z")
+
 
 def _is_protected(name: str) -> bool:
     return name in PROTECTED_TARGETS or name.startswith(".env.")
@@ -28,6 +31,23 @@ def _is_protected(name: str) -> bool:
 
 class TrustRequiredError(ValueError):
     """Running repository code requires an explicit trust choice."""
+
+
+def _validate_keyword(keyword: str | None) -> str | None:
+    if keyword is None:
+        return None
+    if not isinstance(keyword, str) or not keyword.strip():
+        raise ValueError("Test keyword must not be blank")
+    keyword = keyword.strip()
+    if len(keyword) > 512:
+        raise ValueError("Test keyword exceeds maximum length (512 characters)")
+    if keyword.startswith("-"):
+        raise ValueError("Test keyword must not start with '-'")
+    if "\x00" in keyword:
+        raise ValueError("Test keyword must not contain null bytes")
+    if any(ord(c) < 32 and c not in " \t" for c in keyword) or "\n" in keyword or "\r" in keyword:
+        raise ValueError("Invalid test keyword: contains control characters or newlines")
+    return keyword
 
 
 def _result_status(returncode: int | None, timed_out: bool, counts: dict[str, int],
@@ -48,6 +68,8 @@ def _result_status(returncode: int | None, timed_out: bool, counts: dict[str, in
 def _test_target(repository: Path, test_path: str, timeout: float) -> tuple[Path, Path]:
     if not math.isfinite(timeout) or timeout <= 0 or timeout > 3600:
         raise ValueError("timeout must be a finite positive number not exceeding 3600 seconds")
+    if "\x00" in str(repository):
+        raise ValueError("repository must not contain null bytes")
     if not repository.exists() or not repository.is_dir():
         raise ValueError("repository must be an existing directory")
     repo = repository.resolve()
@@ -55,10 +77,20 @@ def _test_target(repository: Path, test_path: str, timeout: float) -> tuple[Path
         raise ValueError("repository must be an existing directory")
     if not isinstance(test_path, str) or not test_path.strip():
         raise ValueError("test_path must not be blank")
-    for part in Path(test_path).parts:
+    if "\x00" in test_path:
+        raise ValueError("test_path must not contain null bytes")
+    if len(test_path) > 4096:
+        raise ValueError("test_path exceeds maximum length (4096 characters)")
+    test_p = Path(test_path)
+    if test_p.is_absolute():
+        raise ValueError("test_path must be a relative path inside the repository")
+    for part in test_p.parts:
         if part == ".." or _is_protected(part):
             raise ValueError(f"test_path traverses protected or invalid path component: {part}")
-    target = (repo / test_path).resolve()
+    try:
+        target = (repo / test_path).resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"Failed to resolve test_path: {exc}") from exc
     if not target.is_relative_to(repo) or not target.exists():
         raise ValueError("test_path must exist inside the repository")
     if any(_is_protected(part) for part in target.relative_to(repo).parts):
@@ -102,6 +134,7 @@ class TestRunner:
     ) -> TestResult:
         if not trusted:
             raise TrustRequiredError("Pass trusted=True only for a repository you trust")
+        keyword = _validate_keyword(keyword)
         repo, target = _test_target(repository, test_path, timeout)
         environment = f"local; python={sys.version.split()[0]}; platform={platform.platform()}"
         with tempfile.TemporaryDirectory(prefix="selfforge-agent-") as tempdir:
@@ -111,8 +144,6 @@ class TestRunner:
             command = [sys.executable, "-B", "-X", f"pycache_prefix={Path(tempdir) / 'pycache'}",
                        "-m", "pytest", str(target)]
             if keyword is not None:
-                if not keyword.strip():
-                    raise ValueError("Test keyword must not be blank")
                 command.extend(["-k", keyword])
             command.append(f"--junitxml={xml_path}")
             start = time.monotonic()
@@ -129,10 +160,19 @@ class TestRunner:
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                 timed_out = True
                 if os.name == "posix":
-                    os.killpg(process.pid, signal.SIGKILL)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 else:
-                    process.kill()
-                stdout, stderr = process.communicate()
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                try:
+                    stdout, stderr = process.communicate()
+                except (subprocess.TimeoutExpired, OSError, ValueError):
+                    stdout, stderr = b"", b""
                 if isinstance(exc, KeyboardInterrupt):
                     raise
             duration = time.monotonic() - start
@@ -161,11 +201,21 @@ class DockerTestRunner:
     requires_trust = False
 
     def __init__(self, image: str = "selfforge-agent-sandbox:latest") -> None:
+        if (
+            not isinstance(image, str)
+            or not image.strip()
+            or any(char.isspace() or ord(char) < 32 for char in image)
+            or "\x00" in image
+            or len(image) > 256
+            or not _IMAGE_PATTERN.match(image)
+        ):
+            raise ValueError(f"Invalid Docker image name: {image!r}")
         self.image = image
 
     def run(self, repository: Path, *, trusted: bool = False, timeout: float = 60,
             test_path: str = "tests", keyword: str | None = None,
             executor: DockerExecutor | None = None) -> TestResult:
+        keyword = _validate_keyword(keyword)
         repo, target = _test_target(repository, test_path, timeout)
         if executor is None:
             executor = DockerExecutor(repo, image=self.image)
@@ -174,8 +224,6 @@ class DockerTestRunner:
         relative = target.relative_to(repo).as_posix()
         command = ["python", "-m", "pytest", relative]
         if keyword is not None:
-            if not keyword.strip():
-                raise ValueError("Test keyword must not be blank")
             command.extend(["-k", keyword])
         command.append("--junitxml=/artifacts/junit.xml")
         start = time.monotonic()
