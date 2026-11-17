@@ -22,11 +22,18 @@ _REQUIREMENT = re.compile(
 )
 
 
+def _finite_number(value: object) -> bool:
+    try:
+        return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _remaining(deadline: float) -> float:
     if (
         not isinstance(deadline, (int, float))
         or type(deadline) is bool
-        or not math.isfinite(deadline)
+        or not _finite_number(deadline)
     ):
         raise ValueError("Invalid deadline")
     remaining = deadline - time.monotonic()
@@ -200,7 +207,7 @@ def _docker(arguments: list[str], timeout: float, payload: bytes | None = None) 
     if (
         not isinstance(timeout, (int, float))
         or type(timeout) is bool
-        or not math.isfinite(timeout)
+        or not _finite_number(timeout)
         or timeout <= 0
     ):
         raise ValueError("timeout must be a positive finite number")
@@ -238,7 +245,7 @@ def build_dependency_image(requirements: Path, wheelhouse: Path, *,
     if (
         not isinstance(timeout, (int, float))
         or type(timeout) is bool
-        or not math.isfinite(timeout)
+        or not _finite_number(timeout)
         or not 0 < timeout <= 1_800
     ):
         raise ValueError("Image build timeout must be in (0, 1800]")

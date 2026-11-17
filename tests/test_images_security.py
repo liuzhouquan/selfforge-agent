@@ -286,3 +286,16 @@ class TestBuildDependencyImageGatingAndIntegrity:
         rm_calls = [c for c in docker_calls if c[0] == "image" and c[1] == "rm"]
         assert len(rm_calls) == 1
         assert rm_calls[0][2] == created_alias
+
+
+@pytest.mark.parametrize('boundary', ['build', 'docker', 'remaining'])
+def test_unrepresentable_image_time_values_are_controlled(tmp_path, boundary):
+    from selfforge_agent.runtime.images import _docker, _remaining, build_dependency_image
+
+    with pytest.raises(ValueError):
+        if boundary == 'build':
+            build_dependency_image(tmp_path / 'fixture.lock', tmp_path, tag='fixture:test', timeout=10**1000)
+        elif boundary == 'docker':
+            _docker(['version'], timeout=10**1000)
+        else:
+            _remaining(10**1000)
