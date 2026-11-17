@@ -214,3 +214,27 @@ class TestRegressionValidationReportModelInvariants:
 def time_module_deadline() -> float:
     import time
     return time.monotonic() + 30.0
+
+
+@pytest.mark.parametrize('field', ['repository', 'test_file'])
+def test_invalid_request_field_uses_normal_http_validation(tmp_path, field):
+    from fastapi.testclient import TestClient
+
+    from selfforge_agent.api.app import app
+
+    payload = {'repository': str(tmp_path), 'test_file': 'tests/test_fixture.py'}
+    payload[field] = 123
+    with TestClient(app, base_url='http://localhost', raise_server_exceptions=False) as client:
+        response = client.post('/api/code/workspaces/fixture/validate-regression', json=payload)
+    assert response.status_code == 422
+
+
+def test_test_digest_must_be_sha256_not_git_sha1():
+    with pytest.raises(ValidationError):
+        RegressionValidationReport(status='error', reason='snapshot_error', session_id='fixture',
+                                   base_sha='a'*40, workspace_sha256='b'*64, test_sha256='c'*40)
+
+
+def test_unrepresentable_regression_timeout_is_controlled():
+    with pytest.raises(RegressionValidationError):
+        validate_workspace_regression(repository='fixture', session_id='fixture', test_file='test_fixture.py', timeout=10**1000)

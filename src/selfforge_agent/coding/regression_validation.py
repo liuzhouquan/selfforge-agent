@@ -96,7 +96,7 @@ class ValidateRegressionRequest(BaseModel):
     @classmethod
     def _validate_repository_field(cls, value: object) -> str:
         if not isinstance(value, str):
-            raise TypeError("repository must be a string")
+            raise ValueError("repository must be a string")  # noqa: TRY004 - Pydantic wraps ValueError as request validation
         clean = value.strip()
         if not clean:
             raise ValueError("repository cannot be empty or whitespace only")
@@ -110,7 +110,7 @@ class ValidateRegressionRequest(BaseModel):
     @classmethod
     def _validate_test_file_field(cls, value: object) -> str:
         if not isinstance(value, str):
-            raise TypeError("test_file must be a string")
+            raise ValueError("test_file must be a string")  # noqa: TRY004 - Pydantic wraps ValueError as request validation
         clean = value.strip()
         if not clean:
             raise ValueError("test_file cannot be empty or whitespace only")
@@ -143,7 +143,7 @@ class RegressionValidationReport(BaseModel):
     @field_validator("test_sha256")
     @classmethod
     def _validate_test_sha256(cls, value: str) -> str:
-        if not isinstance(value, str) or not HEX_SHA_REGEX.match(value.strip()):
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
             raise ValueError(f"Invalid test_sha256: {value!r}")
         return value.strip().lower()
 
@@ -155,8 +155,10 @@ def validate_timeout(value: object) -> float:
             f"Timeout must be a number between {int(MIN_REGRESSION_TIMEOUT)} and "
             f"{int(MAX_REGRESSION_TIMEOUT)} seconds"
         )
+    if not (MIN_REGRESSION_TIMEOUT <= value <= MAX_REGRESSION_TIMEOUT):
+        raise RegressionValidationError("Timeout must be between 1 and 180 seconds")
     seconds = float(value)
-    if not math.isfinite(seconds) or not (MIN_REGRESSION_TIMEOUT <= seconds <= MAX_REGRESSION_TIMEOUT):
+    if not math.isfinite(seconds):
         raise RegressionValidationError(
             f"Timeout must be between {int(MIN_REGRESSION_TIMEOUT)} and "
             f"{int(MAX_REGRESSION_TIMEOUT)} seconds"
