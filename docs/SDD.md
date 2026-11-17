@@ -154,6 +154,7 @@ flowchart LR
 | 44 | [SF-MODEL-02](#sf-model-02) | In Review | Codex（审查整合） | 无 | [PR #101](https://github.com/liuzhouquan/selfforge-agent/pull/101)：模型适配层与ModelTurn安全加固：严格输入防御与类型守门、取消检查与fallback重置、提供商响应Schema校验防御、空字节与超长reasoning内容防御及ModelTurn不变式保障 |
 | 45 | [SF-REGRESS-01](#sf-regress-01) | In Review | Codex（审查整合） | 无 | [PR #102](https://github.com/liuzhouquan/selfforge-agent/pull/102)：回归验证执行器与隔离加固：基线Commit SHA十六进制严格校验与参数防注入、候选测试路径与非普通文件防御、快照目录隔离与安全执行及模型契约不变式保障 |
 | 46 | [SF-EVAL-11](#sf-eval-11) | In Review | Codex（审查整合） | 无 | [PR #103](https://github.com/liuzhouquan/selfforge-agent/pull/103)：评测执行器参数强类型与数值边界防御、EvalCase 不变式校验、OfflineFixtureModel 协议守卫与异常受控收敛、EvalOutcome 结果真实性断言与 CLI eval 安全导出 |
+| 47 | [SF-CLI-02](#sf-cli-02) | In Review | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -1973,6 +1974,36 @@ Owner / 状态：Codex（审查整合） / In Review
 已完成验收与证据 ID：SF-EVAL-11-A1..A4（E1–E4）
 未完成 / 环境限制 / 未提交内容归属：源码与专项测试已通过；真 Docker 与完整非集成测试绿灯；无未受控异常泄露
 PR / 准确 head CI / merge SHA（有则填）：PR #103 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44049829615 / 待合入回填
+```
+
+### SF-CLI-02
+
+**目标：** 将 CLI 中的 `code` 与 `test` 子命令全面对齐结构化 `--json` 与安全 `--output` 导出规范，并加固命令分发守卫。在 `code` 与 `test` 子命令中引入 `--json` 选项输出机器可读的标准 JSON 数据，引入 `--output` 选项并通过 `_validate_cli_output_target` 与 `_write_cli_output` 在执行前拦截符号链接、目录及缺失父目录目标，杜绝多硬链接或特殊文件覆写；严格校验 `--max-steps`（1..1000）、`--time-budget`（0.1..86400）、`--context-tokens`（100..1000000）与 `--timeout`（有限正数）参数边界；拦截输出目标与代码仓库目录碰撞；完善 `main()` 入口的全命令显式分发与未知命令 fail-closed 拦截。
+
+**范围/入口：** 仅改动 `src/selfforge_agent/cli.py` 及专项测试 `tests/test_cli_code_test_export.py`；不破坏既有 CLI 命令终端交互与各子命令既有输出格式。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-CLI-02-A1 | `code` 子命令接入 `--json` 结构化导出与 `--output` 安全非软链接落盘防御；执行前严格校验 `--output` 目标路径合法性与 `--max-steps`、`--time-budget`、`--context-tokens` 数值边界；拒绝 symlink / 缺失父目录导出目标 | `tests/test_cli_code_test_export.py` code 命令参数边界校验与安全导出测试 | E1 |
+| SF-CLI-02-A2 | `test` 子命令接入 `--json` 结构化导出与 `--output` 安全非软链接落盘防御；执行前严格校验 `--timeout`（有限正数）与仓库路径有效性；宿主与 Docker 沙箱测试结果均支持规范化 JSON 输出 | `tests/test_cli_code_test_export.py` test 命令参数边界校验与多沙箱结构化导出测试 | E2 |
+| SF-CLI-02-A3 | 共享参数防御与提前碰撞拦截：当同时指定 `--output` 与输入路径重合/别名时提前 fail-closed 拒绝；执行前阻止符号链接劫持，杜绝多硬链接或特殊文件覆写 | `tests/test_cli_code_test_export.py` 输出碰撞防御与非普通文件拦截测试 | E3 |
+| SF-CLI-02-A4 | 显式命令分发与全路径无回退回归：`main()` 入口完善全子命令显式分发与未知命令守门；全量 CLI 导出及既有 review/repair/workspaces 功能回归绿灯通过 | `tests/test_cli_code_test_export.py`、`tests/test_cli_review_repair_export.py`、`tests/test_workspaces_cli_export.py` 全量 CLI 回归测试 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CLI-02-A1 | `tests/test_cli_code_test_export.py::TestCliCodeExportAndDefense::test_cli_code_rejects_invalid_max_steps`、`tests/test_cli_code_test_export.py::TestCliCodeExportAndDefense::test_cli_code_rejects_invalid_time_budget`、`tests/test_cli_code_test_export.py::TestCliCodeExportAndDefense::test_cli_code_rejects_invalid_context_tokens`、`tests/test_cli_code_test_export.py::TestCliCodeExportAndDefense::test_cli_code_rejects_symlink_output`、`tests/test_cli_code_test_export.py::TestCliCodeExportAndDefense::test_cli_code_rejects_missing_parent_output`、`tests/test_cli_code_test_export.py::TestCliCodeExportAndDefense::test_cli_code_json_and_output_exports` | 本地 `pytest -q tests/test_cli_code_test_export.py -k "TestCliCodeExportAndDefense"`；GitHub Actions `Unit tests` | `3af08b9816e872c0c7dcf16c905398eb9bf0ebc2`；passed；CI [Run #44054392569](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44054392569) |
+| E2 | SF-CLI-02-A2 | `tests/test_cli_code_test_export.py::TestCliTestExportAndDefense::test_cli_test_rejects_invalid_timeout`、`tests/test_cli_code_test_export.py::TestCliTestExportAndDefense::test_cli_test_rejects_nonexistent_repo`、`tests/test_cli_code_test_export.py::TestCliTestExportAndDefense::test_cli_test_rejects_symlink_output`、`tests/test_cli_code_test_export.py::TestCliTestExportAndDefense::test_cli_test_host_json_and_output_exports`、`tests/test_cli_code_test_export.py::TestCliTestExportAndDefense::test_cli_test_docker_json_and_output_exports` | 本地 `pytest -q tests/test_cli_code_test_export.py -k "TestCliTestExportAndDefense"`；GitHub Actions `Unit tests` | `3af08b9816e872c0c7dcf16c905398eb9bf0ebc2`；passed；CI [Run #44054392569](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44054392569) |
+| E3 | SF-CLI-02-A3 | `tests/test_cli_code_test_export.py::TestCliSharedExportCollisions::test_cli_code_rejects_output_collision_with_repo_dir`、`tests/test_cli_code_test_export.py::TestCliSharedExportCollisions::test_cli_test_rejects_output_collision_with_repo_dir` | 本地 `pytest -q tests/test_cli_code_test_export.py -k "TestCliSharedExportCollisions"`；GitHub Actions `Unit tests` | `3af08b9816e872c0c7dcf16c905398eb9bf0ebc2`；passed；CI [Run #44054392569](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44054392569) |
+| E4 | SF-CLI-02-A4 | `tests/test_cli_code_test_export.py::TestCliCodeExportAndDefense::test_cli_code_json_and_output_exports`、`tests/test_cli_code_test_export.py::TestCliTestExportAndDefense::test_cli_test_host_json_and_output_exports`、`tests/test_cli_review_repair_export.py::test_cli_review_json_flag_and_safe_output`、`tests/test_workspaces_cli_export.py::test_workspaces_list_and_diff_json_and_output` | 本地 `pytest -q tests/test_cli_code_test_export.py tests/test_cli_review_repair_export.py tests/test_workspaces_cli_export.py`；GitHub Actions `Unit tests` | `3af08b9816e872c0c7dcf16c905398eb9bf0ebc2`；passed；CI [Run #44054392569](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44054392569) |
+
+执行记录：Base=`015dc6a75f0671a3537edc7706937a0826128bf9`；Branch=`feat/sf-cli-02`；Worktree=`selfforge-sf-cli-02`；PR=[#104](https://github.com/liuzhouquan/selfforge-agent/pull/104)；Source=`3af08b9816e872c0c7dcf16c905398eb9bf0ebc2`。实现 code 与 test 子命令参数边界防御、--json 结构化导出与安全 --output 非软链接写盘，以及 main() 入口显式命令分发加固（源码提交 `3af08b9816e872c0c7dcf16c905398eb9bf0ebc2`，[R1 CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44054392569) 全绿）。
+
+```text
+Owner / 状态：Codex（审查整合） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：015dc6a75f0671a3537edc7706937a0826128bf9 / feat/sf-cli-02 (worktree: selfforge-sf-cli-02) / 已验证源码 3af08b9816e872c0c7dcf16c905398eb9bf0ebc2；本提交更新文档
+已完成验收与证据 ID：SF-CLI-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码与专项测试已通过；真 Docker 与全量 CLI 回归测试绿灯；无未受控异常泄露
+PR / 准确 head CI / merge SHA（有则填）：PR #104 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44054392569 / 待合入回填
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待 R2 CI 运行及审查合入。
 ```
