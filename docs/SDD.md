@@ -157,6 +157,7 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
+| 50 | [SF-CORE-02](#sf-core-02) | In Review | Codex（本轮开发） | 无 | [PR #112](https://github.com/liuzhouquan/selfforge-agent/pull/112)：进程执行管道死锁防御、优雅终止降级、环境变量有界脱敏与 Git Context 修订严格校验 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2137,6 +2138,43 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44079340729（最终组合；各源PR见审查记录） / 010897851b27dc920e1892cf5c35568bfee3682d
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填六个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-CORE-02
+
+**目标：** 对核心子进程执行器（`run_bounded`）与 Git 上下文比对解析器（`build_context`）实施深度安全加固，建立双向大流管道死锁防御、子进程组 SIGTERM 优雅退出与 SIGKILL 阶梯降级策略、环境变量大小配额与敏感凭据脱敏隔离，以及 Git 比较修订 SHA 严格校验与 `--end-of-options` 选项注入隔离。
+
+**范围/入口：** 改动 `src/selfforge_agent/core/process.py`、`src/selfforge_agent/core/git_context.py` 与专项复现安全测试 `tests/test_core_hardening.py`；保持对 `worktree.py`、`delivery.py`、`github_pr.py`、`git_review.py` 等消费者的完全向后兼容。
+
+**行为：**
+1. `run_bounded` 保持非阻塞多路复用读循环，防御子进程 stdout/stderr 双向高并发大流输出（如各 200 KiB）造成的管道死锁，严格默认 `stdin=subprocess.DEVNULL` 杜绝交互输入挂起；
+2. 进程组终止策略实现阶梯降级：POSIX 环境下优先向进程组发送 `SIGTERM` 并给予短暂宽限期（0.15s）以便子进程执行优雅退出/资源清理，未退出或忽略 SIGTERM 则升级发送 `SIGKILL`，捕获并忽略 `ProcessLookupError`、`PermissionError` 与 `OSError` 防生命周期竞态崩溃；
+3. `_validate_env` 实施资源有界与语法防御：限制环境变量个数 `<= 500`（`MAX_ENV_COUNT`），键值编码后总大小 `<= 64 KiB`（`MAX_ENV_BYTES`），单键名长度 `<= 1024`，严格拒绝空键名、包含 `=` 或换行符（`\r`、`\n`）的键名；
+4. `run_bounded` 支持 `scrub_credentials=True` 与 `allow_credentials` 白名单控制，调用不受信子进程时自动剥离 API Key、Token、Secret 等敏感凭据；
+5. `_commit` 与 `build_context` 严格校验 Git commit 修订标识（拒绝空、纯空格、包含空字节 `\0` 或非十六进制字符串），向底层 `git rev-parse` 与 `git diff` 传递 `--end-of-options` 隔离修订参数，防御选项注入逃逸。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-CORE-02-A1 | 双向各 200 KiB 大量流式输出在非阻塞多路复用调度下无死锁完成，交互式 stdin 立即触发 EOF 不挂起，进程提前退出时管道输出完整捕获 | `tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening` 3 个测试 | E1 |
+| SF-CORE-02-A2 | 子进程超时时优先触发 SIGTERM 优雅清理处理函数，对忽略 SIGTERM 的进程可靠升级为 SIGKILL 强制回收，消除 ProcessLookupError 竞态 | `tests/test_core_hardening.py::TestProcessGracefulTerminationHardening` 2 个测试 | E2 |
+| SF-CORE-02-A3 | 环境变量个数上限 500 与总字节 64 KiB 有界防御生效，拒绝空键、等号与换行，scrub_credentials 可靠脱敏敏感 Token 并支持白名单放行 | `tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening` 5 个测试 | E3 |
+| SF-CORE-02-A4 | 非法格式/短 SHA/选项式 revision 严格抛出 GitContextError，底层 git rev-parse 与 git diff 严格通过 --end-of-options 隔离参数 | `tests/test_core_hardening.py::TestGitContextSHAHardening` 2 个测试 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CORE-02-A1 | `tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening::test_run_bounded_massive_bidirectional_output_no_deadlock`、`tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening::test_run_bounded_stdin_devnull_prevents_interactive_hang`、`tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening::test_run_bounded_drains_pipes_when_process_exits_early` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_core_hardening.py`；GitHub Actions CI `Unit tests` | `80a99708cdb81d0b37545c252f61afe42c372f9c`；passed；CI [Run #44241617859](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859) |
+| E2 | SF-CORE-02-A2 | `tests/test_core_hardening.py::TestProcessGracefulTerminationHardening::test_process_group_sigterm_before_sigkill_graceful_cleanup`、`tests/test_core_hardening.py::TestProcessGracefulTerminationHardening::test_process_group_sigkill_escalation_when_sigterm_ignored` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_core_hardening.py`；GitHub Actions CI `Unit tests` | `80a99708cdb81d0b37545c252f61afe42c372f9c`；passed；CI [Run #44241617859](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859) |
+| E3 | SF-CORE-02-A3 | `tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_enforces_max_count`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_enforces_max_total_bytes`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_rejects_empty_keys_equals_and_newlines`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_run_bounded_scrubs_sensitive_credentials_when_requested`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_run_bounded_allow_credentials_whitelisting` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_core_hardening.py`；GitHub Actions CI `Unit tests` | `80a99708cdb81d0b37545c252f61afe42c372f9c`；passed；CI [Run #44241617859](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859) |
+| E4 | SF-CORE-02-A4 | `tests/test_core_hardening.py::TestGitContextSHAHardening::test_build_context_rejects_malformed_shas`、`tests/test_core_hardening.py::TestGitContextSHAHardening::test_git_context_passes_end_of_options_to_git` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_core_hardening.py`；GitHub Actions CI `Unit tests` | `80a99708cdb81d0b37545c252f61afe42c372f9c`；passed；CI [Run #44241617859](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859) |
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-core-02 (worktree: selfforge-sf-core-02) / 80a99708cdb81d0b37545c252f61afe42c372f9c
+已完成验收与证据 ID：SF-CORE-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码与测试已合入 PR #112并通过 R1 CI；本提交仅含文档更新
+PR / 准确 head CI / merge SHA（有则填）：PR #112 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #112，合并后更新基线 main 并回填 merge SHA。
 ```
 
 ## 5. 验收追踪与执行记录格式
