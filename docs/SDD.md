@@ -157,6 +157,7 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
+| 50 | [SF-FP-02](#sf-fp-02) | In Review | Antigravity | SF-FPR-01（Merged） | [PR #116](https://github.com/liuzhouquan/selfforge-agent/pull/116)：工作区快照指纹加固与跨平台确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、跨平台权限模式与路径规范化、Unicode文件名NFC排序稳定性及取消中断精准响应 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2137,6 +2138,42 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44079340729（最终组合；各源PR见审查记录） / 010897851b27dc920e1892cf5c35568bfee3682d
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填六个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-FP-02
+
+**目标：** 工作区快照指纹加固与跨平台确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、跨平台权限模式与路径规范化、Unicode文件名NFC排序稳定性及取消中断精准响应。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/fingerprint.py` 与专项测试 `tests/test_fingerprint_hardening.py`；保持与 `delivery.py`、`agent.py`、`regression_validation.py` 及既有测试 `test_workspace_fingerprint.py`、`test_workspace_fingerprint_security.py` 的完全向后兼容。
+
+**行为：**
+1. 根路径严格输入防御：`root` 必须为有效 `Path` 或 `str` 且非空、非纯空白（`ValueError("root cannot be empty or whitespace")`），阻断将空字符串误解析为当前工作目录的静默漏洞；非存在路径或普通文件严格以 `WorkspaceSnapshotError` 拒绝（fail-closed）；
+2. 单文件大小有界上限：定义并导出 `MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024`（10 MiB），在 `stat.st_size` 元数据检查和流式块读取（64 KiB 块）双重入口均强制判定并受控拦截超限文件，防范单文件资源消耗耗尽；
+3. 跨平台哈希确定性与权限规范化：针对不同环境 umask 差异（如 `0o644` vs `0o664`、`0o755` vs `0o775`），在保留执行位语义（`0o644` 与 `0o755` 产生不同指纹）的前提下对文件和目录模式统一规范化；路径分隔符强制规范为 POSIX 正斜杠 `/`；文件名采用 Unicode NFC 规范化进行稳定排序，确保跨平台（Linux、macOS、Windows）指纹确定一致；
+4. 流式取消与超时精准响应及 ELOOP 隔离：在流式分块读取过程中每次读取调用 `check()` 实时响应 `threading.Event` 取消信号（抛出 `KeyboardInterrupt`）与单调时钟截止时间 `deadline`（抛出 `TimeoutError`）；针对符链循环引用（`errno.ELOOP`）及底层读取异常，受控收敛为 `WorkspaceSnapshotError`，绝不泄露敏感局部信息。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-FP-02-A1 | 空字符串、纯空白字符或空路径作为 root 传入时严格抛出 ValueError；非存在或非目录 root 受控抛出 WorkspaceSnapshotError | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense` 各用例 | E1 |
+| SF-FP-02-A2 | 导出 MAX_SINGLE_FILE_BYTES 常量，单文件超过单文件上限（元数据或动态膨胀）严格抛出包含 "file size limit" 的 WorkspaceSnapshotError | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds` 各用例 | E2 |
+| SF-FP-02-A3 | 文件/目录 umask 差异（0o644 vs 0o664, 0o755 vs 0o775）产生相同指纹，可执行位语义（0o644 vs 0o755）产生不同指纹；路径正斜杠与 NFC 排序保持跨平台确定性 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism` 各用例 | E3 |
+| SF-FP-02-A4 | 大文件流式读取期间实时响应 cancel.set() 抛出 KeyboardInterrupt；过期 deadline 立即超时；符号链接 ELOOP/OSError 受控捕获并不泄露路径 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout` 及 `test_symlink_eloop_handled_fail_closed` 用例 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-FP-02-A1 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_empty_string`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_whitespace_string`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_empty_path`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_nonexistent_directory`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_regular_file` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_fingerprint_hardening.py`；GitHub Actions CI `Unit tests` | `ef73ce5f04ffebef3628c11536a542c9d4c08ea1`；passed；CI [Run #44350228282](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282) |
+| E2 | SF-FP-02-A2 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds::test_single_file_exceeds_size_limit_fails_closed`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds::test_single_file_streaming_read_bounds_size` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_fingerprint_hardening.py`；GitHub Actions CI `Unit tests` | `ef73ce5f04ffebef3628c11536a542c9d4c08ea1`；passed；CI [Run #44350228282](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282) |
+| E3 | SF-FP-02-A3 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_umask_group_write_permission_normalized`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_executable_permission_bit_is_preserved`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_directory_permission_normalized`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_unicode_filename_nfc_nfd_deterministic_sorting` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_fingerprint_hardening.py`；GitHub Actions CI `Unit tests` | `ef73ce5f04ffebef3628c11536a542c9d4c08ea1`；passed；CI [Run #44350228282](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282) |
+| E4 | SF-FP-02-A4 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout::test_cancellation_during_large_file_streaming`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout::test_deadline_precision_rejects_negative_or_zero_deadline`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_symlink_eloop_handled_fail_closed` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_fingerprint_hardening.py`；GitHub Actions CI `Unit tests` | `ef73ce5f04ffebef3628c11536a542c9d4c08ea1`；passed；CI [Run #44350228282](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-fp-02 (worktree: selfforge-sf-fp-02) / 已验证源码 ef73ce5f04ffebef3628c11536a542c9d4c08ea1
+已完成验收与证据 ID：SF-FP-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未完成项；全量测试与加固套件 82 passed 1 skipped；真 Docker 集成测试通过；无未提交源码改动
+PR / 准确 head CI / merge SHA（有则填）：PR #116 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查并合并 PR #116，更新 main 基线。
 ```
 
 ## 5. 验收追踪与执行记录格式
