@@ -157,6 +157,7 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
+| 50 | [SF-WS-09](#sf-ws-09) | In Review | Codex（本轮开发） | 无 | [PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111)：工作区差异统计内存边界防御、二进制变更脱敏、文件锁安全加固及分支生命周期安全清理 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2137,6 +2138,44 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44079340729（最终组合；各源PR见审查记录） / 010897851b27dc920e1892cf5c35568bfee3682d
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填六个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-WS-09
+
+**目标：** 对工作区差异比对（`workspace_diff`）与工作区管理（`workspace.py`）进行深度安全加固：未跟踪文件实施有界读取与全局差异预算防御防范内存耗尽（OOM）、二进制文件识别与内容脱敏防止二进制乱码泄露、工作区并发锁文件启用 `O_CLOEXEC` 与符号链接 Fail-Closed 拦截、以及工作区分支清理与 `lexists` 断链软链接防御。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/workspace_diff.py`、`src/selfforge_agent/runtime/workspace.py` 并增加专项复现安全测试 `tests/test_workspace_diff_hardening.py`；保持对 `CodingWorkspace`、`workspace_diff` 及既有 API/CLI 调用的完全向后兼容。
+
+**行为与防御：**
+1. `workspace_diff` 针对未跟踪文件读取采用有界 `os.open` 配合 `O_NOFOLLOW | O_CLOEXEC`，读取上限 `MAX_FILE_BYTES + 1` 字节，彻底消除竞争性大文件追加导致的内存溢出（OOM）；
+2. 引入 `MAX_TOTAL_DIFF_BYTES = 256_000` 全局差异字节预算，当全量文件的累积 patch 达到预算时，后续文件优雅截断并输出 `[Total patch budget exhausted; remaining files omitted]`；
+3. 二进制文件识别与脱敏：未跟踪文件检测空字节 `\x00`，输出 `[Untracked binary file omitted]`；已跟踪文件检测二进制变更及空字节，输出安全脱敏标记，杜绝二进制乱码或数据泄露；
+4. 严格校验 `workspace.base_sha` 为 40 位小写十六进制 SHA，并在 `git diff` 与 `rev-parse` 中使用 `--end-of-options` 阻断选项注入攻击；
+5. `try_workspace_lock` 强制使用 `O_CLOEXEC` 标志（防范文件描述符泄露至子进程），权限受控归一化为 `0o600`，严格拦截指向锁文件的符号链接（防范路径穿透/劫持）；`unlock_workspace` 安全降级捕获 `OSError`；
+6. `CodingWorkspaceManager.remove` 支持 `delete_branch=True` 安全清理关联的 `selfforge/{session_id}` 分支，避免孤立分支遗留；`create` 采用 `os.path.lexists` 彻底防御工作区路径与元数据断链软链接；`_paths` 在解析指纹时调用 `resolve()` 确保指纹确定性。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-WS-09-A1 | 未跟踪文件采用有界读取防范竞争性追加导致的 OOM；全局累积差异字节预算限制 MAX_TOTAL_DIFF_BYTES 生效，超限文件输出优雅截断说明；base_sha 格式强校验 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening` 专项测试 | E1 |
+| SF-WS-09-A2 | 未跟踪文件严格检测空字节 \x00 输出 [Untracked binary file omitted]；已跟踪文件二进制变更及含有空字节的 patch 安全脱敏，杜绝二进制数据泄露入 JSON | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening` 专项测试 | E2 |
+| SF-WS-09-A3 | try_workspace_lock 启用 O_CLOEXEC 并在锁文件上设置 0o600 权限；对锁目录中的符号链接执行 Fail-Closed 拦截；unlock_workspace 优雅处理已关闭或异常 fd | `tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening` 专项测试 | E3 |
+| SF-WS-09-A4 | remove 支持安全清理 selfforge/{session_id} 分支；create 使用 lexists 防范断链软链接；_paths 规范化仓库路径；全量单元测试与 Docker 集成测试通过，CI 全绿 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening` 与 GitHub Actions CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-WS-09-A1 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_untracked_bounded_read_prevents_oom_on_large_file`、`tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_cumulative_diff_budget_exhaustion_truncates_output`、`tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_workspace_diff_validates_base_sha` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_workspace_diff_hardening.py`；GitHub Actions CI `Unit tests` | `58ac28859e44bc605553e18090ba24564c7f0709`；passed；CI [Run #44234979083](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083) success；[PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111) |
+| E2 | SF-WS-09-A2 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_untracked_binary_file_with_null_bytes_is_redacted`、`tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_tracked_binary_diff_is_sanitized` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_workspace_diff_hardening.py`；GitHub Actions CI `Unit tests` | `58ac28859e44bc605553e18090ba24564c7f0709`；passed；CI [Run #44234979083](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083) success；[PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111) |
+| E3 | SF-WS-09-A3 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_try_workspace_lock_sets_cloexec_and_permission_0600`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_try_workspace_lock_rejects_symlink_lock_file`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_unlock_workspace_handles_invalid_or_closed_fd_safely` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_workspace_diff_hardening.py`；GitHub Actions CI `Unit tests` | `58ac28859e44bc605553e18090ba24564c7f0709`；passed；CI [Run #44234979083](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083) success；[PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111) |
+| E4 | SF-WS-09-A4 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_remove_locked_workspace_is_rejected`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_remove_cleans_up_worktree_branch`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_create_rejects_dangling_symlink_path_and_metadata`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_paths_fingerprint_normalized_with_trailing_slash` | `ruff check .`、`python3 scripts/check_sdd.py`、`git diff --check`、`pytest tests/test_workspace_diff_hardening.py` 与 GitHub Actions CI（单元测试 + Docker 集成测试） | `58ac28859e44bc605553e18090ba24564c7f0709`；passed；CI [Run #44234979083](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083) success；[PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111) |
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-ws-09 (worktree: selfforge-sf-ws-09) / 58ac28859e44bc605553e18090ba24564c7f0709
+已完成验收与证据 ID：SF-WS-09-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码与测试已全量验证通过；无未提交源码；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #111 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；PR #111 R1 CI 已全部成功通过
+下一步：待 PR #111 审查合并至 main。
 ```
 
 ## 5. 验收追踪与执行记录格式
