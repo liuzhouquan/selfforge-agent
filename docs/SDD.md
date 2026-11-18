@@ -157,6 +157,7 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
+| 50 | [SF-HTTP-01](#sf-http-01) | In Review | Codex（自主开发） | 无 | [PR #114](https://github.com/liuzhouquan/selfforge-agent/pull/114)：模型 HTTP 传输与网络安全加固：CRLF 头注入防御、自定义 Header 格式与上限校验、请求体 Schema/大小有界防御、URL 片段拦截与 IPv6 环回支持、瞬态故障指数退避重试与截止期守护、响应流 Chunk 计数预算与 Socket 资源泄漏防护 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2137,6 +2138,45 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44079340729（最终组合；各源PR见审查记录） / 010897851b27dc920e1892cf5c35568bfee3682d
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填六个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-HTTP-01
+
+**目标：** 对模型供应商底层 HTTP 传输层（`request_json`）进行全方位网络与协议安全加固，防御 CRLF 响应头与请求头注入、请求体非结构化畸形与超限 DoS、URL 片段标识符伪造、慢速单字节 Slowloris 流式耗尽攻击，并提供瞬态网络故障（429/502/503/504 与连接重置）的指数退避重试与全局截止期守护。
+
+**范围/入口：** 改动 `src/selfforge_agent/integrations/model_http.py`；新增安全与弹性测试套件 `tests/test_model_http_hardening.py`；保持与既有调用方（`providers.py`、`review/deepseek.py`、`coding/model_client.py`、`runtime/model.py`）及既有安全测试 `tests/test_model_http_security.py` 的完全向后兼容。
+
+**行为：**
+1. `_validate_headers` 严格校验自定义请求头字典：限制请求头数量不超过 50，键长度不超过 128 字符且符合 ASCII 规范（`^[A-Za-z0-9_-]+$`），值长度不超过 4096 字符，总编码大小不超过 16 KiB，严格杜绝 `\r`、`\n`、`\x00`，并显式拒绝 `connection`、`upgrade`、`keep-alive`、`proxy-authorization`、`transfer-encoding`、`content-length` 等逐跳/冲突标头；
+2. 校验请求体 `payload` 必须为 `dict` 或 `None`，序列化字节严格限制在 16 MiB 内，并将解析/序列化异常安全映射为受控 `ValueError`；
+3. `_validate_model_url` 显式拦截带有 URL 片段（`#`）的请求地址，防止客户端片段注入伪造，并支持 IPv6 环回地址（`[::1]`）；
+4. `request_json` 支持 `max_retries`（0–5）与 `backoff_factor`，针对 429、502、503、504 与瞬态网络连接异常执行指数退避重试，对 400、401、403、404、422 等客户端错误 Fail-Closed 立即终止，并全程严守单次请求总预算的绝对截止期（`deadline`）；
+5. 限制响应读取循环的最大 Chunk 数量（`MAX_CHUNKS = 100_000`），防止慢速流耗尽资源，安全适配无 `read1` 的流对象回退至 `read`，并确保每次读取更新底层 Socket 超时及上下文退出时彻底释放 Socket。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HTTP-01-A1 | 自定义请求头注入 CRLF/空字节、超出 50 个或键值超限、包含逐跳标头均被拒绝，合法头正常透传 | `tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection` | E1 |
+| SF-HTTP-01-A2 | 非 dict 请求体被拒，超 16 MiB 载荷被拒，无法序列化载荷受控映射为 ValueError | `tests/test_model_http_hardening.py::TestPayloadValidationAndBounds` | E2 |
+| SF-HTTP-01-A3 | 包含 URL 片段（#）的地址被拒，IPv6 环回地址允许访问，非法 HTTP 方法被拒 | `tests/test_model_http_hardening.py::TestURLValidationHardening`、`TestStreamingBudgetAndMethodValidation` | E3 |
+| SF-HTTP-01-A4 | 瞬态 503 按指数退避重试成功，401/404 立即拒绝不重试，重试严守总截止期，单字节慢流受 Chunk 预算限制 | `tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening`、`TestStreamingBudgetAndMethodValidation` | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-HTTP-01-A1 | `tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_crlf_in_custom_headers`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_hop_by_hop_headers`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_oversized_headers_count_and_length`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_invalid_header_keys`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_accepts_valid_custom_headers` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_model_http_hardening.py`；GitHub Actions CI `Unit tests` | `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad`；passed；CI [Run #44292350166](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166) |
+| E2 | SF-HTTP-01-A2 | `tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_rejects_non_dict_payload`、`tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_rejects_oversized_payload`、`tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_handles_unserializable_payload_gracefully` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_model_http_hardening.py`；GitHub Actions CI `Unit tests` | `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad`；passed；CI [Run #44292350166](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166) |
+| E3 | SF-HTTP-01-A3 | `tests/test_model_http_hardening.py::TestURLValidationHardening::test_request_json_rejects_url_with_fragment`、`tests/test_model_http_hardening.py::TestURLValidationHardening::test_request_json_accepts_ipv6_loopback`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_rejects_invalid_methods`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_accepts_custom_method` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_model_http_hardening.py`；GitHub Actions CI `Unit tests` | `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad`；passed；CI [Run #44292350166](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166) |
+| E4 | SF-HTTP-01-A4 | `tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_rejects_invalid_retry_parameters`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_retries_transient_503_and_succeeds`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_does_not_retry_401_or_404`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_retry_respects_total_deadline`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_enforces_max_chunks_limit`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_read_fallback_when_read1_missing` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_model_http_hardening.py`；GitHub Actions CI `Unit tests` | `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad`；passed；CI [Run #44292350166](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166) |
+
+执行记录（Owner/状态以上表为准）：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-http-01`；Worktree=`selfforge-sf-http-01`；PR=[#114](https://github.com/liuzhouquan/selfforge-agent/pull/114)。先编写 `tests/test_model_http_hardening.py` 抓住 15 项基线缺陷，随后完成实现；源码提交 `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad` 已通过本地回归（18 passed，非集成全量 1660 passed）与 CI `Run #44292350166`（Lint / SDD / Unit 1660 passed / Docker integration 15 passed）。
+
+```text
+Owner / 状态：Codex（自主开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-http-01 (worktree: selfforge-sf-http-01) / a5dbd0b2f8e1fae32a67e89aa21235451e5927ad
+已完成验收与证据 ID：SF-HTTP-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无
+PR / 准确 head CI / merge SHA（有则填）：PR #114 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查并合并 PR #114；准备后续任务开发。
 ```
 
 ## 5. 验收追踪与执行记录格式
