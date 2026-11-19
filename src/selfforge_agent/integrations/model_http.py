@@ -213,10 +213,10 @@ def request_json(
     if (
         isinstance(backoff_factor, bool)
         or not isinstance(backoff_factor, (int, float))
-        or backoff_factor < 0
+        or not 0 <= backoff_factor <= MAX_HTTP_TIMEOUT
         or not math.isfinite(backoff_factor)
     ):
-        raise ValueError("backoff_factor must be a finite non-negative number")
+        raise ValueError("backoff_factor must be finite and between 0 and 300")
 
     custom_headers = _validate_headers(headers)
 
