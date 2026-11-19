@@ -331,3 +331,18 @@ def test_artifact_operations_reject_ancestor_symlink(tmp_path, operation):
 def test_failure_reason_rejects_terminal_osc_sequence(tmp_path):
     with pytest.raises(ValueError, match='ANSI|control'):
         write_failure(tmp_path, case='fixture', repeat=0, reason='\x1b]0;spoof\x07failed', visible=None, holdout=None)
+
+
+@pytest.mark.parametrize('relation', ['inside_repository', 'contains_repository'])
+def test_artifact_isolation_rejects_raw_parent_segments_without_writes(tmp_path, relation):
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    prefix = tmp_path / 'prefix'
+    prefix.mkdir()
+    directory = prefix / '..'
+    if relation == 'inside_repository':
+        directory = directory / 'repo' / 'artifacts'
+    before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob('*'))
+    with pytest.raises(ValueError):
+        prepare_artifacts(directory, [repo])
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob('*')) == before

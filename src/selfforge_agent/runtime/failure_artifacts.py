@@ -104,6 +104,8 @@ def prepare_artifacts(directory: Path | str, repositories: list[Path | str]) -> 
         raise ValueError("null bytes not allowed in directory path")
 
     directory_path = Path(directory).expanduser()
+    if ".." in directory_path.parts:
+        raise ValueError("Artifact directory must not contain parent traversal")
     if any(p.is_symlink() for p in (directory_path, *directory_path.parents)):
         raise ValueError("Failure artifacts directory must be a non-symlink")
     parent = directory_path.absolute()
