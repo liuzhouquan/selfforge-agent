@@ -3,13 +3,14 @@
 import json
 import math
 import os
+import posixpath
 import re
 import stat
 import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from selfforge_agent.coding.worktree import WorktreeError, git, git_bounded
 from selfforge_agent.core.process import run_bounded
@@ -19,13 +20,20 @@ from selfforge_agent.runtime.session import SessionStore
 from selfforge_agent.runtime.workspace import CodingWorkspace
 from selfforge_agent.runtime.workspace_diff import MAX_PATH_LIST_BYTES, _visible
 
-_PR_URL_PATTERN = re.compile(
-    r"https://github\.com/[^/\s]+/[^/\s]+/pull/(?P<number>[1-9][0-9]*)"
+_PR_URL_SEARCH_RE = re.compile(
+    r"https://github\.com/(?P<owner>[a-zA-Z0-9][a-zA-Z0-9._-]*)/(?P<repo>[a-zA-Z0-9][a-zA-Z0-9._-]*)/pull/(?P<number>[1-9][0-9]*)"
 )
+_PR_URL_EXACT_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[a-zA-Z0-9][a-zA-Z0-9._-]*)/(?P<repo>[a-zA-Z0-9][a-zA-Z0-9._-]*)/pull/(?P<number>[1-9][0-9]*)/?$"
+)
+_PR_URL_PATTERN = _PR_URL_SEARCH_RE
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 _REF_NAME_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-\./]+$")
 _REMOTE_NAME_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+_SESSION_ID_SAFE_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
+_BATCH_SIZE = 100
+MAX_EXISTING_PRS = 100
 MAX_COMMIT_MESSAGE_LENGTH = 64 * 1024
 MAX_PR_TITLE_LENGTH = 1024
 MAX_PR_BODY_BYTES = 256 * 1024
@@ -37,12 +45,104 @@ class DeliveryError(ValueError):
     """A commit or pull request operation failed or was rejected."""
 
 
+def _validate_commit_sha(sha: object) -> str:
+    if not isinstance(sha, str):
+        raise TypeError("commit_sha must be a string")
+    norm = sha.strip().lower()
+    if not _SHA40_RE.match(norm):
+        raise ValueError(f"commit_sha must be a 40-character hexadecimal string: {sha}")
+    return norm
+
+
+def _validate_session_id(sess_id: object) -> str:
+    if not isinstance(sess_id, str):
+        raise TypeError("session_id must be a string")
+    sess = sess_id.strip()
+    if not _SESSION_ID_SAFE_RE.match(sess) or ".." in sess or "/" in sess or "\\" in sess:
+        raise ValueError(f"Invalid session_id: {sess_id}")
+    return sess
+
+
+def _validate_git_ref_name(ref: object, param_name: str = "branch") -> str:
+    if not isinstance(ref, str):
+        raise TypeError(f"{param_name} must be a string")
+    r = ref.strip()
+    if (
+        not r
+        or len(r) > 256
+        or r.startswith("-")
+        or "\0" in r
+        or "\n" in r
+        or "\r" in r
+        or not _REF_NAME_SAFE_RE.match(r)
+        or ".." in r
+        or "//" in r
+        or "@{" in r
+        or r.endswith(("/", ".lock", "."))
+    ):
+        raise DeliveryError(f"Invalid {param_name} name: {ref}")
+    return r
+
+
+def _validate_relative_path(path: object) -> str:
+    if not isinstance(path, str) or not path.strip():
+        raise TypeError("path must be a non-empty string")
+    p = path.strip()
+    if "\0" in p or "\r" in p or "\n" in p:
+        raise ValueError("path must not contain control characters or null bytes")
+    if p.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", p):
+        raise ValueError(f"Absolute paths not permitted: {path}")
+    norm = posixpath.normpath(p)
+    if norm in (".", "..") or norm.startswith("../"):
+        raise ValueError(f"Path traversal not permitted: {path}")
+    return p
+
+
 class CommitResult(BaseModel):
     session_id: str
     branch: str
     commit_sha: str
     message: str
     files_committed: list[str] = Field(default_factory=list)
+
+    @field_validator("commit_sha", mode="before")
+    @classmethod
+    def _check_sha(cls, v: object) -> str:
+        return _validate_commit_sha(v)
+
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def _check_session(cls, v: object) -> str:
+        return _validate_session_id(v)
+
+    @field_validator("branch", mode="before")
+    @classmethod
+    def _check_branch(cls, v: object) -> str:
+        try:
+            return _validate_git_ref_name(v, "branch")
+        except DeliveryError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def _check_message(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise TypeError("message must be a string")
+        msg = v.strip()
+        if not msg:
+            raise ValueError("message must not be empty")
+        if "\0" in v:
+            raise ValueError("message must not contain null bytes")
+        if len(v) > MAX_COMMIT_MESSAGE_LENGTH:
+            raise ValueError(f"message exceeds maximum length of {MAX_COMMIT_MESSAGE_LENGTH}")
+        return msg
+
+    @field_validator("files_committed", mode="before")
+    @classmethod
+    def _check_files(cls, v: object) -> list[str]:
+        if not isinstance(v, (list, tuple)):
+            raise TypeError("files_committed must be a list")
+        return [_validate_relative_path(p) for p in v]
 
 
 class PRResult(BaseModel):
@@ -53,11 +153,82 @@ class PRResult(BaseModel):
     pr_number: int | None = None
     title: str
 
+    @field_validator("commit_sha", mode="before")
+    @classmethod
+    def _check_sha(cls, v: object) -> str:
+        return _validate_commit_sha(v)
+
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def _check_session(cls, v: object) -> str:
+        return _validate_session_id(v)
+
+    @field_validator("branch", mode="before")
+    @classmethod
+    def _check_branch(cls, v: object) -> str:
+        try:
+            return _validate_git_ref_name(v, "branch")
+        except DeliveryError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("pr_url", mode="before")
+    @classmethod
+    def _check_url(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise TypeError("pr_url must be a string")
+        url = v.strip()
+        if not _PR_URL_EXACT_RE.fullmatch(url):
+            raise ValueError(f"Invalid pr_url format: {v}")
+        return url
+
+    @field_validator("pr_number", mode="before")
+    @classmethod
+    def _check_pr_number(cls, v: object) -> int | None:
+        if v is None:
+            return None
+        if type(v) is not int or v <= 0:
+            raise ValueError(f"pr_number must be a positive integer: {v}")
+        return v
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _check_title(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise TypeError("title must be a string")
+        t = v.strip()
+        if not t:
+            raise ValueError("title must not be empty")
+        if "\n" in v or "\r" in v or "\0" in v:
+            raise ValueError("title must not contain newlines or null bytes")
+        if len(v) > MAX_PR_TITLE_LENGTH:
+            raise ValueError(f"title exceeds maximum length of {MAX_PR_TITLE_LENGTH}")
+        return t
+
 
 class RevertResult(BaseModel):
     session_id: str
     branch: str
     reverted_files: list[str] = Field(default_factory=list)
+
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def _check_session(cls, v: object) -> str:
+        return _validate_session_id(v)
+
+    @field_validator("branch", mode="before")
+    @classmethod
+    def _check_branch(cls, v: object) -> str:
+        try:
+            return _validate_git_ref_name(v, "branch")
+        except DeliveryError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("reverted_files", mode="before")
+    @classmethod
+    def _check_files(cls, v: object) -> list[str]:
+        if not isinstance(v, (list, tuple)):
+            raise TypeError("reverted_files must be a list")
+        return [_validate_relative_path(p) for p in v]
 
 
 def _validate_workspace(workspace: CodingWorkspace) -> None:
@@ -71,15 +242,17 @@ def _validate_workspace(workspace: CodingWorkspace) -> None:
         raise TypeError("workspace.repository must be a Path instance")
     if workspace.repository.is_symlink() or not workspace.repository.is_dir():
         raise DeliveryError(f"Workspace repository is invalid or a symlink: {workspace.repository}")
-    if not isinstance(workspace.session_id, str) or not workspace.session_id.isalnum():
+    if not isinstance(workspace.session_id, str):
+        raise TypeError("workspace.session_id must be a string")
+    sess = workspace.session_id.strip()
+    if not _SESSION_ID_SAFE_RE.match(sess) or ".." in sess or "/" in sess or "\\" in sess:
         raise DeliveryError(f"Invalid workspace session_id: {workspace.session_id}")
-    if (
-        not isinstance(workspace.branch, str)
-        or not workspace.branch
-        or workspace.branch.startswith("-")
-        or not _REF_NAME_SAFE_RE.match(workspace.branch)
-    ):
-        raise DeliveryError(f"Invalid workspace branch: {workspace.branch}")
+    _validate_git_ref_name(workspace.branch, "workspace branch")
+    if not isinstance(workspace.base_sha, str):
+        raise TypeError("workspace.base_sha must be a string")
+    base_sha = workspace.base_sha.strip().lower()
+    if not _SHA40_RE.match(base_sha):
+        raise DeliveryError(f"Invalid workspace base_sha: {workspace.base_sha}")
 
 
 def _paths(workspace: CodingWorkspace, *args: str) -> list[str]:
@@ -91,6 +264,15 @@ def _paths(workspace: CodingWorkspace, *args: str) -> list[str]:
     if truncated:
         raise DeliveryError("Changed-path list exceeds the delivery limit")
     return [p for p in output.split("\0") if p]
+
+
+def _sanitize_git_author_field(val: str | None) -> str | None:
+    if not isinstance(val, str):
+        return None
+    v = val.strip()
+    if not v or len(v) > 256 or "\n" in v or "\r" in v or "\0" in v or v.startswith("-"):
+        return None
+    return v
 
 
 def commit_workspace(
@@ -116,6 +298,8 @@ def commit_workspace(
             raise TypeError("author_name must be a string")
         if "\n" in author_name or "\r" in author_name or "\0" in author_name:
             raise DeliveryError("author_name must not contain newlines or null bytes")
+        if author_name.startswith("-"):
+            raise DeliveryError("author_name must not start with a hyphen")
         if len(author_name) > 256 or not author_name.strip():
             raise DeliveryError("author_name must be a non-empty string up to 256 characters")
 
@@ -124,6 +308,8 @@ def commit_workspace(
             raise TypeError("author_email must be a string")
         if "\n" in author_email or "\r" in author_email or "\0" in author_email:
             raise DeliveryError("author_email must not contain newlines or null bytes")
+        if author_email.startswith("-"):
+            raise DeliveryError("author_email must not start with a hyphen")
         if len(author_email) > 256 or not author_email.strip():
             raise DeliveryError("author_email must be a non-empty string up to 256 characters")
 
@@ -188,7 +374,9 @@ def commit_workspace(
     if visible_changes:
         try:
             # Stage files in batches using git add
-            git(workspace.path, "--literal-pathspecs", "add", "--", *visible_changes)
+            for i in range(0, len(visible_changes), _BATCH_SIZE):
+                batch = visible_changes[i : i + _BATCH_SIZE]
+                git(workspace.path, "--literal-pathspecs", "add", "--", *batch)
         except WorktreeError as exc:
             raise DeliveryError(f"Failed to stage changes: {exc}") from exc
 
@@ -209,8 +397,8 @@ def commit_workspace(
     except WorktreeError:
         config_email = None
 
-    effective_name = author_name or config_name or "selfForge Agent"
-    effective_email = author_email or config_email or "agent@selfforge.local"
+    effective_name = author_name or _sanitize_git_author_field(config_name) or "selfForge Agent"
+    effective_email = author_email or _sanitize_git_author_field(config_email) or "agent@selfforge.local"
 
     cmd = ["-c", f"user.name={effective_name}", "-c", f"user.email={effective_email}"] + cmd
 
@@ -238,8 +426,14 @@ def revert_workspace(
 ) -> RevertResult:
     """Discard all uncommitted changes and remove untracked files in the worktree."""
     _validate_workspace(workspace)
-    if session is not None and not isinstance(session, SessionStore):
-        raise TypeError("session must be a SessionStore instance or None")
+    if session is not None:
+        if not isinstance(session, SessionStore):
+            raise TypeError("session must be a SessionStore instance or None")
+        if session.session_id != workspace.session_id:
+            raise DeliveryError(
+                f"SessionStore session_id '{session.session_id}' does not match "
+                f"workspace session_id '{workspace.session_id}'"
+            )
 
     tracked = _paths(workspace, "diff", "--no-renames", "--name-only", "-z", "HEAD")
     untracked = _paths(workspace, "ls-files", "--others", "--exclude-standard", "-z")
@@ -254,17 +448,21 @@ def revert_workspace(
     reverted: list[str] = []
     if visible_tracked:
         try:
-            git(workspace.path, "--literal-pathspecs", "restore", "--source=HEAD",
-                "--staged", "--worktree", "--", *visible_tracked)
+            for i in range(0, len(visible_tracked), _BATCH_SIZE):
+                batch = visible_tracked[i : i + _BATCH_SIZE]
+                git(workspace.path, "--literal-pathspecs", "restore", "--source=HEAD",
+                    "--staged", "--worktree", "--", *batch)
             reverted.extend(visible_tracked)
         except WorktreeError as exc:
             raise DeliveryError(f"Failed to revert tracked changes: {exc}") from exc
 
     if visible_untracked:
         for rel in visible_untracked:
+            if ".." in rel or "\0" in rel:
+                continue
             target = workspace.path / rel
             try:
-                if not target.parent.resolve(strict=True).is_relative_to(workspace.path):
+                if not target.parent.resolve().is_relative_to(workspace.path):
                     continue
                 if target.is_symlink() or not target.is_dir():
                     # Unlink the entry, never the target of an untracked symlink.
@@ -331,14 +529,31 @@ def _existing_pull_request(workspace: CodingWorkspace, base_branch: str | None) 
         raise DeliveryError("Could not read the existing-PR list") from exc
     if not isinstance(requests, list) or any(not isinstance(pr, dict) for pr in requests):
         raise DeliveryError("GitHub returned an invalid existing-PR list")
+    if len(requests) > MAX_EXISTING_PRS:
+        raise DeliveryError(
+            f"Existing PR list count ({len(requests)}) exceeds maximum allowed ({MAX_EXISTING_PRS})"
+        )
     if len(requests) > 1:
         raise DeliveryError("Multiple open PRs use this head branch; specify a base branch")
     if not requests:
         return None
     pr = requests[0]
-    if (not isinstance(pr.get("url"), str) or not _PR_URL_PATTERN.fullmatch(pr["url"])
-            or type(pr.get("number")) is not int or not isinstance(pr.get("title"), str)):
-        raise DeliveryError("GitHub returned an incomplete existing-PR record")
+    url = pr.get("url")
+    number = pr.get("number")
+    title = pr.get("title")
+    if (
+        not isinstance(url, str)
+        or not _PR_URL_EXACT_RE.fullmatch(url.strip())
+        or type(number) is not int
+        or number <= 0
+        or not isinstance(title, str)
+        or not title.strip()
+        or "\0" in title
+        or "\r" in title
+        or "\n" in title
+        or len(title) > MAX_PR_TITLE_LENGTH
+    ):
+        raise DeliveryError("GitHub returned an incomplete or invalid existing-PR record")
     return pr
 
 
@@ -422,19 +637,18 @@ def create_pull_request(
     remote = remote.strip()
 
     if base_branch is not None:
-        if not isinstance(base_branch, str) or not base_branch.strip():
-            raise DeliveryError("base_branch must be a non-empty string if provided")
-        if (
-            base_branch.startswith("-")
-            or not _REF_NAME_SAFE_RE.match(base_branch.strip())
-            or "\0" in base_branch
-            or "\n" in base_branch
-        ):
-            raise DeliveryError(f"Invalid base branch name: {base_branch}")
-        base_branch = base_branch.strip()
+        base_branch = _validate_git_ref_name(base_branch, "base branch")
+        if base_branch == workspace.branch:
+            raise DeliveryError(f"base_branch must not be identical to workspace branch: {base_branch}")
 
-    if session_store is not None and not isinstance(session_store, SessionStore):
-        raise TypeError("session_store must be a SessionStore instance or None")
+    if session_store is not None:
+        if not isinstance(session_store, SessionStore):
+            raise TypeError("session_store must be a SessionStore instance or None")
+        if session_store.session_id != workspace.session_id:
+            raise DeliveryError(
+                f"SessionStore session_id '{session_store.session_id}' does not match "
+                f"workspace session_id '{workspace.session_id}'"
+            )
 
     commit_sha = git(workspace.path, "rev-parse", "HEAD").strip().lower()
     if not _SHA40_RE.match(commit_sha):
@@ -506,6 +720,10 @@ def create_pull_request(
     with ExitStack() as cleanup:
         if len(pr_body.encode("utf-8")) > 64 * 1024:
             body_file = cleanup.enter_context(tempfile.NamedTemporaryFile(mode="w", encoding="utf-8"))
+            try:
+                os.chmod(body_file.name, 0o600)
+            except OSError:
+                pass
             body_file.write(pr_body)
             body_file.flush()
             body_index = gh_args.index("--body")
