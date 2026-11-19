@@ -3,8 +3,7 @@
 Validates:
 1. Root input defense (empty/blank paths rejected fail-closed with ValueError).
 2. Resource bounding (single file size limit MAX_SINGLE_FILE_BYTES fails closed).
-3. Cross-platform hash determinism (umask permission normalization 0o644 vs 0o664,
-   while preserving executable bit distinction 0o644 vs 0o755; path normalization).
+3. Stable hashing that preserves actual path and permission identity.
 4. Unicode filename sorting stability (NFC vs NFD normalization).
 5. Cancellation and deadline responsiveness during streaming reads.
 6. Symlink ELOOP / OSError exception isolation fail-closed.
@@ -102,7 +101,7 @@ class TestWorkspaceFingerprintCrossPlatformDeterminism:
     """Determinism across umasks, path styles, and unicode encodings."""
 
     def test_umask_group_write_permission_normalized(self, tmp_path: Path) -> None:
-        """Permissions differing only by group/other write (0o644 vs 0o664) must yield identical hash."""
+        """Group write permission changes must invalidate evidence."""
         file_path = tmp_path / "module.py"
         file_path.write_text("print('test')\n")
 
@@ -112,7 +111,7 @@ class TestWorkspaceFingerprintCrossPlatformDeterminism:
         os.chmod(file_path, 0o664)
         hash_664 = workspace_fingerprint(tmp_path)
 
-        assert hash_644 == hash_664, "Umask difference (0o644 vs 0o664) produced non-deterministic fingerprint"
+        assert hash_644 != hash_664, "Permission changes must invalidate workspace evidence"
 
     def test_executable_permission_bit_is_preserved(self, tmp_path: Path) -> None:
         """Executable bit difference (0o644 vs 0o755) MUST change the fingerprint."""
@@ -128,7 +127,7 @@ class TestWorkspaceFingerprintCrossPlatformDeterminism:
         assert hash_non_exec != hash_exec, "Executable permission bit must alter workspace fingerprint"
 
     def test_directory_permission_normalized(self, tmp_path: Path) -> None:
-        """Directory permissions differing by group write (0o755 vs 0o775) must yield identical hash."""
+        """Directory permission changes must invalidate evidence."""
         sub_dir = tmp_path / "pkg"
         sub_dir.mkdir()
         (sub_dir / "init.py").write_text("# init\n")
@@ -139,7 +138,7 @@ class TestWorkspaceFingerprintCrossPlatformDeterminism:
         os.chmod(sub_dir, 0o775)
         hash_775 = workspace_fingerprint(tmp_path)
 
-        assert hash_755 == hash_775, "Directory umask difference (0o755 vs 0o775) must yield identical hash"
+        assert hash_755 != hash_775, "Directory permission changes must invalidate workspace evidence"
 
     def test_unicode_filename_nfc_nfd_deterministic_sorting(self, tmp_path: Path) -> None:
         """Sorting must be stable under Unicode NFC normalization."""
@@ -192,3 +191,20 @@ class TestWorkspaceFingerprintCancellationAndTimeout:
         """Deadline <= 0 should timeout immediately."""
         with pytest.raises(TimeoutError, match="timed out"):
             workspace_fingerprint(tmp_path, deadline=0.0)
+
+
+def test_fingerprint_preserves_distinct_posix_unicode_path_identity(tmp_path):
+    original = tmp_path / "\u00e9.py"
+    original.write_text("VALUE = 1\n")
+    before = workspace_fingerprint(tmp_path)
+    original.rename(tmp_path / "e\u0301.py")
+    assert workspace_fingerprint(tmp_path) != before
+
+
+def test_fingerprint_preserves_each_execution_permission(tmp_path):
+    script = tmp_path / "script.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    script.chmod(0o744)
+    before = workspace_fingerprint(tmp_path)
+    script.chmod(0o645)
+    assert workspace_fingerprint(tmp_path) != before
