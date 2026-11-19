@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from selfforge_agent.coding.worktree import WorktreeError, git, git_bounded
+from selfforge_agent.runtime.session import _directory_fd
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
@@ -104,13 +105,16 @@ def try_workspace_lock(workspace: Path, root: Path | None = None) -> int | None:
     path = workspace_lock_path(workspace, root=root)
     if os.path.islink(path):
         raise WorkspaceError(f"Workspace lock path must not be a symlink: {path}")
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
-    fd = os.open(path, flags, 0o600)
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    directory_fd = _directory_fd(path.parent)
     try:
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        fd = os.open(path.name, flags, 0o600, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise WorkspaceError("Workspace lock must be a regular file")
+        os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(fd)

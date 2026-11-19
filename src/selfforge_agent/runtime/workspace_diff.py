@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import difflib
-import os
 import re
 from pathlib import Path
 
 from selfforge_agent.coding.worktree import WorktreeError, git_bounded
-from selfforge_agent.runtime.tools import _protected
+from selfforge_agent.runtime.tools import ToolRegistry, _protected
 from selfforge_agent.runtime.workspace import CodingWorkspace
 
 MAX_FILES = 40
@@ -48,6 +47,7 @@ def workspace_diff(workspace: CodingWorkspace) -> dict:
     files: list[dict] = []
     omitted = 0
     total_diff_bytes = 0
+    reader = ToolRegistry(workspace.path)
 
     for path in sorted(set(tracked + untracked)):
         if not _visible(path) or len(files) == MAX_FILES:
@@ -56,12 +56,7 @@ def workspace_diff(workspace: CodingWorkspace) -> dict:
 
         remaining_budget = MAX_TOTAL_DIFF_BYTES - total_diff_bytes
         if remaining_budget <= 0:
-            files.append({
-                "path": path,
-                "status": "untracked" if path in untracked else "tracked",
-                "patch": "[Total patch budget exhausted; remaining files omitted]",
-                "truncated": True,
-            })
+            omitted += 1
             continue
 
         current = workspace.path / path
@@ -87,19 +82,11 @@ def workspace_diff(workspace: CodingWorkspace) -> dict:
                 patch = "[Untracked non-text, symlink, or large file omitted]"
             else:
                 try:
-                    # Bounded open and read with O_NOFOLLOW to avoid symlink race and OOM
-                    fd = os.open(
-                        current,
-                        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
-                    )
-                    try:
-                        raw = os.read(fd, MAX_FILE_BYTES + 1)
-                    finally:
-                        os.close(fd)
-
+                    with reader._open_source(current) as source:
+                        raw = source.read(MAX_FILE_BYTES + 1)
                     if len(raw) > MAX_FILE_BYTES:
-                        patch = "[Untracked non-text, symlink, or large file omitted]"
-                    elif b"\x00" in raw:
+                        raise ValueError("File exceeds read limit")
+                    if b"\x00" in raw:
                         patch = "[Untracked binary file omitted]"
                     else:
                         lines = raw.decode("utf-8").splitlines(keepends=True)
@@ -108,12 +95,15 @@ def workspace_diff(workspace: CodingWorkspace) -> dict:
                         )
                 except UnicodeDecodeError:
                     patch = "[Untracked non-UTF-8 file omitted]"
+                except ValueError:
+                    patch = "[Untracked non-text, symlink, or large file omitted]"
                 except OSError:
                     patch = "[Untracked unreadable file omitted]"
             status = "untracked"
         else:
             patch, output_truncated = git_bounded(
                 workspace.path,
+                "--literal-pathspecs",
                 "diff",
                 "--no-ext-diff",
                 "--no-textconv",
@@ -132,10 +122,10 @@ def workspace_diff(workspace: CodingWorkspace) -> dict:
         patch_slice = patch[:MAX_PATCH_CHARS] + ("\n[Patch truncated]" if truncated else "")
         patch_bytes = patch_slice.encode("utf-8", errors="replace")
         if len(patch_bytes) > remaining_budget:
-            patch_slice = (
-                patch_bytes[:remaining_budget].decode("utf-8", errors="ignore")
-                + "\n[Patch truncated: total diff budget reached]"
-            )
+            marker = "\n[Patch truncated: total diff budget reached]"
+            marker_bytes = marker.encode()[:remaining_budget]
+            patch_slice = (patch_bytes[:remaining_budget - len(marker_bytes)].decode("utf-8", errors="ignore")
+                           + marker_bytes.decode())
             truncated = True
         total_diff_bytes += len(patch_slice.encode("utf-8", errors="replace"))
         files.append({
