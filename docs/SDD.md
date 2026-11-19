@@ -2,7 +2,7 @@
 
 本文件是新 Agent 的**首读文档和当前任务状态的唯一维护入口**。读完即可选择下面的 Ready 任务并开始；仅在涉及具体模块时查阅链接的详细契约，不要求先遍历全部历史文档。
 
-- 文档版本：1；更新：2026-11-17。
+- 文档版本：1；更新：2026-11-19。
 - 已核验产品基线：`04452154addaeff3375fcd15996585c2d5e374e3`；开工必须重新 fetch 并记录实际基线，不把这里的 SHA 当作永远最新。
 - 前轮 SF-DEV-01 / SF-DOC-01 / SF-TEST-01 的已验证快照：源码 `9bc111cb07cb3b6b6dd8e44a7483c49e34960220`，完整 pytest 653 passed、无跳过。合并状态以第 4 节及审查记录为准；SF-EVAL-08 的新策略与无模型预检已交付；该策略下的真实模型测量尚未运行。
 - 当前用户指令优先。SDD 不增加外部服务、付费模型调用、推送或合并授权，也不增加重复确认程序；沿用会话已有授权和仓库保护。
@@ -157,21 +157,21 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
-| 50 | [SF-PRICE-02](#sf-price-02) | In Review | Codex（本轮开发） | SF-PRICE-01（Merged） | [PR #107](https://github.com/liuzhouquan/selfforge-agent/pull/107)：费率卡与成本估算深度加固：布尔费率严格拒绝、成本对象总额与细项线性不变式守卫、未校准成本严格扣留、总Token数反向矛盾Fail-Closed拒绝、深层JSON递归防御与有界并发缓存 |
-| 51 | [SF-DELIV-02](#sf-deliv-02) | In Review | Codex（本轮开发） | SF-DELIV-01（Merged） | [PR #108](https://github.com/liuzhouquan/selfforge-agent/pull/108)：工作区交付工作流二次安全加固：交付结果模型严格校验与路径穿越防御、base_sha十六进制格式校验与Git Ref规则守卫、Git配置注入防御与会话ID一致性校验、超大文件列表分批执行及PR结果有界防御 |
-| 52 | [SF-REV-02](#sf-rev-02) | In Review | Codex（本轮开发） | SF-REV-01（Merged） | [PR #109](https://github.com/liuzhouquan/selfforge-agent/pull/109)：代码审查流水线二次安全加固：路径穿越防御与布尔行号拦截、模型配置强校验与有界Prompt预算截断、Markdown代码块JSON容错与字段清洗转义、审查器契约守卫与全量异常Fail-Closed隔离 |
-| 53 | [SF-LOCK-01](#sf-lock-01) | In Review | Codex（本轮开发） | 无 | [PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110)：多格式依赖锁文件深度安全加固与规范化：非bytes输入受控拦截与5MiB尺寸防御、迭代式50层JSON深度限制防DoS、PEP 508平台条件标记全面拒绝、SHA-256大小写与前缀规范化及RequirementCollector共享抽取抽象 |
-| 54 | [SF-WS-09](#sf-ws-09) | In Review | Codex（本轮开发） | 无 | [PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111)：工作区差异统计内存边界防御、二进制变更脱敏、文件锁安全加固及分支生命周期安全清理 |
-| 55 | [SF-CORE-02](#sf-core-02) | In Review | Codex（本轮开发） | 无 | [PR #112](https://github.com/liuzhouquan/selfforge-agent/pull/112)：进程执行管道死锁防御、优雅终止降级、环境变量有界脱敏与 Git Context 修订严格校验 |
-| 56 | [SF-SESS-02](#sf-sess-02) | In Review | Codex（本轮开发） | 无 | [PR #113](https://github.com/liuzhouquan/selfforge-agent/pull/113)：会话快照与导出原子写盘、Trace与敏感信息自动脱敏、事件配额防御及损坏会话恢复降级 |
-| 57 | [SF-HTTP-01](#sf-http-01) | In Review | Codex（自主开发） | 无 | [PR #114](https://github.com/liuzhouquan/selfforge-agent/pull/114)：模型 HTTP 传输与网络安全加固：CRLF 头注入防御、自定义 Header 格式与上限校验、请求体 Schema/大小有界防御、URL 片段拦截与 IPv6 环回支持、瞬态故障指数退避重试与截止期守护、响应流 Chunk 计数预算与 Socket 资源泄漏防护 |
-| 58 | [SF-TOOL-02](#sf-tool-02) | In Review | Codex（自主开发） | 无 | [PR #115](https://github.com/liuzhouquan/selfforge-agent/pull/115)：工具执行器与参数模式安全加固：入参模式防御与非字典入参拒绝、路径/命令/关键字注入防护（杜绝空字节与前导选项）、编辑载荷与策略大小有界防御、输出有界安全截断与异常受控隔离 |
-| 59 | [SF-FP-02](#sf-fp-02) | In Review | Antigravity | SF-FPR-01（Merged） | [PR #116](https://github.com/liuzhouquan/selfforge-agent/pull/116)：工作区快照指纹加固与跨平台确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、跨平台权限模式与路径规范化、Unicode文件名NFC排序稳定性及取消中断精准响应 |
-| 60 | [SF-CAUSAL-02](#sf-causal-02) | In Review | Antigravity | SF-CAUSAL-01（Merged） | [PR #117](https://github.com/liuzhouquan/selfforge-agent/pull/117)：测试故障因果推断二次加固：目标路径与代码空值门禁、单引号与Pytest格式调用栈提取、虚拟环境与运行时外部调用帧隔离、模块级基础测试反归因加固及通用词根防误报 |
-| 61 | [SF-RISK-02](#sf-risk-02) | In Review | Antigravity | SF-RISK-01（Merged） | [PR #118](https://github.com/liuzhouquan/selfforge-agent/pull/118)：PR风险优先级排序二次安全加固：路径穿越与非法路径/行号防御、跨层路径规范化、PrioritizedRisk与RiskTarget契约不变式及下游验证兼容、严重级别critical规范化与高危Heuristic扩展、测试文件降权与终端控制字符脱敏 |
-| 62 | [SF-FAIL-01](#sf-fail-01) | In Review | Antigravity | 无 | [PR #119](https://github.com/liuzhouquan/selfforge-agent/pull/119)：测试失败工件与诊断快照生命周期及安全加固：工件模型模式规范化（FailureArtifact）、Fail-Closed 类型守门与超限安全截断有界降级、目录隔离与原子无符链写盘、非普通文件/FIFO防御与确定性工件列表检索（list_failures）及统计聚合（summarize_failures） |
-| 63 | [SF-IMG-02](#sf-img-02) | In Review | Codex（本轮开发） | SF-IMG-01（Merged） | [PR #120](https://github.com/liuzhouquan/selfforge-agent/pull/120)：离线依赖镜像二级深度安全加固：哈希规范化、Wheelhouse诊断抽象、镜像引用防注入与构建模型Schema形式化 |
-| 64 | [SF-CTX-02](#sf-ctx-02) | In Review | Codex（本轮开发） | SF-CTX-01（Merged） | [PR #121](https://github.com/liuzhouquan/selfforge-agent/pull/121)：模型上下文管理器二级深度安全加固：估算边界防护、交互切片严格单射配对、压缩锚点序保护与度量报告Schema形式化 |
+| 50 | [SF-PRICE-02](#sf-price-02) | Merged | Codex（审查整合） | SF-PRICE-01（Merged） | [PR #107](https://github.com/liuzhouquan/selfforge-agent/pull/107)：费率卡与成本估算深度加固：布尔费率严格拒绝、成本对象总额与细项线性不变式守卫、未校准成本严格扣留、总Token数反向矛盾Fail-Closed拒绝、深层JSON递归防御与有界并发缓存 |
+| 51 | [SF-DELIV-02](#sf-deliv-02) | Merged | Codex（审查整合） | SF-DELIV-01（Merged） | [PR #108](https://github.com/liuzhouquan/selfforge-agent/pull/108)：工作区交付工作流二次安全加固：交付结果模型严格校验与路径穿越防御、base_sha十六进制格式校验与Git Ref规则守卫、Git配置注入防御与会话ID一致性校验、超大文件列表分批执行及PR结果有界防御 |
+| 52 | [SF-REV-02](#sf-rev-02) | Merged | Codex（审查整合） | SF-REV-01（Merged） | [PR #109](https://github.com/liuzhouquan/selfforge-agent/pull/109)：代码审查流水线二次安全加固：路径穿越防御与布尔行号拦截、模型配置强校验与有界Prompt预算截断、Markdown代码块JSON容错与字段清洗转义、审查器契约守卫与全量异常Fail-Closed隔离 |
+| 53 | [SF-LOCK-01](#sf-lock-01) | Merged | Codex（审查整合） | 无 | [PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110)：多格式依赖锁文件深度安全加固与规范化：非bytes输入受控拦截与5MiB尺寸防御、迭代式50层JSON深度限制防DoS、PEP 508平台条件标记全面拒绝、SHA-256大小写与前缀规范化及RequirementCollector共享抽取抽象 |
+| 54 | [SF-WS-09](#sf-ws-09) | Merged | Codex（审查整合） | 无 | [PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111)：工作区差异统计内存边界防御、二进制变更脱敏、文件锁安全加固及分支生命周期安全清理 |
+| 55 | [SF-CORE-02](#sf-core-02) | Merged | Codex（审查整合） | 无 | [PR #112](https://github.com/liuzhouquan/selfforge-agent/pull/112)：进程执行管道死锁防御、优雅终止降级、环境变量有界脱敏与 Git Context 修订严格校验 |
+| 56 | [SF-SESS-02](#sf-sess-02) | Merged | Codex（审查整合） | 无 | [PR #113](https://github.com/liuzhouquan/selfforge-agent/pull/113)：会话快照与导出原子写盘、Trace与敏感信息自动脱敏、事件配额防御及损坏会话恢复降级 |
+| 57 | [SF-HTTP-01](#sf-http-01) | Merged | Codex（审查整合） | 无 | [PR #114](https://github.com/liuzhouquan/selfforge-agent/pull/114)：模型 HTTP 传输与网络安全加固：CRLF 头注入防御、自定义 Header 格式与上限校验、请求体 Schema/大小有界防御、URL 片段拦截与 IPv6 环回支持、瞬态故障指数退避重试与截止期守护、响应流 Chunk 计数预算与 Socket 资源泄漏防护 |
+| 58 | [SF-TOOL-02](#sf-tool-02) | Merged | Codex（审查整合） | 无 | [PR #115](https://github.com/liuzhouquan/selfforge-agent/pull/115)：工具执行器与参数模式安全加固：入参模式防御与非字典入参拒绝、路径/命令/关键字注入防护（杜绝空字节与前导选项）、编辑载荷与策略大小有界防御、输出有界安全截断与异常受控隔离 |
+| 59 | [SF-FP-02](#sf-fp-02) | Merged | Codex（审查整合） | SF-FPR-01（Merged） | [PR #116](https://github.com/liuzhouquan/selfforge-agent/pull/116)：工作区快照指纹加固与跨平台确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、跨平台权限模式与路径规范化、Unicode文件名NFC排序稳定性及取消中断精准响应 |
+| 60 | [SF-CAUSAL-02](#sf-causal-02) | Merged | Codex（审查整合） | SF-CAUSAL-01（Merged） | [PR #117](https://github.com/liuzhouquan/selfforge-agent/pull/117)：测试故障因果推断二次加固：目标路径与代码空值门禁、单引号与Pytest格式调用栈提取、虚拟环境与运行时外部调用帧隔离、模块级基础测试反归因加固及通用词根防误报 |
+| 61 | [SF-RISK-02](#sf-risk-02) | Merged | Codex（审查整合） | SF-RISK-01（Merged） | [PR #118](https://github.com/liuzhouquan/selfforge-agent/pull/118)：PR风险优先级排序二次安全加固：路径穿越与非法路径/行号防御、跨层路径规范化、PrioritizedRisk与RiskTarget契约不变式及下游验证兼容、严重级别critical规范化与高危Heuristic扩展、测试文件降权与终端控制字符脱敏 |
+| 62 | [SF-FAIL-01](#sf-fail-01) | Merged | Codex（审查整合） | 无 | [PR #119](https://github.com/liuzhouquan/selfforge-agent/pull/119)：测试失败工件与诊断快照生命周期及安全加固：工件模型模式规范化（FailureArtifact）、Fail-Closed 类型守门与超限安全截断有界降级、目录隔离与原子无符链写盘、非普通文件/FIFO防御与确定性工件列表检索（list_failures）及统计聚合（summarize_failures） |
+| 63 | [SF-IMG-02](#sf-img-02) | Merged | Codex（审查整合） | SF-IMG-01（Merged） | [PR #120](https://github.com/liuzhouquan/selfforge-agent/pull/120)：离线依赖镜像二级深度安全加固：哈希规范化、Wheelhouse诊断抽象、镜像引用防注入与构建模型Schema形式化 |
+| 64 | [SF-CTX-02](#sf-ctx-02) | Merged | Codex（审查整合） | SF-CTX-01（Merged） | [PR #121](https://github.com/liuzhouquan/selfforge-agent/pull/121)：模型上下文管理器二级深度安全加固：估算边界防护、交互切片严格单射配对、压缩锚点序保护与度量报告Schema形式化 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2168,10 +2168,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-PRICE-02-A1 | ModelRates 必须拒绝布尔值费率，MonetaryCost 必须校验总额等于提示与补全成本之和（误差容限 1e-4），矛盾时拒绝抛出异常 | `tests/test_pricing_hardening.py` 布尔费率防御与成本线性一致性测试 | E1 |
-| SF-PRICE-02-A2 | estimate_monetary_cost 拒绝空白/超长/控制字符模型与提供商，当 total_tokens 小于提示与补全之和（反向矛盾）时拒绝返回 None，深层嵌套 JSON 递归时防御拒绝 | `tests/test_pricing_hardening.py` 模型与提供商防御、总Token矛盾测试与深层嵌套JSON防御测试 | E2 |
-| SF-PRICE-02-A3 | sum_monetary_costs 在任一输入成本未校准（calibrated=False）时严格扣留总额返回 None，拒绝非序列输入与超过 100,000 项的超长输入，校验合计结果线性不变式 | `tests/test_pricing_hardening.py` 未校准扣留测试、非序列与超大列表防御测试 | E3 |
-| SF-PRICE-02-A4 | format_monetary_cost 针对未校准成本与大于 1e12 的天文数值安全返回 "uncalibrated"；本地静态检查、契约检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_pricing_hardening.py` 格式化边界测试、本地命令矩阵与 CI | E4 |
+| SF-PRICE-02-A1 | ModelRates 必须拒绝布尔值费率，MonetaryCost 必须校验总额等于提示与补全成本之和（误差容限 1e-4），矛盾时拒绝抛出异常 | `tests/test_pricing_hardening.py` 布尔费率防御与成本线性一致性测试 | E5（本轮复验） |
+| SF-PRICE-02-A2 | estimate_monetary_cost 拒绝空白/超长/控制字符模型与提供商，当 total_tokens 小于提示与补全之和（反向矛盾）时拒绝返回 None，深层嵌套 JSON 递归时防御拒绝 | `tests/test_pricing_hardening.py` 模型与提供商防御、总Token矛盾测试与深层嵌套JSON防御测试 | E6（本轮复验） |
+| SF-PRICE-02-A3 | sum_monetary_costs 在任一输入成本未校准（calibrated=False）时严格扣留总额返回 None，拒绝非序列输入与超过 100,000 项的超长输入，校验合计结果线性不变式 | `tests/test_pricing_hardening.py` 未校准扣留测试、非序列与超大列表防御测试 | E7（本轮复验） |
+| SF-PRICE-02-A4 | format_monetary_cost 针对未校准成本与大于 1e12 的天文数值安全返回 "uncalibrated"；本地静态检查、契约检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_pricing_hardening.py` 格式化边界测试、本地命令矩阵与 CI | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2179,15 +2179,25 @@ PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/li
 | E2 | SF-PRICE-02-A2 | `tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_empty_or_whitespace_model_or_provider`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_inconsistent_total_tokens`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_deeply_nested_pricing_json`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_control_characters_in_model` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
 | E3 | SF-PRICE-02-A3 | `tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_sum_monetary_costs_rejects_uncalibrated_costs`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_non_sequence_or_empty`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_excessive_item_count` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
 | E4 | SF-PRICE-02-A4 | `tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_returns_uncalibrated_for_uncalibrated_cost`、`tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_rejects_excessive_cost_values`、`tests/test_pricing.py::test_format_monetary_cost`、`tests/test_pricing_security.py::test_format_monetary_cost_handles_invalid_cost` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1352 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+| E5 | SF-PRICE-02-A1 | `tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_model_rates_rejects_boolean_rates`、`tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_monetary_cost_rejects_inconsistent_total` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-PRICE-02-A2 | `tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_empty_or_whitespace_model_or_provider`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_inconsistent_total_tokens`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_deeply_nested_pricing_json`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_control_characters_in_model` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-PRICE-02-A3 | `tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_sum_monetary_costs_rejects_uncalibrated_costs`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_non_sequence_or_empty`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_excessive_item_count` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-PRICE-02-A4 | `tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_returns_uncalibrated_for_uncalibrated_cost`、`tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_rejects_excessive_cost_values`、`tests/test_pricing.py::test_format_monetary_cost`、`tests/test_pricing_security.py::test_format_monetary_cost_handles_invalid_cost` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
 
-分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-price-02`；Worktree=`selfforge-sf-price-02`；PR=[#107](https://github.com/liuzhouquan/selfforge-agent/pull/107)。源码提交 `8b680ac6a3248baed6fed62d027a3801c7aaf7be` 已通过本地回归与 CI `Run #44131513062` 全套验证。
+分支原分支历史执行记录（当前状态以下方审查交接为准）：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-price-02`；Worktree=`selfforge-sf-price-02`；PR=[#107](https://github.com/liuzhouquan/selfforge-agent/pull/107)。源码提交 `8b680ac6a3248baed6fed62d027a3801c7aaf7be` 已通过本地回归与 CI `Run #44131513062` 全套验证。
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。费率卡、缓存深度、未知费用与币种边界核读后未见确定阻断，保留原实现；专项与完整组合复验。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#107；Merge=`27ada87dbee8611949f2cc60073e7279d69c6dcf`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-price-02 (worktree: selfforge-sf-price-02) / 8b680ac6a3248baed6fed62d027a3801c7aaf7be
-已完成验收与证据 ID：SF-PRICE-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1352 passed、无跳过；CI Run #44131513062 全绿；文档提交准备就绪
-PR / 准确 head CI / merge SHA（有则填）：PR #107 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062 / 待合入
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-PRICE-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #107 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / 27ada87dbee8611949f2cc60073e7279d69c6dcf
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-DELIV-02
@@ -2204,10 +2214,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #107 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-DELIV-02-A1 | CommitResult、PRResult 与 RevertResult 强制要求 40 位十六进制 commit_sha、合法 session_id 与分支名，校验 pr_url 正则且拒绝路径穿越，限制 pr_number 为严格正整数，拦截非法路径与超长/空字节标题 | `tests/test_delivery_hardening.py` 模型字段与类型契约防御测试 | E1 |
-| SF-DELIV-02-A2 | _validate_workspace 强制校验 base_sha 格式拒绝选项注入，分支名校验拦截路径穿越（..）与畸形 ref 规则，create_pull_request 严格拒绝 base_branch 与工作区分支同名 | `tests/test_delivery_hardening.py` 工作区基础 SHA 与 Git ref 规则测试 | E2 |
-| SF-DELIV-02-A3 | commit_workspace 自动清洗过滤本地仓库 git config 的恶意用户名称与邮箱，revert_workspace 与 create_pull_request 严格校验 SessionStore 与工作区 session_id 一致性，大文件列表分批执行防止命令行溢出 | `tests/test_delivery_hardening.py` 配置注入清洗、会话一致性与批量操作测试 | E3 |
-| SF-DELIV-02-A4 | _existing_pull_request 限制 PR 列表上限 100 项并严格校验记录编号与标题，create_pull_request 临时 body 文件设置 0600 权限，本地静态检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_delivery_hardening.py` 既有 PR 防御与临时文件权限测试，本地命令矩阵与 CI | E4 |
+| SF-DELIV-02-A1 | CommitResult、PRResult 与 RevertResult 强制要求 40 位十六进制 commit_sha、合法 session_id 与分支名，校验 pr_url 正则且拒绝路径穿越，限制 pr_number 为严格正整数，拦截非法路径与超长/空字节标题 | `tests/test_delivery_hardening.py` 模型字段与类型契约防御测试 | E5（本轮复验） |
+| SF-DELIV-02-A2 | _validate_workspace 强制校验 base_sha 格式拒绝选项注入，分支名校验拦截路径穿越（..）与畸形 ref 规则，create_pull_request 严格拒绝 base_branch 与工作区分支同名 | `tests/test_delivery_hardening.py` 工作区基础 SHA 与 Git ref 规则测试 | E6（本轮复验） |
+| SF-DELIV-02-A3 | commit_workspace 自动清洗过滤本地仓库 git config 的恶意用户名称与邮箱，revert_workspace 与 create_pull_request 严格校验 SessionStore 与工作区 session_id 一致性，大文件列表分批执行防止命令行溢出 | `tests/test_delivery_hardening.py` 配置注入清洗、会话一致性与批量操作测试 | E7（本轮复验） |
+| SF-DELIV-02-A4 | _existing_pull_request 限制 PR 列表上限 100 项并严格校验记录编号与标题，create_pull_request 临时 body 文件设置 0600 权限，本地静态检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_delivery_hardening.py` 既有 PR 防御与临时文件权限测试，本地命令矩阵与 CI | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2215,15 +2225,25 @@ PR / 准确 head CI / merge SHA（有则填）：PR #107 / https://github.com/li
 | E2 | SF-DELIV-02-A2 | `tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_invalid_base_sha`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_malicious_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_same_base_and_head_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_traversal_or_malformed_base_branch` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
 | E3 | SF-DELIV-02-A3 | `tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_sanitizes_malicious_repo_git_config`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_revert_workspace_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_create_pull_request_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_batches_large_file_lists` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
 | E4 | SF-DELIV-02-A4 | `tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_invalid_pr_records`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_excessive_pr_list`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_create_pull_request_sets_0600_permissions_on_body_file`、`tests/test_delivery_security.py` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1658 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+| E5 | SF-DELIV-02-A1 | `tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_commit_sha`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_session_id_and_branch`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_message_and_files`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_pr_result_validates_pr_url_and_number`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_revert_result_validates_paths` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-DELIV-02-A2 | `tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_invalid_base_sha`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_malicious_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_same_base_and_head_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_traversal_or_malformed_base_branch` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-DELIV-02-A3 | `tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_sanitizes_malicious_repo_git_config`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_revert_workspace_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_create_pull_request_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_batches_large_file_lists` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-DELIV-02-A4 | `tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_invalid_pr_records`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_excessive_pr_list`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_create_pull_request_sets_0600_permissions_on_body_file`、`tests/test_delivery_security.py`、`tests/test_delivery_hardening.py::test_delivery_results_preserve_literal_git_filenames`、`tests/test_delivery_hardening.py::test_delivery_accepts_legal_github_repository_names`、`tests/test_delivery_hardening.py::test_delivery_preserves_legal_plus_branch` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
 
-分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-deliv-02`；Worktree=`selfforge-sf-deliv-02`；PR=[#108](https://github.com/liuzhouquan/selfforge-agent/pull/108)。源码提交 `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc` 已通过本地回归与 CI `Run #44213078416` 全套验证。
+分支原分支历史执行记录（当前状态以下方审查交接为准）：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-deliv-02`；Worktree=`selfforge-sf-deliv-02`；PR=[#108](https://github.com/liuzhouquan/selfforge-agent/pull/108)。源码提交 `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc` 已通过本地回归与 CI `Run #44213078416` 全套验证。
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。5个失败：合法feature+fix分支、.github/_tools仓库URL被拒；CommitResult/RevertResult改写真实带空格文件名。保留原始文件名，使用符合Git约束的分支门禁及合法GitHub仓库字符。相关交付回归62 passed；实际结果模型、本地Git及gh边界替身，无产品外部PR发布。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#108；Merge=`cc2063a9bb5ed326980e08b9d659f003513109c8`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-deliv-02 (worktree: selfforge-sf-deliv-02) / d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc
-已完成验收与证据 ID：SF-DELIV-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1658 passed、无跳过；CI Run #44213078416 全绿；文档提交准备就绪
-PR / 准确 head CI / merge SHA（有则填）：PR #108 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416 / 待合入
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-DELIV-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #108 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / cc2063a9bb5ed326980e08b9d659f003513109c8
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-REV-02
@@ -2240,10 +2260,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #108 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-REV-02-A1 | `BaselineReviewer` 针对路径穿越与绝对路径文件执行过滤跳过，严格拒绝布尔行号混淆，对单 hunk 行数（1000）施加有界截断，清洗内容空字节并执行确定性排序 | `tests/test_review_hardening.py` 规则基线路径穿越防御、布尔行号拒绝、单 hunk 截断与排序测试 | E1 |
-| SF-REV-02-A2 | `ProviderReviewer` 构造时严格校验 Model、Base URL、Key、有限正超时与 Max Tokens，Diff 收集时施加 hunk 与行数多维截断并过滤非法路径，在 24,000 字节预算内有界组装有效提示词 | `tests/test_review_hardening.py` 提供商配置强校验、多维 hunk 截断与 Prompt 预算防御测试 | E2 |
-| SF-REV-02-A3 | `ProviderReviewer` 自动提取 Markdown 代码块 JSON，规范化十六进制转义，拦截超限响应（128 KiB），对 severity/category/description 执行白名单与控制字符/ANSI/HTML清洗，并将网络异常映射为受控错误 | `tests/test_review_hardening.py` Markdown 代码块容错、响应体大小防御、输出清洗转义与异常收敛测试 | E3 |
-| SF-REV-02-A4 | `ReviewService` 校验审查器与运行器方法契约，强校验返回结果并隔离全量异常，预检仓库目录存在性并阻断修订选项注入，静态检查与全量单元测试全部通过 | `tests/test_review_hardening.py`、`tests/test_review_engine_security.py`、本地命令矩阵与 CI | E4 |
+| SF-REV-02-A1 | `BaselineReviewer` 针对路径穿越与绝对路径文件执行过滤跳过，严格拒绝布尔行号混淆，对单 hunk 行数（1000）施加有界截断，清洗内容空字节并执行确定性排序 | `tests/test_review_hardening.py` 规则基线路径穿越防御、布尔行号拒绝、单 hunk 截断与排序测试 | E5（本轮复验） |
+| SF-REV-02-A2 | `ProviderReviewer` 构造时严格校验 Model、Base URL、Key、有限正超时与 Max Tokens，Diff 收集时施加 hunk 与行数多维截断并过滤非法路径，在 24,000 字节预算内有界组装有效提示词 | `tests/test_review_hardening.py` 提供商配置强校验、多维 hunk 截断与 Prompt 预算防御测试 | E6（本轮复验） |
+| SF-REV-02-A3 | `ProviderReviewer` 自动提取 Markdown 代码块 JSON，规范化十六进制转义，拦截超限响应（128 KiB），对 severity/category/description 执行白名单与控制字符/ANSI/HTML清洗，并将网络异常映射为受控错误 | `tests/test_review_hardening.py` Markdown 代码块容错、响应体大小防御、输出清洗转义与异常收敛测试 | E7（本轮复验） |
+| SF-REV-02-A4 | `ReviewService` 校验审查器与运行器方法契约，强校验返回结果并隔离全量异常，预检仓库目录存在性并阻断修订选项注入，静态检查与全量单元测试全部通过 | `tests/test_review_hardening.py`、`tests/test_review_engine_security.py`、本地命令矩阵与 CI | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2251,17 +2271,25 @@ PR / 准确 head CI / merge SHA（有则填）：PR #108 / https://github.com/li
 | E2 | SF-REV-02-A2 | `tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_rejects_malicious_model_names`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_rejects_malicious_base_url_and_key`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_validates_max_tokens_and_timeout`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_bounds_hunks_and_skips_traversal_paths` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_review_hardening.py -k TestProviderReviewerConfigAndInputHardening`；GitHub Actions CI `Unit tests` | `40d442db1ef7fc64a595a5fbc40026e643ae2601`；passed；CI [Run #44223097238](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238) |
 | E3 | SF-REV-02-A3 | `tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_extracts_json_from_markdown_code_fences`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_rejects_oversized_response_content`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_sanitizes_severity_category_description`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_maps_socket_timeout_and_network_errors` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_review_hardening.py -k TestProviderReviewerOutputAndDefenseHardening`；GitHub Actions CI `Unit tests` | `40d442db1ef7fc64a595a5fbc40026e643ae2601`；passed；CI [Run #44223097238](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238) |
 | E4 | SF-REV-02-A4 | `tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_rejects_invalid_reviewer_and_runner`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_context_validates_and_filters_findings`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_context_catches_all_exceptions`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_validates_repository_and_revisions` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1659 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `40d442db1ef7fc64a595a5fbc40026e643ae2601`；passed；CI [Run #44223097238](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+| E5 | SF-REV-02-A1 | `tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_rejects_path_traversal_and_absolute_paths`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_rejects_boolean_new_line`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_bounds_hunk_lines`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_cleans_null_bytes_in_content`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_findings_sorted_deterministically` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-REV-02-A2 | `tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_rejects_malicious_model_names`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_rejects_malicious_base_url_and_key`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_validates_max_tokens_and_timeout`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_bounds_hunks_and_skips_traversal_paths` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-REV-02-A3 | `tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_extracts_json_from_markdown_code_fences`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_rejects_oversized_response_content`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_sanitizes_severity_category_description`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_maps_socket_timeout_and_network_errors` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-REV-02-A4 | `tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_rejects_invalid_reviewer_and_runner`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_context_validates_and_filters_findings`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_context_catches_all_exceptions`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_validates_repository_and_revisions`、`tests/test_review_hardening.py::test_review_binds_literal_paths_without_normalizing_traversal`、`tests/test_review_hardening.py::test_review_preserves_json_with_markdown_inside_description`、`tests/test_review_hardening.py::test_reviewer_huge_timeout_is_controlled` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
 
-分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-rev-02`；Worktree=`selfforge-sf-rev-02`；PR=[#109](https://github.com/liuzhouquan/selfforge-agent/pull/109)。源码提交 `40d442db1ef7fc64a595a5fbc40026e643ae2601` 已通过本地回归与 CI `Run #44223097238` 全套验证。
+分支原分支历史执行记录（当前状态以下方审查交接为准）：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-rev-02`；Worktree=`selfforge-sf-rev-02`；PR=[#109](https://github.com/liuzhouquan/selfforge-agent/pull/109)。源码提交 `40d442db1ef7fc64a595a5fbc40026e643ae2601` 已通过本地回归与 CI `Run #44223097238` 全套验证。
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。5个失败、1个正控：审查路径去空格/归一化可改写added身份，合法JSON描述中的Markdown围栏破坏解析，巨大timeout溢出。保留字面路径、先拒原始父目录段，仅解包顶层围栏，先验数值范围。实际Baseline/ProviderReviewer加HTTP替身；相关37 passed。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#109；Merge=`94ae82afd013308f8727bd658eaac3a44c921cff`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-rev-02 (worktree: selfforge-sf-rev-02) / 40d442db1ef7fc64a595a5fbc40026e643ae2601
-已完成验收与证据 ID：SF-REV-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1659 passed、无跳过；CI Run #44223097238 全绿；文档提交准备就绪
-PR / 准确 head CI / merge SHA（有则填）：PR #109 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238 / 待合入
-仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；等待文档提交与 R2 CI
-下一步：推送文档提交并触发 R2 CI 验证，更新交付状态。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-REV-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #109 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / 94ae82afd013308f8727bd658eaac3a44c921cff
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-LOCK-01
@@ -2280,10 +2308,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #109 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-LOCK-01-A1 | 拦截非 bytes 输入、空内容与超 5MiB 内容；迭代式 50 层深度遍历拦截深层嵌套 Pipfile.lock JSON 递归 DoS；包总数（5000）与单包哈希数（500）配额生效 | `tests/test_lockfile_hardening.py::TestLockfileEntryDefense` 专项测试 | E1 |
-| SF-LOCK-01-A2 | poetry.lock、Pipfile.lock、uv.lock 全面拒绝平台条件标记（markers / platform_machine / targets / extra / environment 等）与 optional=true；requirements.txt 拒绝 pip 选项与 extras | `tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening` 专项测试 | E2 |
-| SF-LOCK-01-A3 | 严格 SHA-256 校验，支持 sha256: 与 sha256= 前缀解析及大小写规范化；PEP 503 包名规范化与去重；跨 section 版本分叉冲突 Fail-Closed 拦截 | `tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening` 专项测试 | E3 |
-| SF-LOCK-01-A4 | 共享抽象 `RequirementCollector` 统一包规范化、版本校验与哈希累积，确保确定性输出；全量单元测试与 Docker 集成测试通过，CI 全绿 | `tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction` 与 GitHub Actions CI | E4 |
+| SF-LOCK-01-A1 | 拦截非 bytes 输入、空内容与超 5MiB 内容；迭代式 50 层深度遍历拦截深层嵌套 Pipfile.lock JSON 递归 DoS；包总数（5000）与单包哈希数（500）配额生效 | `tests/test_lockfile_hardening.py::TestLockfileEntryDefense` 专项测试 | E5（本轮复验） |
+| SF-LOCK-01-A2 | poetry.lock、Pipfile.lock、uv.lock 全面拒绝平台条件标记（markers / platform_machine / targets / extra / environment 等）与 optional=true；requirements.txt 拒绝 pip 选项与 extras | `tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening` 专项测试 | E6（本轮复验） |
+| SF-LOCK-01-A3 | 严格 SHA-256 校验，支持 sha256: 与 sha256= 前缀解析及大小写规范化；PEP 503 包名规范化与去重；跨 section 版本分叉冲突 Fail-Closed 拦截 | `tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening` 专项测试 | E7（本轮复验） |
+| SF-LOCK-01-A4 | 共享抽象 `RequirementCollector` 统一包规范化、版本校验与哈希累积，确保确定性输出；全量单元测试与 Docker 集成测试通过，CI 全绿 | `tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction` 与 GitHub Actions CI | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2291,26 +2319,34 @@ PR / 准确 head CI / merge SHA（有则填）：PR #109 / https://github.com/li
 | E2 | SF-LOCK-01-A2 | `tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_poetry_rejects_extended_pep508_markers`、`tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_pipfile_rejects_extended_markers_and_targets`、`tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_requirements_txt_rejects_pip_options_and_extras` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_lockfile_hardening.py`；GitHub Actions CI `Unit tests` | `41300faea78546b553641777d1ce54f3b23617be`；passed；CI [Run #44228837255](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255) success；[PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110) |
 | E3 | SF-LOCK-01-A3 | `tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_hash_handles_sha256_equals_prefix_and_uppercase`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_hash_rejects_non_sha256_algorithms`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_pep503_name_normalization_and_deduplication`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_version_fork_conflict_detected_across_sections` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_lockfile_hardening.py`；GitHub Actions CI `Unit tests` | `41300faea78546b553641777d1ce54f3b23617be`；passed；CI [Run #44228837255](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255) success；[PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110) |
 | E4 | SF-LOCK-01-A4 | `tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_validates_and_normalizes_entries`、`tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_rejects_version_forks_and_empty_hashes`、`tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_rejects_empty_render` | `ruff check .`、`python3 scripts/check_sdd.py`、`git diff --check`、`pytest tests/test_lockfile_hardening.py` 与 GitHub Actions CI（单元测试 + Docker 集成测试） | `41300faea78546b553641777d1ce54f3b23617be`；passed；CI [Run #44228837255](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255) success；[PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110) |
+| E5 | SF-LOCK-01-A1 | `tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_export_rejects_non_bytes_content`、`tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_export_rejects_oversized_content`、`tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_pipfile_rejects_excessive_json_nesting_depth`、`tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_export_rejects_package_flood_dos` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-LOCK-01-A2 | `tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_poetry_rejects_extended_pep508_markers`、`tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_pipfile_rejects_extended_markers_and_targets`、`tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_requirements_txt_rejects_pip_options_and_extras` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-LOCK-01-A3 | `tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_hash_handles_sha256_equals_prefix_and_uppercase`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_hash_rejects_non_sha256_algorithms`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_pep503_name_normalization_and_deduplication`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_version_fork_conflict_detected_across_sections` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-LOCK-01-A4 | `tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_validates_and_normalizes_entries`、`tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_rejects_version_forks_and_empty_hashes`、`tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_rejects_empty_render` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。锁文件递归深度、PEP508条件拒绝、规范版本及哈希边界核读后未见确定阻断，保留原实现。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#110；Merge=`cb8cf85633bc2ee180bdd38bc3ba2986c082cd25`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-lock-01 (worktree: selfforge-sf-lock-01) / 41300faea78546b553641777d1ce54f3b23617be
-已完成验收与证据 ID：SF-LOCK-01-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码与测试已全量验证通过；无未提交源码；没有付费模型测量
-PR / 准确 head CI / merge SHA（有则填）：PR #110 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；PR #110 R1 CI 已全部成功通过
-下一步：待 PR #110 审查合并至 main。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-LOCK-01-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #110 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / cb8cf85633bc2ee180bdd38bc3ba2986c082cd25
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-WS-09
 
 **目标：** 对工作区差异比对（`workspace_diff`）与工作区管理（`workspace.py`）进行深度安全加固：未跟踪文件实施有界读取与全局差异预算防御防范内存耗尽（OOM）、二进制文件识别与内容脱敏防止二进制乱码泄露、工作区并发锁文件启用 `O_CLOEXEC` 与符号链接 Fail-Closed 拦截、以及工作区分支清理与 `lexists` 断链软链接防御。
 
-**范围/入口：** 改动 `src/selfforge_agent/runtime/workspace_diff.py`、`src/selfforge_agent/runtime/workspace.py` 并增加专项复现安全测试 `tests/test_workspace_diff_hardening.py`；保持对 `CodingWorkspace`、`workspace_diff` 及既有 API/CLI 调用的完全向后兼容。
+**范围/入口：** 必要共享前提为复用 `runtime.tools.ToolRegistry` 的已有普通文件FD读取及 `runtime.session._directory_fd` 的逐级无符链目录边界； 改动 `src/selfforge_agent/runtime/workspace_diff.py`、`src/selfforge_agent/runtime/workspace.py` 并增加专项复现安全测试 `tests/test_workspace_diff_hardening.py`；保持对 `CodingWorkspace`、`workspace_diff` 及既有 API/CLI 调用的完全向后兼容。
 
 **行为与防御：**
-1. `workspace_diff` 针对未跟踪文件读取采用有界 `os.open` 配合 `O_NOFOLLOW | O_CLOEXEC`，读取上限 `MAX_FILE_BYTES + 1` 字节，彻底消除竞争性大文件追加导致的内存溢出（OOM）；
-2. 引入 `MAX_TOTAL_DIFF_BYTES = 256_000` 全局差异字节预算，当全量文件的累积 patch 达到预算时，后续文件优雅截断并输出 `[Total patch budget exhausted; remaining files omitted]`；
+1. `workspace_diff` 针对未跟踪文件读取采用共享有界普通文件FD读取，逐级 `O_NOFOLLOW`、`O_NONBLOCK` 与fstat检查，读取上限 `MAX_FILE_BYTES + 1` 字节，彻底消除竞争性大文件追加导致的内存溢出（OOM）；
+2. 引入 `MAX_TOTAL_DIFF_BYTES = 256_000` 全局差异字节预算，当全量文件的累积 patch 达到预算时，为当前截断提示预留预算；后续文件计入omitted_files，不再追加超预算标记；
 3. 二进制文件识别与脱敏：未跟踪文件检测空字节 `\x00`，输出 `[Untracked binary file omitted]`；已跟踪文件检测二进制变更及空字节，输出安全脱敏标记，杜绝二进制乱码或数据泄露；
 4. 严格校验 `workspace.base_sha` 为 40 位小写十六进制 SHA，并在 `git diff` 与 `rev-parse` 中使用 `--end-of-options` 阻断选项注入攻击；
 5. `try_workspace_lock` 强制使用 `O_CLOEXEC` 标志（防范文件描述符泄露至子进程），权限受控归一化为 `0o600`，严格拦截指向锁文件的符号链接（防范路径穿透/劫持）；`unlock_workspace` 安全降级捕获 `OSError`；
@@ -2318,10 +2354,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #110 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-WS-09-A1 | 未跟踪文件采用有界读取防范竞争性追加导致的 OOM；全局累积差异字节预算限制 MAX_TOTAL_DIFF_BYTES 生效，超限文件输出优雅截断说明；base_sha 格式强校验 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening` 专项测试 | E1 |
-| SF-WS-09-A2 | 未跟踪文件严格检测空字节 \x00 输出 [Untracked binary file omitted]；已跟踪文件二进制变更及含有空字节的 patch 安全脱敏，杜绝二进制数据泄露入 JSON | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening` 专项测试 | E2 |
-| SF-WS-09-A3 | try_workspace_lock 启用 O_CLOEXEC 并在锁文件上设置 0o600 权限；对锁目录中的符号链接执行 Fail-Closed 拦截；unlock_workspace 优雅处理已关闭或异常 fd | `tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening` 专项测试 | E3 |
-| SF-WS-09-A4 | remove 支持安全清理 selfforge/{session_id} 分支；create 使用 lexists 防范断链软链接；_paths 规范化仓库路径；全量单元测试与 Docker 集成测试通过，CI 全绿 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening` 与 GitHub Actions CI | E4 |
+| SF-WS-09-A1 | 未跟踪文件采用有界读取防范竞争性追加导致的 OOM；全局累积差异字节预算限制 MAX_TOTAL_DIFF_BYTES 生效，超限文件输出优雅截断说明；base_sha 格式强校验 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening` 专项测试 | E5（本轮复验） |
+| SF-WS-09-A2 | 未跟踪文件严格检测空字节 \x00 输出 [Untracked binary file omitted]；已跟踪文件二进制变更及含有空字节的 patch 安全脱敏，杜绝二进制数据泄露入 JSON | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening` 专项测试 | E6（本轮复验） |
+| SF-WS-09-A3 | try_workspace_lock 启用 O_CLOEXEC 并在锁文件上设置 0o600 权限；对锁目录中的符号链接执行 Fail-Closed 拦截；unlock_workspace 优雅处理已关闭或异常 fd | `tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening` 专项测试 | E7（本轮复验） |
+| SF-WS-09-A4 | remove 支持安全清理 selfforge/{session_id} 分支；create 使用 lexists 防范断链软链接；_paths 规范化仓库路径；全量单元测试与 Docker 集成测试通过，CI 全绿 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening` 与 GitHub Actions CI | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2329,15 +2365,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #110 / https://github.com/li
 | E2 | SF-WS-09-A2 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_untracked_binary_file_with_null_bytes_is_redacted`、`tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_tracked_binary_diff_is_sanitized` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_workspace_diff_hardening.py`；GitHub Actions CI `Unit tests` | `58ac28859e44bc605553e18090ba24564c7f0709`；passed；CI [Run #44234979083](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083) success；[PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111) |
 | E3 | SF-WS-09-A3 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_try_workspace_lock_sets_cloexec_and_permission_0600`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_try_workspace_lock_rejects_symlink_lock_file`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_unlock_workspace_handles_invalid_or_closed_fd_safely` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_workspace_diff_hardening.py`；GitHub Actions CI `Unit tests` | `58ac28859e44bc605553e18090ba24564c7f0709`；passed；CI [Run #44234979083](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083) success；[PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111) |
 | E4 | SF-WS-09-A4 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_remove_locked_workspace_is_rejected`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_remove_cleans_up_worktree_branch`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_create_rejects_dangling_symlink_path_and_metadata`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_paths_fingerprint_normalized_with_trailing_slash` | `ruff check .`、`python3 scripts/check_sdd.py`、`git diff --check`、`pytest tests/test_workspace_diff_hardening.py` 与 GitHub Actions CI（单元测试 + Docker 集成测试） | `58ac28859e44bc605553e18090ba24564c7f0709`；passed；CI [Run #44234979083](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083) success；[PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111) |
+| E5 | SF-WS-09-A1 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_untracked_bounded_read_prevents_oom_on_large_file`、`tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_cumulative_diff_budget_exhaustion_truncates_output`、`tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_workspace_diff_validates_base_sha` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-WS-09-A2 | `tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_untracked_binary_file_with_null_bytes_is_redacted`、`tests/test_workspace_diff_hardening.py::TestWorkspaceDiffHardening::test_tracked_binary_diff_is_sanitized` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-WS-09-A3 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_try_workspace_lock_sets_cloexec_and_permission_0600`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_try_workspace_lock_rejects_symlink_lock_file`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLockHardening::test_unlock_workspace_handles_invalid_or_closed_fd_safely` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-WS-09-A4 | `tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_remove_locked_workspace_is_rejected`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_remove_cleans_up_worktree_branch`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_create_rejects_dangling_symlink_path_and_metadata`、`tests/test_workspace_diff_hardening.py::TestWorkspaceLifecycleAndPruneHardening::test_paths_fingerprint_normalized_with_trailing_slash`、`tests/test_workspace_diff_hardening.py::test_diff_uses_literal_tracked_paths_without_selecting_protected_files`、`tests/test_workspace_diff_hardening.py::test_workspace_lock_does_not_follow_a_replaced_path`、`tests/test_workspace_diff_hardening.py::test_diff_rejects_a_file_replaced_by_fifo`、`tests/test_workspace_diff_hardening.py::test_diff_total_budget_includes_truncation_markers` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。4个失败：Git特殊路径被当作pathspec选中受保护内容；检查后文件变成FIFO仍读取；锁文件替换后修改外部目标权限；总预算未包含截断标记。使用--literal-pathspecs、共享FD普通文件读取、锚定nofollow/nonblock锁和fchmod(fd)；标记计入总预算，超出文件计omitted。真实Git/文件及受控替换；相关32 passed。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#111；Merge=`328a828eb30ed4ea40c018320fb12ae86913703b`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-ws-09 (worktree: selfforge-sf-ws-09) / 58ac28859e44bc605553e18090ba24564c7f0709
-已完成验收与证据 ID：SF-WS-09-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码与测试已全量验证通过；无未提交源码；没有付费模型测量
-PR / 准确 head CI / merge SHA（有则填）：PR #111 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44234979083 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；PR #111 R1 CI 已全部成功通过
-下一步：待 PR #111 审查合并至 main。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-WS-09-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #111 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / 328a828eb30ed4ea40c018320fb12ae86913703b
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-CORE-02
@@ -2355,10 +2399,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #111 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-CORE-02-A1 | 双向各 200 KiB 大量流式输出在非阻塞多路复用调度下无死锁完成，交互式 stdin 立即触发 EOF 不挂起，进程提前退出时管道输出完整捕获 | `tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening` 3 个测试 | E1 |
-| SF-CORE-02-A2 | 子进程超时时优先触发 SIGTERM 优雅清理处理函数，对忽略 SIGTERM 的进程可靠升级为 SIGKILL 强制回收，消除 ProcessLookupError 竞态 | `tests/test_core_hardening.py::TestProcessGracefulTerminationHardening` 2 个测试 | E2 |
-| SF-CORE-02-A3 | 环境变量个数上限 500 与总字节 64 KiB 有界防御生效，拒绝空键、等号与换行，scrub_credentials 可靠脱敏敏感 Token 并支持白名单放行 | `tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening` 5 个测试 | E3 |
-| SF-CORE-02-A4 | 非法格式/短 SHA/选项式 revision 严格抛出 GitContextError，底层 git rev-parse 与 git diff 严格通过 --end-of-options 隔离参数 | `tests/test_core_hardening.py::TestGitContextSHAHardening` 2 个测试 | E4 |
+| SF-CORE-02-A1 | 双向各 200 KiB 大量流式输出在非阻塞多路复用调度下无死锁完成，交互式 stdin 立即触发 EOF 不挂起，进程提前退出时管道输出完整捕获 | `tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening` 3 个测试 | E5（本轮复验） |
+| SF-CORE-02-A2 | 子进程超时时优先触发 SIGTERM 优雅清理处理函数，对忽略 SIGTERM 的进程可靠升级为 SIGKILL 强制回收，消除 ProcessLookupError 竞态 | `tests/test_core_hardening.py::TestProcessGracefulTerminationHardening` 2 个测试 | E6（本轮复验） |
+| SF-CORE-02-A3 | 环境变量个数上限 500 与总字节 64 KiB 有界防御生效，拒绝空键、等号与换行，scrub_credentials 可靠脱敏敏感 Token 并支持白名单放行 | `tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening` 5 个测试 | E7（本轮复验） |
+| SF-CORE-02-A4 | 非法格式/短 SHA/选项式 revision 严格抛出 GitContextError，底层 git rev-parse 与 git diff 严格通过 --end-of-options 隔离参数 | `tests/test_core_hardening.py::TestGitContextSHAHardening` 2 个测试 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2366,15 +2410,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #111 / https://github.com/li
 | E2 | SF-CORE-02-A2 | `tests/test_core_hardening.py::TestProcessGracefulTerminationHardening::test_process_group_sigterm_before_sigkill_graceful_cleanup`、`tests/test_core_hardening.py::TestProcessGracefulTerminationHardening::test_process_group_sigkill_escalation_when_sigterm_ignored` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_core_hardening.py`；GitHub Actions CI `Unit tests` | `80a99708cdb81d0b37545c252f61afe42c372f9c`；passed；CI [Run #44241617859](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859) |
 | E3 | SF-CORE-02-A3 | `tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_enforces_max_count`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_enforces_max_total_bytes`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_rejects_empty_keys_equals_and_newlines`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_run_bounded_scrubs_sensitive_credentials_when_requested`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_run_bounded_allow_credentials_whitelisting` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_core_hardening.py`；GitHub Actions CI `Unit tests` | `80a99708cdb81d0b37545c252f61afe42c372f9c`；passed；CI [Run #44241617859](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859) |
 | E4 | SF-CORE-02-A4 | `tests/test_core_hardening.py::TestGitContextSHAHardening::test_build_context_rejects_malformed_shas`、`tests/test_core_hardening.py::TestGitContextSHAHardening::test_git_context_passes_end_of_options_to_git` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_core_hardening.py`；GitHub Actions CI `Unit tests` | `80a99708cdb81d0b37545c252f61afe42c372f9c`；passed；CI [Run #44241617859](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859) |
+| E5 | SF-CORE-02-A1 | `tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening::test_run_bounded_massive_bidirectional_output_no_deadlock`、`tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening::test_run_bounded_stdin_devnull_prevents_interactive_hang`、`tests/test_core_hardening.py::TestProcessDeadlockAndStreamHardening::test_run_bounded_drains_pipes_when_process_exits_early` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-CORE-02-A2 | `tests/test_core_hardening.py::TestProcessGracefulTerminationHardening::test_process_group_sigterm_before_sigkill_graceful_cleanup`、`tests/test_core_hardening.py::TestProcessGracefulTerminationHardening::test_process_group_sigkill_escalation_when_sigterm_ignored`、`tests/test_core_hardening.py::test_timeout_grace_period_reaches_children_after_parent_exit` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-CORE-02-A3 | `tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_enforces_max_count`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_enforces_max_total_bytes`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_validate_env_rejects_empty_keys_equals_and_newlines`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_run_bounded_scrubs_sensitive_credentials_when_requested`、`tests/test_core_hardening.py::TestProcessEnvironmentIsolationHardening::test_run_bounded_allow_credentials_whitelisting` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-CORE-02-A4 | `tests/test_core_hardening.py::TestGitContextSHAHardening::test_build_context_rejects_malformed_shas`、`tests/test_core_hardening.py::TestGitContextSHAHardening::test_git_context_passes_end_of_options_to_git` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。1个失败：父进程退出后立即SIGKILL整组，子进程未获得承诺的150ms清理宽限。宽限按组计时；仍保留硬清理。真实fork/信号/清理文件证明，相关35 passed。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#112；Merge=`f75bdf2442f10fb9cbcf76e43d1a31c18e433071`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-core-02 (worktree: selfforge-sf-core-02) / 80a99708cdb81d0b37545c252f61afe42c372f9c
-已完成验收与证据 ID：SF-CORE-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码与测试已合入 PR #112并通过 R1 CI；本提交仅含文档更新
-PR / 准确 head CI / merge SHA（有则填）：PR #112 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查与合并 PR #112，合并后更新基线 main 并回填 merge SHA。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-CORE-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #112 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / f75bdf2442f10fb9cbcf76e43d1a31c18e433071
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-SESS-02
@@ -2384,17 +2436,17 @@ PR / 准确 head CI / merge SHA（有则填）：PR #112 / https://github.com/li
 **范围/入口：** 改动 `src/selfforge_agent/runtime/session.py` 与专项复现安全测试 `tests/test_session_hardening.py`；保持对 `SessionStore` 既有消费者（`cli.py`、`api/app.py`、`coding/agent.py` 等）的完全向后兼容。
 
 **行为：**
-1. 新增 `export_snapshot` 与 `export_trace` 导出方法，采用同目录唯一临时文件（`.<target>.tmp.<uuid>`）配合 `os.fdatasync` 与 `os.replace` 原子原子写盘，拦截目标路径符号链接穿越与空字节；
+1. 新增 `export_snapshot` 与 `export_trace` 导出方法，采用同目录唯一临时文件（`.<target>.tmp.<uuid>`）配合 `os.fdatasync` 与 `os.replace` 原子写盘，目录FD锚定，失败清理临时文件，拦截目标路径符号链接穿越与空字节；
 2. 新增 `redact_sensitive_text` 与 `redact_event` 工具，正则覆盖 API Key、GitHub Token、Bearer 认证、URL 内嵌密码及常见凭证字段，自动将工作区根路径与用户家目录替换为相对路径/标记，并在 `trace()` 写入及导出时默认自动执行敏感信息脱敏；
 3. 严格执行写入有界配额防御：单会话文件限制最大事件数量 `<= 50_000`（`MAX_SESSION_EVENTS`），`trace()` 检查并受控抑制超出 16 MiB（`MAX_TRACE_BYTES`）的写入，`trace_events(limit)` 限制查询上限 `<= 10_000`（`MAX_TRACE_QUERY_LIMIT`）；
 4. `load(recover=True)` 提供优雅降级容错机制，跳过包含损坏 JSON 的单行记录并返回全部可识别的有效消息与最新状态，默认 `recover=False` 保持 Fail-Closed 抛出 `json.JSONDecodeError`；新增 `recover_session()` 方法返回诊断恢复结果及损坏记录计数；新增 `SessionCorruptError(ValueError)` 异常类型。
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-SESS-02-A1 | 快照与 Trace 导出采用临时文件及原子重命名安全写盘，严格拦截符号链接目标路径及父级软链接 | `tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport` 3 个测试 | E1 |
-| SF-SESS-02-A2 | 正则自动掩码 API Key、GitHub Token、URL 密码及本地用户/根路径，Trace 记录与快照导出默认脱敏 | `tests/test_session_hardening.py::TestTraceAndSessionRedaction` 4 个测试 | E2 |
-| SF-SESS-02-A3 | 单会话事件总数上限 50,000 超限拦截，Trace 写入受控抑制在 16 MiB 磁盘配额内，查询 limit 上限防御生效 | `tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds` 3 个测试 | E3 |
-| SF-SESS-02-A4 | 损坏 JSON 行在 recover=False 时 fail-closed，在 recover=True 时平滑跳过并恢复有效消息，recover_session 准确输出损坏计数 | `tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery` 3 个测试 | E4 |
+| SF-SESS-02-A1 | 快照与 Trace 导出采用临时文件及原子重命名安全写盘，严格拦截符号链接目标路径及父级软链接 | `tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport` 3 个测试 | E5（本轮复验） |
+| SF-SESS-02-A2 | 正则自动掩码 API Key、GitHub Token、URL 密码及本地用户/根路径，Trace 记录与快照导出默认脱敏 | `tests/test_session_hardening.py::TestTraceAndSessionRedaction` 4 个测试 | E6（本轮复验） |
+| SF-SESS-02-A3 | 单会话事件总数上限 50,000 超限拦截，Trace 写入受控抑制在 16 MiB 磁盘配额内，查询 limit 上限防御生效 | `tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds` 3 个测试 | E7（本轮复验） |
+| SF-SESS-02-A4 | 损坏 JSON 行在 recover=False 时 fail-closed，在 recover=True 时平滑跳过并恢复有效消息，recover_session 准确输出损坏计数 | `tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery` 3 个测试 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2402,15 +2454,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #112 / https://github.com/li
 | E2 | SF-SESS-02-A2 | `tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_redact_sensitive_text_masks_credentials`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_redact_sensitive_text_masks_local_root_path`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_trace_automatically_masks_sensitive_fields`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_export_snapshot_redacts_credentials_by_default` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_session_hardening.py`；GitHub Actions CI `Unit tests` | `77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319`；passed；CI [Run #44266341312](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312) |
 | E3 | SF-SESS-02-A3 | `tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_append_enforces_max_session_events`、`tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_trace_enforces_max_trace_bytes_quota`、`tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_trace_events_enforces_max_query_limit` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_session_hardening.py`；GitHub Actions CI `Unit tests` | `77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319`；passed；CI [Run #44266341312](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312) |
 | E4 | SF-SESS-02-A4 | `tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_load_with_recover_true_skips_malformed_json_lines`、`tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_recover_session_returns_diagnostics`、`tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_session_corrupt_error_type` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_session_hardening.py`；GitHub Actions CI `Unit tests` | `77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319`；passed；CI [Run #44266341312](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312) |
+| E5 | SF-SESS-02-A1 | `tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport::test_export_snapshot_creates_atomic_file`、`tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport::test_export_snapshot_rejects_symlink_target_and_parents`、`tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport::test_export_trace_creates_atomic_file`、`tests/test_session_hardening.py::test_snapshot_replace_failure_cleans_private_temporary_file` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-SESS-02-A2 | `tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_redact_sensitive_text_masks_credentials`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_redact_sensitive_text_masks_local_root_path`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_trace_automatically_masks_sensitive_fields`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_export_snapshot_redacts_credentials_by_default`、`tests/test_session_hardening.py::test_default_snapshot_redacts_private_reasoning_without_changing_session` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-SESS-02-A3 | `tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_append_enforces_max_session_events`、`tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_trace_enforces_max_trace_bytes_quota`、`tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_trace_events_enforces_max_query_limit` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-SESS-02-A4 | `tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_load_with_recover_true_skips_malformed_json_lines`、`tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_recover_session_returns_diagnostics`、`tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_session_corrupt_error_type` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。2个失败：默认snapshot原样导出私有reasoning；原子重命名失败遗留临时私有文件。默认脱敏reasoning而私有session保持原内容；目录FD锚定原子落盘并在失败时清理。真实文件与rename故障注入，相关48 passed。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#113；Merge=`6a3eacb0513ed9d2741e107746ec5977c923f471`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-sess-02 (worktree: selfforge-sf-sess-02) / 77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319
-已完成验收与证据 ID：SF-SESS-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码与测试已合入 PR #113并通过 R1 CI；本提交仅含文档更新
-PR / 准确 head CI / merge SHA（有则填）：PR #113 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查与合并 PR #113，合并后更新基线 main 并回填 merge SHA。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-SESS-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #113 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / 6a3eacb0513ed9d2741e107746ec5977c923f471
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-HTTP-01
@@ -2423,15 +2483,15 @@ PR / 准确 head CI / merge SHA（有则填）：PR #113 / https://github.com/li
 1. `_validate_headers` 严格校验自定义请求头字典：限制请求头数量不超过 50，键长度不超过 128 字符且符合 ASCII 规范（`^[A-Za-z0-9_-]+$`），值长度不超过 4096 字符，总编码大小不超过 16 KiB，严格杜绝 `\r`、`\n`、`\x00`，并显式拒绝 `connection`、`upgrade`、`keep-alive`、`proxy-authorization`、`transfer-encoding`、`content-length` 等逐跳/冲突标头；
 2. 校验请求体 `payload` 必须为 `dict` 或 `None`，序列化字节严格限制在 16 MiB 内，并将解析/序列化异常安全映射为受控 `ValueError`；
 3. `_validate_model_url` 显式拦截带有 URL 片段（`#`）的请求地址，防止客户端片段注入伪造，并支持 IPv6 环回地址（`[::1]`）；
-4. `request_json` 支持 `max_retries`（0–5）与 `backoff_factor`，针对 429、502、503、504 与瞬态网络连接异常执行指数退避重试，对 400、401、403、404、422 等客户端错误 Fail-Closed 立即终止，并全程严守单次请求总预算的绝对截止期（`deadline`）；
+4. `request_json` 支持 `max_retries`（0–5）与 `backoff_factor`（有限0..300秒，先验范围再finite），针对 429、502、503、504 与瞬态网络连接异常执行指数退避重试，对 400、401、403、404、422 等客户端错误 Fail-Closed 立即终止，并全程严守单次请求总预算的绝对截止期（`deadline`）；
 5. 限制响应读取循环的最大 Chunk 数量（`MAX_CHUNKS = 100_000`），防止慢速流耗尽资源，安全适配无 `read1` 的流对象回退至 `read`，并确保每次读取更新底层 Socket 超时及上下文退出时彻底释放 Socket。
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-HTTP-01-A1 | 自定义请求头注入 CRLF/空字节、超出 50 个或键值超限、包含逐跳标头均被拒绝，合法头正常透传 | `tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection` | E1 |
-| SF-HTTP-01-A2 | 非 dict 请求体被拒，超 16 MiB 载荷被拒，无法序列化载荷受控映射为 ValueError | `tests/test_model_http_hardening.py::TestPayloadValidationAndBounds` | E2 |
-| SF-HTTP-01-A3 | 包含 URL 片段（#）的地址被拒，IPv6 环回地址允许访问，非法 HTTP 方法被拒 | `tests/test_model_http_hardening.py::TestURLValidationHardening`、`TestStreamingBudgetAndMethodValidation` | E3 |
-| SF-HTTP-01-A4 | 瞬态 503 按指数退避重试成功，401/404 立即拒绝不重试，重试严守总截止期，单字节慢流受 Chunk 预算限制 | `tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening`、`TestStreamingBudgetAndMethodValidation` | E4 |
+| SF-HTTP-01-A1 | 自定义请求头注入 CRLF/空字节、超出 50 个或键值超限、包含逐跳标头均被拒绝，合法头正常透传 | `tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection` | E5（本轮复验） |
+| SF-HTTP-01-A2 | 非 dict 请求体被拒，超 16 MiB 载荷被拒，无法序列化载荷受控映射为 ValueError | `tests/test_model_http_hardening.py::TestPayloadValidationAndBounds` | E6（本轮复验） |
+| SF-HTTP-01-A3 | 包含 URL 片段（#）的地址被拒，IPv6 环回地址允许访问，非法 HTTP 方法被拒 | `tests/test_model_http_hardening.py::TestURLValidationHardening`、`TestStreamingBudgetAndMethodValidation` | E7（本轮复验） |
+| SF-HTTP-01-A4 | 瞬态 503 按指数退避重试成功，401/404 立即拒绝不重试，重试严守总截止期，单字节慢流受 Chunk 预算限制 | `tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening`、`TestStreamingBudgetAndMethodValidation` | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2439,17 +2499,25 @@ PR / 准确 head CI / merge SHA（有则填）：PR #113 / https://github.com/li
 | E2 | SF-HTTP-01-A2 | `tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_rejects_non_dict_payload`、`tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_rejects_oversized_payload`、`tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_handles_unserializable_payload_gracefully` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_model_http_hardening.py`；GitHub Actions CI `Unit tests` | `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad`；passed；CI [Run #44292350166](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166) |
 | E3 | SF-HTTP-01-A3 | `tests/test_model_http_hardening.py::TestURLValidationHardening::test_request_json_rejects_url_with_fragment`、`tests/test_model_http_hardening.py::TestURLValidationHardening::test_request_json_accepts_ipv6_loopback`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_rejects_invalid_methods`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_accepts_custom_method` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_model_http_hardening.py`；GitHub Actions CI `Unit tests` | `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad`；passed；CI [Run #44292350166](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166) |
 | E4 | SF-HTTP-01-A4 | `tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_rejects_invalid_retry_parameters`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_retries_transient_503_and_succeeds`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_does_not_retry_401_or_404`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_retry_respects_total_deadline`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_enforces_max_chunks_limit`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_read_fallback_when_read1_missing` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_model_http_hardening.py`；GitHub Actions CI `Unit tests` | `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad`；passed；CI [Run #44292350166](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166) |
+| E5 | SF-HTTP-01-A1 | `tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_crlf_in_custom_headers`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_hop_by_hop_headers`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_oversized_headers_count_and_length`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_rejects_invalid_header_keys`、`tests/test_model_http_hardening.py::TestHTTPHeaderValidationAndInjection::test_request_json_accepts_valid_custom_headers` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-HTTP-01-A2 | `tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_rejects_non_dict_payload`、`tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_rejects_oversized_payload`、`tests/test_model_http_hardening.py::TestPayloadValidationAndBounds::test_request_json_handles_unserializable_payload_gracefully` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-HTTP-01-A3 | `tests/test_model_http_hardening.py::TestURLValidationHardening::test_request_json_rejects_url_with_fragment`、`tests/test_model_http_hardening.py::TestURLValidationHardening::test_request_json_accepts_ipv6_loopback`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_rejects_invalid_methods`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_accepts_custom_method` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-HTTP-01-A4 | `tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_rejects_invalid_retry_parameters`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_retries_transient_503_and_succeeds`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_does_not_retry_401_or_404`、`tests/test_model_http_hardening.py::TestTransientRetryAndDeadlineHardening::test_request_json_retry_respects_total_deadline`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_enforces_max_chunks_limit`、`tests/test_model_http_hardening.py::TestStreamingBudgetAndMethodValidation::test_request_json_read_fallback_when_read1_missing`、`tests/test_model_http_hardening.py::test_huge_backoff_is_controlled_before_network` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
 
 执行记录（Owner/状态以上表为准）：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-http-01`；Worktree=`selfforge-sf-http-01`；PR=[#114](https://github.com/liuzhouquan/selfforge-agent/pull/114)。先编写 `tests/test_model_http_hardening.py` 抓住 15 项基线缺陷，随后完成实现；源码提交 `a5dbd0b2f8e1fae32a67e89aa21235451e5927ad` 已通过本地回归（18 passed，非集成全量 1660 passed）与 CI `Run #44292350166`（Lint / SDD / Unit 1660 passed / Docker integration 15 passed）。
 
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。1个失败：巨大整数backoff触发OverflowError。重试退避先验0..300秒，再finite检查，保持共享deadline。HTTP边界替身与相关回归26 passed，无真实模型请求。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#114；Merge=`fb14adc51b8008c50c2b37a8f6bf01b4475fa456`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
+
 ```text
-Owner / 状态：Codex（自主开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-http-01 (worktree: selfforge-sf-http-01) / a5dbd0b2f8e1fae32a67e89aa21235451e5927ad
-已完成验收与证据 ID：SF-HTTP-01-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：无
-PR / 准确 head CI / merge SHA（有则填）：PR #114 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44292350166
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查并合并 PR #114；准备后续任务开发。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-HTTP-01-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #114 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / fb14adc51b8008c50c2b37a8f6bf01b4475fa456
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-TOOL-02
@@ -2468,10 +2536,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #114 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-TOOL-02-A1 | 非字典参数输入被拒，非法工具名与未知工具受控报错，未声明额外字段被 Pydantic 模型拦截 | `tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema` | E1 |
-| SF-TOOL-02-A2 | Bash 命令空字节被拒，pytest 关键字前导选项注入与换行/空字节被拒，路径空字节与穿越被拒 | `tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening` | E2 |
-| SF-TOOL-02-A3 | EditFile 超大载荷在执行前拦截，EditPolicy 非法大小上限被拒，SearchCode 模式与通配符空字节被拒 | `tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense` | E3 |
-| SF-TOOL-02-A4 | 工具执行中的任意异常（如除以零/属性错误）受控隔离为失败结果，输出空字节被安全清洗，输出超限严格截断 | `tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation` | E4 |
+| SF-TOOL-02-A1 | 非字典参数输入被拒，非法工具名与未知工具受控报错，未声明额外字段被 Pydantic 模型拦截 | `tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema` | E5（本轮复验） |
+| SF-TOOL-02-A2 | Bash 命令空字节被拒，pytest 关键字前导选项注入与换行/空字节被拒，路径空字节与穿越被拒 | `tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening` | E6（本轮复验） |
+| SF-TOOL-02-A3 | EditFile 超大载荷在执行前拦截，EditPolicy 非法大小上限被拒，SearchCode 模式与通配符空字节被拒 | `tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense` | E7（本轮复验） |
+| SF-TOOL-02-A4 | 工具执行中的任意异常（如除以零/属性错误）受控隔离为失败结果，输出空字节被安全清洗，输出超限严格截断 | `tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation` | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2479,37 +2547,45 @@ PR / 准确 head CI / merge SHA（有则填）：PR #114 / https://github.com/li
 | E2 | SF-TOOL-02-A2 | `tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_bash_command_rejects_null_bytes`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_bash_command_rejects_empty_or_whitespace_only`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_run_tests_keyword_rejects_leading_dash_option_injection`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_run_tests_keyword_rejects_null_bytes_and_newlines`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_path_validation_rejects_null_bytes_and_empty_paths` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_tool_execution_hardening.py`；GitHub Actions CI `Unit tests` | `2a271b0586e41366113b246a4892c57a972c83b7`；passed；CI [Run #44304338655](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655) |
 | E3 | SF-TOOL-02-A3 | `tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_edit_file_rejects_oversized_payload_before_modification`、`tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_edit_policy_rejects_invalid_size_limits`、`tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_search_code_rejects_null_bytes_and_overlong_inputs` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_tool_execution_hardening.py`；GitHub Actions CI `Unit tests` | `2a271b0586e41366113b246a4892c57a972c83b7`；passed；CI [Run #44304338655](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655) |
 | E4 | SF-TOOL-02-A4 | `tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_isolates_arbitrary_exceptions`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_isolates_zero_division_and_index_error`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_sanitizes_null_bytes_in_output`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_strictly_bounds_output_length` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_tool_execution_hardening.py`；GitHub Actions CI `Unit tests` | `2a271b0586e41366113b246a4892c57a972c83b7`；passed；CI [Run #44304338655](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655) |
+| E5 | SF-TOOL-02-A1 | `tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_non_dict_arguments`、`tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_invalid_tool_names`、`tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_unknown_tool`、`tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_extra_undeclared_fields` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-TOOL-02-A2 | `tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_bash_command_rejects_null_bytes`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_bash_command_rejects_empty_or_whitespace_only`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_run_tests_keyword_rejects_leading_dash_option_injection`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_run_tests_keyword_rejects_null_bytes_and_newlines`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_path_validation_rejects_null_bytes_and_empty_paths` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-TOOL-02-A3 | `tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_edit_file_rejects_oversized_payload_before_modification`、`tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_edit_policy_rejects_invalid_size_limits`、`tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_search_code_rejects_null_bytes_and_overlong_inputs` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-TOOL-02-A4 | `tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_isolates_arbitrary_exceptions`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_isolates_zero_division_and_index_error`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_sanitizes_null_bytes_in_output`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_strictly_bounds_output_length`、`tests/test_tool_execution_hardening.py::test_tool_output_budget_includes_truncation_notice` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
 
 执行记录（Owner/状态以上表为准）：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-tool-02`；Worktree=`selfforge-sf-tool-02`；PR=[#115](https://github.com/liuzhouquan/selfforge-agent/pull/115)。先编写 `tests/test_tool_execution_hardening.py` 抓住 11 项基线缺陷，随后完成实现；源码提交 `2a271b0586e41366113b246a4892c57a972c83b7` 已通过本地回归（16 passed，非集成全量 1658 passed）与 CI `Run #44304338655`（Lint / SDD / Unit 1658 passed / Docker integration 15 passed）。
 
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。1个失败：真实read_file返回6019字符，超过6000上限。为截断提示预留空间，保留提示且总长不越界；相关24 passed。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#115；Merge=`af29de1c5daf42c6f1e44a591b8733fd2f3e65cf`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
+
 ```text
-Owner / 状态：Codex（自主开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-tool-02 (worktree: selfforge-sf-tool-02) / 2a271b0586e41366113b246a4892c57a972c83b7
-已完成验收与证据 ID：SF-TOOL-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：无
-PR / 准确 head CI / merge SHA（有则填）：PR #115 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查并合并 PR #115；准备后续任务开发。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-TOOL-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #115 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / af29de1c5daf42c6f1e44a591b8733fd2f3e65cf
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-FP-02
 
-**目标：** 工作区快照指纹加固与跨平台确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、跨平台权限模式与路径规范化、Unicode文件名NFC排序稳定性及取消中断精准响应。
+**目标：** 工作区快照指纹加固与同一实际树确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、真实权限模式与路径身份绑定、Unicode文件名NFC排序稳定性及取消中断精准响应。
 
 **范围/入口：** 改动 `src/selfforge_agent/runtime/fingerprint.py` 与专项测试 `tests/test_fingerprint_hardening.py`；保持与 `delivery.py`、`agent.py`、`regression_validation.py` 及既有测试 `test_workspace_fingerprint.py`、`test_workspace_fingerprint_security.py` 的完全向后兼容。
 
 **行为：**
 1. 根路径严格输入防御：`root` 必须为有效 `Path` 或 `str` 且非空、非纯空白（`ValueError("root cannot be empty or whitespace")`），阻断将空字符串误解析为当前工作目录的静默漏洞；非存在路径或普通文件严格以 `WorkspaceSnapshotError` 拒绝（fail-closed）；
 2. 单文件大小有界上限：定义并导出 `MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024`（10 MiB），在 `stat.st_size` 元数据检查和流式块读取（64 KiB 块）双重入口均强制判定并受控拦截超限文件，防范单文件资源消耗耗尽；
-3. 跨平台哈希确定性与权限规范化：针对不同环境 umask 差异（如 `0o644` vs `0o664`、`0o755` vs `0o775`），在保留执行位语义（`0o644` 与 `0o755` 产生不同指纹）的前提下对文件和目录模式统一规范化；路径分隔符强制规范为 POSIX 正斜杠 `/`；文件名采用 Unicode NFC 规范化进行稳定排序，确保跨平台（Linux、macOS、Windows）指纹确定一致；
+3. 证据身份与确定性：保留原始文件名及根路径字节、完整stat.S_IMODE权限；POSIX不同Unicode文件名、路径分隔符或任意权限变化必须改变指纹。NFC仅用于排序，不合并实际身份；不声称跨平台不同树指纹一致。
 4. 流式取消与超时精准响应及 ELOOP 隔离：在流式分块读取过程中每次读取调用 `check()` 实时响应 `threading.Event` 取消信号（抛出 `KeyboardInterrupt`）与单调时钟截止时间 `deadline`（抛出 `TimeoutError`）；针对符链循环引用（`errno.ELOOP`）及底层读取异常，受控收敛为 `WorkspaceSnapshotError`，绝不泄露敏感局部信息。
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-FP-02-A1 | 空字符串、纯空白字符或空路径作为 root 传入时严格抛出 ValueError；非存在或非目录 root 受控抛出 WorkspaceSnapshotError | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense` 各用例 | E1 |
-| SF-FP-02-A2 | 导出 MAX_SINGLE_FILE_BYTES 常量，单文件超过单文件上限（元数据或动态膨胀）严格抛出包含 "file size limit" 的 WorkspaceSnapshotError | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds` 各用例 | E2 |
-| SF-FP-02-A3 | 文件/目录 umask 差异（0o644 vs 0o664, 0o755 vs 0o775）产生相同指纹，可执行位语义（0o644 vs 0o755）产生不同指纹；路径正斜杠与 NFC 排序保持跨平台确定性 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism` 各用例 | E3 |
-| SF-FP-02-A4 | 大文件流式读取期间实时响应 cancel.set() 抛出 KeyboardInterrupt；过期 deadline 立即超时；符号链接 ELOOP/OSError 受控捕获并不泄露路径 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout` 及 `test_symlink_eloop_handled_fail_closed` 用例 | E4 |
+| SF-FP-02-A1 | 空字符串、纯空白字符或空路径作为 root 传入时严格抛出 ValueError；非存在或非目录 root 受控抛出 WorkspaceSnapshotError | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense` 各用例 | E5（本轮复验） |
+| SF-FP-02-A2 | 导出 MAX_SINGLE_FILE_BYTES 常量，单文件超过单文件上限（元数据或动态膨胀）严格抛出包含 "file size limit" 的 WorkspaceSnapshotError | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds` 各用例 | E6（本轮复验） |
+| SF-FP-02-A3 | 同一实际树确定性，原始路径字节及完整权限参与哈希；NFC只稳定排序，真实重命名/权限变化必须使指纹不同 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism` 各用例 | E7（本轮复验） |
+| SF-FP-02-A4 | 大文件流式读取期间实时响应 cancel.set() 抛出 KeyboardInterrupt；过期 deadline 立即超时；符号链接 ELOOP/OSError 受控捕获并不泄露路径 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout` 及 `test_symlink_eloop_handled_fail_closed` 用例 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2517,15 +2593,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #115 / https://github.com/li
 | E2 | SF-FP-02-A2 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds::test_single_file_exceeds_size_limit_fails_closed`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds::test_single_file_streaming_read_bounds_size` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_fingerprint_hardening.py`；GitHub Actions CI `Unit tests` | `ef73ce5f04ffebef3628c11536a542c9d4c08ea1`；passed；CI [Run #44350228282](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282) |
 | E3 | SF-FP-02-A3 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_umask_group_write_permission_normalized`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_executable_permission_bit_is_preserved`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_directory_permission_normalized`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_unicode_filename_nfc_nfd_deterministic_sorting` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_fingerprint_hardening.py`；GitHub Actions CI `Unit tests` | `ef73ce5f04ffebef3628c11536a542c9d4c08ea1`；passed；CI [Run #44350228282](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282) |
 | E4 | SF-FP-02-A4 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout::test_cancellation_during_large_file_streaming`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout::test_deadline_precision_rejects_negative_or_zero_deadline`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_symlink_eloop_handled_fail_closed` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_fingerprint_hardening.py`；GitHub Actions CI `Unit tests` | `ef73ce5f04ffebef3628c11536a542c9d4c08ea1`；passed；CI [Run #44350228282](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282) |
+| E5 | SF-FP-02-A1 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_empty_string`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_whitespace_string`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_empty_path`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_nonexistent_directory`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintRootDefense::test_root_rejects_regular_file` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-FP-02-A2 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds::test_single_file_exceeds_size_limit_fails_closed`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintResourceBounds::test_single_file_streaming_read_bounds_size` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-FP-02-A3 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_umask_group_write_permission_normalized`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_executable_permission_bit_is_preserved`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_directory_permission_normalized`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_unicode_filename_nfc_nfd_deterministic_sorting`、`tests/test_fingerprint_hardening.py::test_fingerprint_preserves_distinct_posix_unicode_path_identity`、`tests/test_fingerprint_hardening.py::test_fingerprint_preserves_each_execution_permission` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-FP-02-A4 | `tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout::test_cancellation_during_large_file_streaming`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCancellationAndTimeout::test_deadline_precision_rejects_negative_or_zero_deadline`、`tests/test_fingerprint_hardening.py::TestWorkspaceFingerprintCrossPlatformDeterminism::test_symlink_eloop_handled_fail_closed` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。2个失败：NFC/NFD改名或0744→0645执行权限变化仍给相同指纹。哈希保留原始路径字节及完整mode，NFC仅用于稳定排序。两项新PR测试原要求权限变更等价，与既有证据身份不变量冲突，现明确要求不同；未放宽旧证据门禁。真实rename/chmod，相关33 passed。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#116；Merge=`d5e84bfd3f3e3da15aaa71c87f07d2ee52b955e6`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Antigravity / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-fp-02 (worktree: selfforge-sf-fp-02) / 已验证源码 ef73ce5f04ffebef3628c11536a542c9d4c08ea1
-已完成验收与证据 ID：SF-FP-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：无未完成项；全量测试与加固套件 82 passed 1 skipped；真 Docker 集成测试通过；无未提交源码改动
-PR / 准确 head CI / merge SHA（有则填）：PR #116 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查并合并 PR #116，更新 main 基线。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-FP-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #116 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / d5e84bfd3f3e3da15aaa71c87f07d2ee52b955e6
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-CAUSAL-02
@@ -2542,10 +2626,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #116 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-CAUSAL-02-A1 | target.file_path 空值/空白字符与 test_code 空字节被拒（ValueError），CausalInvestigation.causally_linked 设为 True 触发模型校验拒绝 | `tests/test_causal_hardening.py::TestCausalInputDefenseSecondary` 各用例 | E1 |
-| SF-CAUSAL-02-A2 | 单引号格式 File 'mod.py' 与 Pytest 格式调用栈准确提取，虚拟环境/site-packages/运行时外部帧被隔离不误匹配工作区目标 | `tests/test_causal_hardening.py::TestTracebackPatternHardening` 各用例 | E2 |
-| SF-CAUSAL-02-A3 | base_test 中已存在的同一目标模块故障触发反归因，confidence 降级为 none 且说明指向 base test 既有故障 | `tests/test_causal_hardening.py::TestModuleLevelCausalDisattribution` 相关用例 | E3 |
-| SF-CAUSAL-02-A4 | models/config/init/settings 等通用模块名不产生 low 置信度误报，observed_locations 提取结果去重并截断有界 | `tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication` 各用例 | E4 |
+| SF-CAUSAL-02-A1 | target.file_path 空值/空白字符与 test_code 空字节被拒（ValueError），CausalInvestigation.causally_linked 设为 True 触发模型校验拒绝 | `tests/test_causal_hardening.py::TestCausalInputDefenseSecondary` 各用例 | E5（本轮复验） |
+| SF-CAUSAL-02-A2 | 单引号格式 File 'mod.py' 与 Pytest 格式调用栈准确提取，虚拟环境/site-packages/运行时外部帧被隔离不误匹配工作区目标 | `tests/test_causal_hardening.py::TestTracebackPatternHardening` 各用例 | E6（本轮复验） |
+| SF-CAUSAL-02-A3 | base_test 中已存在的同一目标模块故障触发反归因，confidence 降级为 none 且说明指向 base test 既有故障 | `tests/test_causal_hardening.py::TestModuleLevelCausalDisattribution` 相关用例 | E7（本轮复验） |
+| SF-CAUSAL-02-A4 | models/config/init/settings 等通用模块名不产生 low 置信度误报，observed_locations 提取结果去重并截断有界 | `tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication` 各用例 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2553,15 +2637,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #116 / https://github.com/li
 | E2 | SF-CAUSAL-02-A2 | `tests/test_causal_hardening.py::TestTracebackPatternHardening::test_single_quote_traceback_frame_extracted`、`tests/test_causal_hardening.py::TestTracebackPatternHardening::test_pytest_colon_in_function_format`、`tests/test_causal_hardening.py::TestTracebackPatternHardening::test_external_virtualenv_site_packages_not_matched_to_target` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_causal_hardening.py`；GitHub Actions CI `Unit tests` | `4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3`；passed；CI [Run #44444415139](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139) |
 | E3 | SF-CAUSAL-02-A3 | `tests/test_causal_hardening.py::TestModuleLevelCausalDisattribution::test_base_failure_in_same_module_disattributes_module_match` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_causal_hardening.py`；GitHub Actions CI `Unit tests` | `4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3`；passed；CI [Run #44444415139](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139) |
 | E4 | SF-CAUSAL-02-A4 | `tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication::test_generic_stem_models_config_init_do_not_trigger_false_positive`、`tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication::test_observed_locations_deduplicated_under_recursive_traceback` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_causal_hardening.py`；GitHub Actions CI `Unit tests` | `4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3`；passed；CI [Run #44444415139](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139) |
+| E5 | SF-CAUSAL-02-A1 | `tests/test_causal_hardening.py::TestCausalInputDefenseSecondary::test_target_file_path_empty_or_whitespace_rejected`、`tests/test_causal_hardening.py::TestCausalInputDefenseSecondary::test_test_code_rejects_null_bytes`、`tests/test_causal_hardening.py::TestCausalInputDefenseSecondary::test_causal_investigation_model_rejects_causally_linked_true` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-CAUSAL-02-A2 | `tests/test_causal_hardening.py::TestTracebackPatternHardening::test_single_quote_traceback_frame_extracted`、`tests/test_causal_hardening.py::TestTracebackPatternHardening::test_pytest_colon_in_function_format`、`tests/test_causal_hardening.py::TestTracebackPatternHardening::test_external_virtualenv_site_packages_not_matched_to_target` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-CAUSAL-02-A3 | `tests/test_causal_hardening.py::TestModuleLevelCausalDisattribution::test_base_failure_in_same_module_disattributes_module_match` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-CAUSAL-02-A4 | `tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication::test_generic_stem_models_config_init_do_not_trigger_false_positive`、`tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication::test_observed_locations_deduplicated_under_recursive_traceback` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。外部堆栈隔离、通用模块降级与causally_linked=False约束核读后未见确定阻断，保留原实现；位置关联不是因果证明。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#117；Merge=`d190c3a4e4aecd63e2823e43002a0c23130bf73b`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Antigravity / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-causal-02 (worktree: selfforge-sf-causal-02) / 已验证源码 4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3
-已完成验收与证据 ID：SF-CAUSAL-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：无未完成项；加固及关联套件 59 passed；全量 CI 测试通过；无未提交源码改动
-PR / 准确 head CI / merge SHA（有则填）：PR #117 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查并合并 PR #117，更新 main 基线。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-CAUSAL-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #117 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / d190c3a4e4aecd63e2823e43002a0c23130bf73b
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-RISK-02
@@ -2578,10 +2670,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #117 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-RISK-02-A1 | 路径穿越（..）与绝对路径被安全忽略，./foo.py 规范化匹配 Finding，非法行号（<=0 或 >10,000,000）被过滤 | `tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization` 各用例 | E1 |
-| SF-RISK-02-A2 | PrioritizedRisk 拒绝纯空白字段，分值强制有限非负且四舍五入，超长/去空字节 evidence 生成的 RiskTarget 稳定通过 validate_risk_target | `tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation` 各用例 | E2 |
-| SF-RISK-02-A3 | critical 严重级别获得最高基准分（150 > 100），空 findings 下 eval 与 subprocess 正确被启发式扫描识别为高危模式 | `tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics` 各用例 | E3 |
-| SF-RISK-02-A4 | tests/ 目录下测试文件新增行相对实现代码自动降权（-50pts），ANSI 转义字符与回车符被彻底脱敏清洗 | `tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization` 各用例 | E4 |
+| SF-RISK-02-A1 | 路径穿越（..）与绝对路径被安全忽略，./foo.py 规范化匹配 Finding，非法行号（<=0 或 >10,000,000）被过滤 | `tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization` 各用例 | E5（本轮复验） |
+| SF-RISK-02-A2 | PrioritizedRisk 拒绝纯空白字段，分值强制有限非负且四舍五入，超长/去空字节 evidence 生成的 RiskTarget 稳定通过 validate_risk_target | `tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation` 各用例 | E6（本轮复验） |
+| SF-RISK-02-A3 | critical 严重级别获得最高基准分（150 > 100），空 findings 下 eval 与 subprocess 正确被启发式扫描识别为高危模式 | `tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics` 各用例 | E7（本轮复验） |
+| SF-RISK-02-A4 | tests/ 目录下测试文件新增行相对实现代码自动降权（-50pts），ANSI 转义字符与回车符被彻底脱敏清洗 | `tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization` 各用例 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2589,22 +2681,30 @@ PR / 准确 head CI / merge SHA（有则填）：PR #117 / https://github.com/li
 | E2 | SF-RISK-02-A2 | `tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_prioritized_risk_rejects_whitespace_only_strings`、`tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_prioritized_risk_enforces_score_non_negative_and_rounded`、`tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_validate_risk_target_compatibility_with_truncated_and_sanitized_evidence` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_risk_hardening.py`；GitHub Actions CI `Unit tests` | `47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c`；passed；CI [Run #44451357224](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224) |
 | E3 | SF-RISK-02-A3 | `tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics::test_critical_severity_receives_highest_base_score`、`tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics::test_high_risk_heuristics_detect_eval_and_subprocess` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_risk_hardening.py`；GitHub Actions CI `Unit tests` | `47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c`；passed；CI [Run #44451357224](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224) |
 | E4 | SF-RISK-02-A4 | `tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization::test_test_files_deprioritized_relative_to_implementation`、`tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization::test_ansi_escape_and_carriage_return_sanitized` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_risk_hardening.py`；GitHub Actions CI `Unit tests` | `47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c`；passed；CI [Run #44451357224](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224) |
+| E5 | SF-RISK-02-A1 | `tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization::test_path_traversal_and_absolute_paths_ignored`、`tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization::test_relative_path_prefix_normalized_and_matches_finding`、`tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization::test_invalid_line_number_in_findings_safely_ignored`、`tests/test_risk_hardening.py::test_risk_preserves_literal_filename_whitespace`、`tests/test_risk_hardening.py::test_risk_rejects_internal_parent_segments_before_normalizing` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-RISK-02-A2 | `tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_prioritized_risk_rejects_whitespace_only_strings`、`tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_prioritized_risk_enforces_score_non_negative_and_rounded`、`tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_validate_risk_target_compatibility_with_truncated_and_sanitized_evidence`、`tests/test_risk_hardening.py::test_generated_sanitized_risk_target_is_accepted_downstream` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-RISK-02-A3 | `tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics::test_critical_severity_receives_highest_base_score`、`tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics::test_high_risk_heuristics_detect_eval_and_subprocess` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-RISK-02-A4 | `tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization::test_test_files_deprioritized_relative_to_implementation`、`tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization::test_ansi_escape_and_carriage_return_sanitized` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。3个失败：原始父目录段被规范化后接受、合法前导空格路径被改写、清洗后的风险目标反被下游拒绝。路径先拒越界且保留身份，复用同一证据清洗规则；保留等价./前缀兼容。相关27 passed，不将启发式风险当已验证缺陷。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#118；Merge=`7450cfc57c357ef7a207b5556cb79f16bf174ff6`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Antigravity / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-risk-02 (worktree: selfforge-sf-risk-02) / 已验证源码 47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c
-已完成验收与证据 ID：SF-RISK-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：无未完成项；加固及关联套件 45 passed；全量 CI 测试通过；无未提交源码改动
-PR / 准确 head CI / merge SHA（有则填）：PR #118 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查并合并 PR #118，更新 main 基线。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-RISK-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #118 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / 7450cfc57c357ef7a207b5556cb79f16bf174ff6
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-FAIL-01
 
 **目标：** 对测试失败工件与诊断快照模块（`failure_artifacts.py`）进行形式化模型与生命周期安全深度加固，建立契约模型（`FailureArtifact` / `FailureSummary`）、实现 Fail-Closed 输入参数类型门禁与超大载荷安全截断降级、强化双向目录隔离与原子无符链写盘、实现非普通文件防御与确定性工件列表检索（`list_failures`）及统计汇总（`summarize_failures`）。
 
-**范围/入口：** 改动 `src/selfforge_agent/runtime/failure_artifacts.py` 与专项加固测试 `tests/test_failure_artifacts_hardening.py`；保持与既有 `test_runtime_execution_safety.py`、`benchmark.py` 和 CLI 的完全向后兼容。
+**范围/入口：** 必要共享前提为复用 `runtime.session._directory_fd`，所有工件目录操作拒祖先符链，prepare在任何mkdir前拒原始父目录段； 改动 `src/selfforge_agent/runtime/failure_artifacts.py` 与专项加固测试 `tests/test_failure_artifacts_hardening.py`；保持与既有 `test_runtime_execution_safety.py`、`benchmark.py` 和 CLI 的完全向后兼容。
 
 **行为：**
 1. 工件模型契约与 Fail-Closed 输入守门：定义 `FailureArtifact` Pydantic 模型，校验 `version == 1`、用例名称正则（`^[A-Za-z0-9_-]{1,128}\Z`）与重复次数（`0 <= repeat <= 100_000`）；`write_failure` 对 `visible` 与 `holdout` 严格校验必须为 `TestResult` 实例或 `None`（非法类型抛出 `TypeError`，绝不泄露未受控 `AttributeError`）；`reason` 校验非空、非纯空白（抛出 `ValueError`），拦截空字节 `\0` 与 ANSI 控制转义序列；
@@ -2614,10 +2714,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #118 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-FAIL-01-A1 | visible/holdout 非 TestResult 抛出 TypeError，reason 纯空白/空字节/ANSI 被拒，FailureArtifact 模型严格校验版本与结构 | `tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema` 各用例 | E1 |
-| SF-FAIL-01-A2 | prepare_artifacts 双向防御仓库与工件目录相互嵌套，write_failure 重复写入同一工件触发受控 FileExistsError | `tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense` 各用例 | E2 |
-| SF-FAIL-01-A3 | 超大 error_message（>128 KiB）与大载荷 failure_details 触发优雅截断降级，工件体积保持 <=128 KiB 且正常解析 | `tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary` 各用例 | E3 |
-| SF-FAIL-01-A4 | list_failures 确定性排序并过滤杂音，summarize_failures 正确汇总聚合失败用例与原因，cleanup 清理临时工件文件 | `tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup` 各用例 | E4 |
+| SF-FAIL-01-A1 | visible/holdout 非 TestResult 抛出 TypeError，reason 纯空白/空字节/ANSI 被拒，FailureArtifact 模型严格校验版本与结构 | `tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema` 各用例 | E5（本轮复验） |
+| SF-FAIL-01-A2 | prepare_artifacts 双向防御仓库与工件目录相互嵌套，write_failure 重复写入同一工件触发受控 FileExistsError | `tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense` 各用例 | E6（本轮复验） |
+| SF-FAIL-01-A3 | 超大 error_message（>128 KiB）与大载荷 failure_details 触发优雅截断降级，工件体积保持 <=128 KiB 且正常解析 | `tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary` 各用例 | E7（本轮复验） |
+| SF-FAIL-01-A4 | list_failures 确定性排序并过滤杂音，summarize_failures 正确汇总聚合失败用例与原因，cleanup 清理临时工件文件 | `tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup` 各用例 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2625,15 +2725,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #118 / https://github.com/li
 | E2 | SF-FAIL-01-A2 | `tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense::test_prepare_artifacts_rejects_bidirectional_repo_nesting`、`tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense::test_write_failure_raises_controlled_error_on_collision` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_failure_artifacts_hardening.py`；GitHub Actions CI `Unit tests` | `51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569`；passed；CI [Run #44459929004](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004) |
 | E3 | SF-FAIL-01-A3 | `tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary::test_write_failure_gracefully_truncates_large_error_message`、`tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary::test_write_failure_both_visible_and_holdout_large_payloads` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_failure_artifacts_hardening.py`；GitHub Actions CI `Unit tests` | `51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569`；passed；CI [Run #44459929004](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004) |
 | E4 | SF-FAIL-01-A4 | `tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_list_failures_returns_deterministic_sorted_artifacts`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_list_failures_rejects_symlink_root`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_summarize_failures_aggregates_diagnostics`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_cleanup_temporary_artifacts_removes_orphaned_tmp_files` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_failure_artifacts_hardening.py`；GitHub Actions CI `Unit tests` | `51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569`；passed；CI [Run #44459929004](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004) |
+| E5 | SF-FAIL-01-A1 | `tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema::test_write_failure_rejects_invalid_visible_or_holdout_types`、`tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema::test_write_failure_rejects_empty_or_whitespace_or_null_byte_reason`、`tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema::test_failure_artifact_pydantic_model_validation`、`tests/test_failure_artifacts_hardening.py::test_artifact_model_matches_strict_disk_schema`、`tests/test_failure_artifacts_hardening.py::test_failure_reason_rejects_terminal_osc_sequence` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-FAIL-01-A2 | `tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense::test_prepare_artifacts_rejects_bidirectional_repo_nesting`、`tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense::test_write_failure_raises_controlled_error_on_collision`、`tests/test_failure_artifacts_hardening.py::test_artifact_preparation_rejects_ancestor_symlink`、`tests/test_failure_artifacts_hardening.py::test_artifact_operations_reject_ancestor_symlink`、`tests/test_failure_artifacts_hardening.py::test_artifact_isolation_rejects_raw_parent_segments_without_writes` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-FAIL-01-A3 | `tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary::test_write_failure_gracefully_truncates_large_error_message`、`tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary::test_write_failure_both_visible_and_holdout_large_payloads` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-FAIL-01-A4 | `tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_list_failures_returns_deterministic_sorted_artifacts`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_list_failures_rejects_symlink_root`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_summarize_failures_aggregates_diagnostics`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_cleanup_temporary_artifacts_removes_orphaned_tmp_files` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。11个失败：公共模型接受bool版本/次数和负摘要、prepare/read/write/list/cleanup穿透祖先符链、OSC原因被接受；修复中另发现raw父目录段绕过双向隔离，已补两项无写入反例并在mkdir前拒绝。模型与磁盘共享严格摘要校验，目录FD锚定，拒终端控制序列。最终artifact专项22 passed；未声称旧磁盘严格reader可接受坏摘要。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#119；Merge=`0256454589070534f640993864458eb2ca90f681`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Antigravity / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-fail-01 (worktree: selfforge-sf-fail-01) / 已验证源码 51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569
-已完成验收与证据 ID：SF-FAIL-01-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：无未完成项；加固及关联套件 33 passed；全量 CI 测试通过；无未提交源码改动
-PR / 准确 head CI / merge SHA（有则填）：PR #119 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004 / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待审查并合并 PR #119，更新 main 基线。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-FAIL-01-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #119 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / 0256454589070534f640993864458eb2ca90f681
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-IMG-02
@@ -2652,10 +2760,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #119 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-IMG-02-A1 | 锁文件解析支持大写/混合大小写 SHA-256 并统一规范化为小写，重复规范包名与非法指令严格 Fail-Closed 拦截 | `tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating` 相关用例 | E1 |
-| SF-IMG-02-A2 | Wheelhouse 扫描过滤点前缀隐藏文件，对 packages 执行字典结构门禁，diagnose_wheelhouse 准确输出诊断报告 | `tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics` 相关用例 | E2 |
-| SF-IMG-02-A3 | 镜像 tag 校验拒绝前导/尾随/连续斜杠与前导横杠，base_image 支持摘要引用，_docker 拦截选项注入并脱敏 ANSI 控制字符 | `tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening` 相关用例 | E3 |
-| SF-IMG-02-A4 | DependencyImageResult 模型 Schema 校验生效，只读镜像存在性与 ID 解析工具正常工作，构建输出结构完整 | `tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection` 相关用例 | E4 |
+| SF-IMG-02-A1 | 锁文件解析支持大写/混合大小写 SHA-256 并统一规范化为小写，重复规范包名与非法指令严格 Fail-Closed 拦截 | `tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating` 相关用例 | E5（本轮复验） |
+| SF-IMG-02-A2 | Wheelhouse 扫描过滤点前缀隐藏文件，对 packages 执行字典结构门禁，diagnose_wheelhouse 准确输出诊断报告 | `tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics` 相关用例 | E6（本轮复验） |
+| SF-IMG-02-A3 | 镜像 tag 校验拒绝前导/尾随/连续斜杠与前导横杠，base_image 支持摘要引用，_docker 拦截选项注入并脱敏 ANSI 控制字符 | `tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening` 相关用例 | E7（本轮复验） |
+| SF-IMG-02-A4 | DependencyImageResult 模型 Schema 校验生效，只读镜像存在性与 ID 解析工具正常工作，构建输出结构完整 | `tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection` 相关用例 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2663,15 +2771,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #119 / https://github.com/li
 | E2 | SF-IMG-02-A2 | `tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_scan_wheelhouse_rejects_malformed_packages_list`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_scan_wheelhouse_ignores_hidden_and_dot_prefixed_files`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_success_path`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_missing_and_mismatched`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_fail_closed_on_invalid_inputs` | `PYTHONPATH=src pytest tests/test_images_hardening.py -k TestWheelhouseScanPackageGatingAndDiagnostics`；GitHub Actions CI `Unit tests` | `646a20f01eb0f93539e607ce1521ffae17a8080f`；passed；CI [R1 44471834146](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146) |
 | E3 | SF-IMG-02-A3 | `tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_validate_image_tag_rejects_leading_trailing_consecutive_slashes`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_validate_image_tag_accepts_valid_names`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_rejects_empty_arguments`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_rejects_option_injection_in_subcommand`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_sanitizes_ansi_escape_sequences_in_output` | `PYTHONPATH=src pytest tests/test_images_hardening.py -k TestImageTagAndDockerSubprocessHardening`；GitHub Actions CI `Unit tests` | `646a20f01eb0f93539e607ce1521ffae17a8080f`；passed；CI [R1 44471834146](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146) |
 | E4 | SF-IMG-02-A4 | `tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_dependency_image_result_model_validation`、`tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_image_exists_and_resolve_image_id`、`tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_build_dependency_image_returns_validated_dict` | `PYTHONPATH=src pytest tests/test_images_hardening.py -k TestDependencyImageResultModelAndIntrospection`；GitHub Actions CI `Unit tests` | `646a20f01eb0f93539e607ce1521ffae17a8080f`；passed；CI [R1 44471834146](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146) |
+| E5 | SF-IMG-02-A1 | `tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_uppercase_and_mixed_case_sha256_normalized_to_lowercase`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_mixed_case_hash_prefix_and_multiple_hashes_normalized`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_duplicate_canonical_package_names_rejected`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_empty_or_whitespace_or_comment_only`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_exceeding_200_packages`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_lines_with_urls_markers_extras_directives`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_non_bytes_or_oversized_lockfile` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-IMG-02-A2 | `tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_scan_wheelhouse_rejects_malformed_packages_list`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_scan_wheelhouse_ignores_hidden_and_dot_prefixed_files`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_success_path`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_missing_and_mismatched`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_fail_closed_on_invalid_inputs` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-IMG-02-A3 | `tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_validate_image_tag_rejects_leading_trailing_consecutive_slashes`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_validate_image_tag_accepts_valid_names`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_rejects_empty_arguments`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_rejects_option_injection_in_subcommand`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_sanitizes_ansi_escape_sequences_in_output` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-IMG-02-A4 | `tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_dependency_image_result_model_validation`、`tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_image_exists_and_resolve_image_id`、`tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_build_dependency_image_returns_validated_dict`、`tests/test_images_hardening.py::test_mixed_case_hash_reaches_profile_and_builder_in_canonical_form` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。3个失败：Sha256等混合大小写被解析接受，却以原文传给profile/build消费者。两条消费入口都输出规范sha256摘要；真实锁文件/wheelhouse读取与构建输入验证，相关63 passed。Docker执行证据来自完整集合，不把字节fixture称为真实镜像构建。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#120；Merge=`a088bc3f56d8959d2f2a04cfe4f9b9546b6306d0`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-img-02 (worktree: selfforge-sf-img-02) / 已验证源码 646a20f01eb0f93539e607ce1521ffae17a8080f；本次状态提交仅文档
-已完成验收与证据 ID：SF-IMG-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地及CI全量测试通过；等待合并
-PR / 准确 head CI / merge SHA（有则填）：PR #120 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146（head commit 646a20f01eb0f93539e607ce1521ffae17a8080f） / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待 PR #120 审查合并。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-IMG-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #120 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / a088bc3f56d8959d2f2a04cfe4f9b9546b6306d0
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ### SF-CTX-02
@@ -2682,7 +2798,7 @@ PR / 准确 head CI / merge SHA（有则填）：PR #120 / https://github.com/li
 
 **行为：**
 1. `estimate_tokens` 拦截空字节并设定 `MAX_ESTIMATE_CHARS = 4 MiB` 上限，防止超大文本引发内存耗尽或灾难性回溯；
-2. `estimate_message_tokens` 强化 `role` 类型与空字节校验，引入深度递归上限 `MAX_RECURSION_DEPTH = 5` 防止嵌套结构栈溢出，校验 `reasoning_content`、`tool_calls` 与 `tool_call_id` 边界；
+2. `estimate_message_tokens` 强化 `role` 类型与空字节校验，采用迭代遍历避免递归栈溢出，`MAX_CONTENT_NODES = 100_000` 与累计 `MAX_ESTIMATE_CHARS` 明确限制输入；不得只估算截断前缀，校验 `reasoning_content`、`tool_calls` 与 `tool_call_id` 边界；
 3. `_recent_interactions` 设定 `limit` 边界防御，对 assistant 中的 `tool_calls` 执行重复 ID 检查，对 `tool` 响应执行单射配对（严格拒绝孤儿响应与重复响应）；
 4. `ContextManager.compact` 强化锚点排布不变式：基准系统提示全部置于最前，历史压缩摘要紧随基准系统提示之后、用户任务之前，所有用户指令按原绝对顺序保留在摘要之后；
 5. 扩展工具调用摘要识别（覆盖 `edit_file`、`write_file`、`read_file`、`search_code`、`run_command`、`run_tests` 等），并自动脱敏工具输出中的 ANSI 转义序列及控制字符；
@@ -2690,10 +2806,10 @@ PR / 准确 head CI / merge SHA（有则填）：PR #120 / https://github.com/li
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-CTX-02-A1 | Token 估算拦截空字节、超大文本上限生效，消息角色严格校验且深度嵌套列表安全解析防栈溢出 | `tests/test_context_hardening.py::TestTokenEstimationHardening` 相关用例 | E1 |
-| SF-CTX-02-A2 | 交互切片提取严格防御重复 tool_call_id、孤儿响应与重复响应，保持 assistant 与 tool 单射配对 | `tests/test_context_hardening.py::TestRecentInteractionsHardening` 相关用例 | E2 |
-| SF-CTX-02-A3 | 压缩管线严格遵循系统提示 -> 历史摘要 -> 用户任务顺序，扩展工具摘要识别并脱敏 ANSI 控制字符 | `tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization` 相关用例 | E3 |
-| SF-CTX-02-A4 | ContextMetrics 与 CompactionReport 模型 Schema 校验生效，get_metrics 与 compact_with_report 正常输出，预算上限受控拦截 | `tests/test_context_hardening.py::TestCompactionReportAndContextMetrics` 相关用例 | E4 |
+| SF-CTX-02-A1 | Token 估算拦截空字节、超大文本上限生效，消息角色严格校验且深度嵌套列表安全解析防栈溢出 | `tests/test_context_hardening.py::TestTokenEstimationHardening` 相关用例 | E5（本轮复验） |
+| SF-CTX-02-A2 | 交互切片提取严格防御重复 tool_call_id、孤儿响应与重复响应，保持 assistant 与 tool 单射配对 | `tests/test_context_hardening.py::TestRecentInteractionsHardening` 相关用例 | E6（本轮复验） |
+| SF-CTX-02-A3 | 压缩管线严格遵循系统提示 -> 历史摘要 -> 用户任务顺序，扩展工具摘要识别并脱敏 ANSI 控制字符 | `tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization` 相关用例 | E7（本轮复验） |
+| SF-CTX-02-A4 | ContextMetrics 与 CompactionReport 模型 Schema 校验生效，get_metrics 与 compact_with_report 正常输出，预算上限受控拦截 | `tests/test_context_hardening.py::TestCompactionReportAndContextMetrics` 相关用例 | E8（本轮复验） |
 
 | 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
 | --- | --- | --- | --- | --- |
@@ -2701,15 +2817,23 @@ PR / 准确 head CI / merge SHA（有则填）：PR #120 / https://github.com/li
 | E2 | SF-CTX-02-A2 | `tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_duplicate_tool_call_ids_in_assistant`、`tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_duplicate_tool_responses`、`tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_orphan_tool_response` | `PYTHONPATH=src pytest tests/test_context_hardening.py -k TestRecentInteractionsHardening`；GitHub Actions CI `Unit tests` | `12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1`；passed；CI [R1 44478800444](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444) |
 | E3 | SF-CTX-02-A3 | `tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_places_summary_between_system_and_user_prompts`、`tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_sanitizes_ansi_escape_codes_in_tool_output`、`tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_summarizes_write_file_and_run_command` | `PYTHONPATH=src pytest tests/test_context_hardening.py -k TestCompactionOrderingAndToolSanitization`；GitHub Actions CI `Unit tests` | `12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1`；passed；CI [R1 44478800444](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444) |
 | E4 | SF-CTX-02-A4 | `tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_context_manager_rejects_excessive_token_budget`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_context_metrics_model_validation`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_compaction_report_model_validation`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_get_metrics_and_compact_with_report` | `PYTHONPATH=src pytest tests/test_context_hardening.py -k TestCompactionReportAndContextMetrics`；GitHub Actions CI `Unit tests` | `12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1`；passed；CI [R1 44478800444](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444) |
+| E5 | SF-CTX-02-A1 | `tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_tokens_rejects_null_byte`、`tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_tokens_rejects_oversized_text`、`tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_message_tokens_rejects_invalid_role_or_null_bytes`、`tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_message_tokens_handles_deep_nesting_without_overflow`、`tests/test_context_hardening.py::test_nested_content_keeps_the_full_text_token_estimate` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E6 | SF-CTX-02-A2 | `tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_duplicate_tool_call_ids_in_assistant`、`tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_duplicate_tool_responses`、`tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_orphan_tool_response` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E7 | SF-CTX-02-A3 | `tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_places_summary_between_system_and_user_prompts`、`tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_sanitizes_ansi_escape_codes_in_tool_output`、`tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_summarizes_write_file_and_run_command`、`tests/test_context_hardening.py::test_compaction_removes_osc_and_control_characters_from_summary` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+| E8 | SF-CTX-02-A4 | `tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_context_manager_rejects_excessive_token_budget`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_context_metrics_model_validation`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_compaction_report_model_validation`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_get_metrics_and_compact_with_report` | `SELFFORGE_EVAL_IMAGE=selfforge-agent-sandbox:latest uv run --no-sync pytest -q`；`SELFFORGE_EVAL_SOURCE_ROOT` 为通过v3 offline预检的五源缓存；真Docker；本地fixture/进程及受控故障注入；Ruff/SDD/空白通过 | `e47c868effad55d8b8310ceb0b3c3f691e94e412`；passed；完整组合 1908 passed、无跳过；[准确组合head CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686)；[审查记录](./review-pr107-121.md) |
+
+原E1–E4保留历史来源，当前验收使用E5–E8；不同版本测试数量不相加。2个失败：8层嵌套100k文本仅估算前缀，500预算误判无需压缩；摘要保留BEL/OSC。采用有node/累计字符上限的迭代遍历，完整估算文本，超限明确拒绝；生成摘要清洗终端控制而不改用户锚点。相关上下文回归41 passed；估算仍是启发式。
+
+审查整合：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`review/pr107-121`；PR=#121；Merge=`a6cdcd86e257ad4b1ca303643f00415004a64465`；最终受测Source=`e47c868effad55d8b8310ceb0b3c3f691e94e412`。
 
 ```text
-Owner / 状态：Codex（本轮开发） / In Review
-实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-ctx-02 (worktree: selfforge-sf-ctx-02) / 已验证源码 12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1；本次状态提交仅文档
-已完成验收与证据 ID：SF-CTX-02-A1..A4（E1–E4）
-未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地及CI全量测试通过；等待合并
-PR / 准确 head CI / merge SHA（有则填）：PR #121 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444（head commit 12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1） / 待合并
-仍在运行的本任务进程或 CI（无则写无）：无
-下一步：等待 PR #121 审查合并。
+Owner / 状态：Codex（审查整合） / Merged
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / review/pr107-121 (worktree: selfforge-review-pr107-121) / 已验证源码 e47c868effad55d8b8310ceb0b3c3f691e94e412；后续对账仅文档
+已完成验收与证据 ID：SF-CTX-02-A1..A4（E5–E8）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；真Docker完整组合 1908 passed、无跳过；模型仅本地脚本/替身；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #121 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44491657686（最终组合；各源PR见审查记录） / a6cdcd86e257ad4b1ca303643f00415004a64465
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填十五个PR交付描述
+下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
 ## 5. 验收追踪与执行记录格式
