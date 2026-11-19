@@ -102,8 +102,15 @@ def workspace_lock_path(workspace: Path, root: Path | None = None) -> Path:
 def try_workspace_lock(workspace: Path, root: Path | None = None) -> int | None:
     """Attempt non-blocking exclusive file lock on a workspace. Returns fd or None."""
     path = workspace_lock_path(workspace, root=root)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    if os.path.islink(path):
+        raise WorkspaceError(f"Workspace lock path must not be a symlink: {path}")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags, 0o600)
     try:
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(fd)
@@ -117,9 +124,15 @@ def try_workspace_lock(workspace: Path, root: Path | None = None) -> int | None:
 def unlock_workspace(fd: int) -> None:
     """Release and close a workspace file lock."""
     try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
     finally:
-        os.close(fd)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 @contextmanager
@@ -180,9 +193,10 @@ class CodingWorkspaceManager:
         return repo
 
     def _paths(self, repository: Path, session_id: str) -> tuple[Path, Path, str]:
-        if not _SESSION_ID.fullmatch(session_id):
+        if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id):
             raise WorkspaceError("Invalid session ID")
-        fingerprint = hashlib.sha256(str(repository).encode("utf-8")).hexdigest()[:20]
+        repo_resolved = repository.expanduser().resolve()
+        fingerprint = hashlib.sha256(str(repo_resolved).encode("utf-8")).hexdigest()[:20]
         directory = self.root / fingerprint
         return directory / session_id, directory / f"{session_id}.json", f"selfforge/{session_id}"
 
@@ -192,7 +206,7 @@ class CodingWorkspaceManager:
         fingerprint = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:20]
         canonical = self.root.parent / "sessions" / fingerprint
         if session_id:
-            if not _SESSION_ID.fullmatch(session_id):
+            if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id):
                 raise WorkspaceError("Invalid session ID")
             for root in (canonical, *legacy_roots):
                 if (root / ".selfforge" / "sessions" / f"{session_id}.jsonl").is_file():
@@ -209,7 +223,7 @@ class CodingWorkspaceManager:
         path, metadata, branch = self._paths(repo, session_id)
         if path.is_relative_to(repo):
             raise WorkspaceError("Worktree storage must be outside the source repository")
-        if path.exists() or metadata.exists():
+        if os.path.lexists(path) or os.path.lexists(metadata):
             raise WorkspaceError("This Coding workspace already exists")
         base_sha = git(repo, "rev-parse", "HEAD").strip()
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -218,14 +232,20 @@ class CodingWorkspaceManager:
                    "base_sha": base_sha, "session_id": session_id}
         try:
             path.chmod(0o700)
-            fd = os.open(metadata, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd = os.open(metadata, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0), 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle)
                 handle.write("\n")
         except (OSError, ValueError):
             metadata.unlink(missing_ok=True)
-            git(repo, "worktree", "remove", str(path))
-            git(repo, "branch", "-D", branch)
+            try:
+                git(repo, "worktree", "remove", str(path))
+            except WorktreeError:
+                pass
+            try:
+                git(repo, "branch", "-D", branch)
+            except WorktreeError:
+                pass
             raise
         return CodingWorkspace(repo, path, branch, base_sha, session_id)
 
@@ -265,14 +285,25 @@ class CodingWorkspaceManager:
                               RuntimeWarning, stacklevel=2)
         return workspaces
 
-    def remove(self, repository: Path, session_id: str) -> CodingWorkspace:
+    def remove(
+        self,
+        repository: Path,
+        session_id: str,
+        *,
+        delete_branch: bool = False,
+    ) -> CodingWorkspace:
         workspace = self.get(repository, session_id)
         _, metadata, _ = self._paths(workspace.repository, session_id)
         if self._dirty(workspace):
             raise WorktreeError("Coding workspace has modified, untracked or ignored inputs; preserve them before removal")
         # Keep Git's dirty-worktree guard for persistent user workspaces.
         git(workspace.repository, "worktree", "remove", str(workspace.path))
-        metadata.unlink()
+        metadata.unlink(missing_ok=True)
+        if delete_branch:
+            try:
+                git(workspace.repository, "branch", "-D", workspace.branch)
+            except WorktreeError:
+                pass
         return workspace
 
     @staticmethod
@@ -366,6 +397,11 @@ class CodingWorkspaceManager:
                     result["pruned"].append(session_id)
             finally:
                 unlock_workspace(fd)
+        if not dry_run:
+            try:
+                git(repo, "worktree", "prune")
+            except WorktreeError:
+                pass
         return result
 
     def audit_storage(
