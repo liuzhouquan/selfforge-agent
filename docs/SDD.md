@@ -167,6 +167,7 @@ flowchart LR
 | 57 | [SF-HTTP-01](#sf-http-01) | In Review | Codex（自主开发） | 无 | [PR #114](https://github.com/liuzhouquan/selfforge-agent/pull/114)：模型 HTTP 传输与网络安全加固：CRLF 头注入防御、自定义 Header 格式与上限校验、请求体 Schema/大小有界防御、URL 片段拦截与 IPv6 环回支持、瞬态故障指数退避重试与截止期守护、响应流 Chunk 计数预算与 Socket 资源泄漏防护 |
 | 58 | [SF-TOOL-02](#sf-tool-02) | In Review | Codex（自主开发） | 无 | [PR #115](https://github.com/liuzhouquan/selfforge-agent/pull/115)：工具执行器与参数模式安全加固：入参模式防御与非字典入参拒绝、路径/命令/关键字注入防护（杜绝空字节与前导选项）、编辑载荷与策略大小有界防御、输出有界安全截断与异常受控隔离 |
 | 59 | [SF-FP-02](#sf-fp-02) | In Review | Antigravity | SF-FPR-01（Merged） | [PR #116](https://github.com/liuzhouquan/selfforge-agent/pull/116)：工作区快照指纹加固与跨平台确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、跨平台权限模式与路径规范化、Unicode文件名NFC排序稳定性及取消中断精准响应 |
+| 60 | [SF-CAUSAL-02](#sf-causal-02) | In Review | Antigravity | SF-CAUSAL-01（Merged） | [PR #117](https://github.com/liuzhouquan/selfforge-agent/pull/117)：测试故障因果推断二次加固：目标路径与代码空值门禁、单引号与Pytest格式调用栈提取、虚拟环境与运行时外部调用帧隔离、模块级基础测试反归因加固及通用词根防误报 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2521,6 +2522,42 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #116 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44350228282 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查并合并 PR #116，更新 main 基线。
+```
+
+### SF-CAUSAL-02
+
+**目标：** 对测试故障因果推断（`investigate_causality`）进行二次深度安全与准确性加固，封堵目标路径与测试代码空值门禁缺陷、单引号与 Pytest 格式调用栈解析死角、虚拟环境与运行时外部调用帧误归因，实现模块级基础测试反归因加固与通用词根扩展防误报。
+
+**范围/入口：** 改动 `src/selfforge_agent/coding/causal_investigation.py` 与专项加固测试 `tests/test_causal_hardening.py`；保持与 `test_generation.py` 及既有测试 `tests/test_causal_investigation.py`、`tests/test_causal_security.py` 的完全向后兼容。
+
+**行为：**
+1. 目标路径与测试代码严格空值与类型防御：`target.file_path` 拒绝空字符串与纯空白字符（`ValueError`）；`test_code` 拦截空字节（`\0`）；`CausalInvestigation` 模型强制断言 `causally_linked` 恒为 `False`（调用栈关联绝不等于因果证明），`explanation` 确保非空且不超过 2048 字符；
+2. 强化调用栈提取正则与外部运行时帧隔离：`_TRACEBACK_FRAME` 扩展支持单引号格式（`File 'mod.py', line 15`），`_PYTEST_LOCATION` 容错函数内冒号格式（`mod.py:20: in func`）；过滤 `site-packages/`、`dist-packages/`、`/.venv/`、`usr/lib/` 与 `<frozen ...>` 等外部虚拟环境与 Python 运行时调用帧，防止外部库故障误归因为工作区目标；
+3. 模块级基础测试反归因加固（Causal Disattribution）：当 `head_test` 发生模块级匹配（`module_match`）时，检查 `base_test` 是否已在同一目标模块中失败；若基线测试已存在该模块级故障，则判定为既有故障并反归因为 `confidence="none"`，杜绝虚假模块关联报告；
+4. 通用词根扩展与调用栈位置去重：将 `models`、`config`、`settings`、`init`、`types`、`constants`、`errors`、`exceptions`、`compat`、`version` 等高频通用模块名扩充入 `GENERIC_STEMS`，彻底杜绝单纯 import 声明导致的低置信度误报；对 `observed_locations` 执行有序去重，防御递归死循环 Traceback 刷屏。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-CAUSAL-02-A1 | target.file_path 空值/空白字符与 test_code 空字节被拒（ValueError），CausalInvestigation.causally_linked 设为 True 触发模型校验拒绝 | `tests/test_causal_hardening.py::TestCausalInputDefenseSecondary` 各用例 | E1 |
+| SF-CAUSAL-02-A2 | 单引号格式 File 'mod.py' 与 Pytest 格式调用栈准确提取，虚拟环境/site-packages/运行时外部帧被隔离不误匹配工作区目标 | `tests/test_causal_hardening.py::TestTracebackPatternHardening` 各用例 | E2 |
+| SF-CAUSAL-02-A3 | base_test 中已存在的同一目标模块故障触发反归因，confidence 降级为 none 且说明指向 base test 既有故障 | `tests/test_causal_hardening.py::TestModuleLevelCausalDisattribution` 相关用例 | E3 |
+| SF-CAUSAL-02-A4 | models/config/init/settings 等通用模块名不产生 low 置信度误报，observed_locations 提取结果去重并截断有界 | `tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication` 各用例 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CAUSAL-02-A1 | `tests/test_causal_hardening.py::TestCausalInputDefenseSecondary::test_target_file_path_empty_or_whitespace_rejected`、`tests/test_causal_hardening.py::TestCausalInputDefenseSecondary::test_test_code_rejects_null_bytes`、`tests/test_causal_hardening.py::TestCausalInputDefenseSecondary::test_causal_investigation_model_rejects_causally_linked_true` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_causal_hardening.py`；GitHub Actions CI `Unit tests` | `4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3`；passed；CI [Run #44444415139](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139) |
+| E2 | SF-CAUSAL-02-A2 | `tests/test_causal_hardening.py::TestTracebackPatternHardening::test_single_quote_traceback_frame_extracted`、`tests/test_causal_hardening.py::TestTracebackPatternHardening::test_pytest_colon_in_function_format`、`tests/test_causal_hardening.py::TestTracebackPatternHardening::test_external_virtualenv_site_packages_not_matched_to_target` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_causal_hardening.py`；GitHub Actions CI `Unit tests` | `4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3`；passed；CI [Run #44444415139](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139) |
+| E3 | SF-CAUSAL-02-A3 | `tests/test_causal_hardening.py::TestModuleLevelCausalDisattribution::test_base_failure_in_same_module_disattributes_module_match` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_causal_hardening.py`；GitHub Actions CI `Unit tests` | `4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3`；passed；CI [Run #44444415139](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139) |
+| E4 | SF-CAUSAL-02-A4 | `tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication::test_generic_stem_models_config_init_do_not_trigger_false_positive`、`tests/test_causal_hardening.py::TestGenericStemExpansionAndDeduplication::test_observed_locations_deduplicated_under_recursive_traceback` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_causal_hardening.py`；GitHub Actions CI `Unit tests` | `4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3`；passed；CI [Run #44444415139](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-causal-02 (worktree: selfforge-sf-causal-02) / 已验证源码 4efe7bd70c55cd6350045bd65a8c45ad0a3b71e3
+已完成验收与证据 ID：SF-CAUSAL-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未完成项；加固及关联套件 59 passed；全量 CI 测试通过；无未提交源码改动
+PR / 准确 head CI / merge SHA（有则填）：PR #117 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查并合并 PR #117，更新 main 基线。
 ```
 
 ## 5. 验收追踪与执行记录格式
