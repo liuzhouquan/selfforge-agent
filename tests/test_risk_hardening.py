@@ -391,3 +391,28 @@ class TestTestFileDeprioritizationAndOutputSanitization:
         assert "\r" not in risk.description
         assert "\x1b" not in risk.rationale
         assert "\r" not in risk.rationale
+
+
+def _path_identity_context(path, content='eval(user_input)'):
+    return _make_context([ChangedFile(path=path, status='M', hunks=[DiffHunk(
+        header='@@ -1 +1 @@', old_start=1, new_start=1,
+        lines=[DiffLine(kind=ChangeKind.added, content=content, new_line=1)],
+    )])])
+
+
+def test_risk_preserves_literal_filename_whitespace():
+    context = _path_identity_context(' file.py')
+    risks = prioritize_risks(context)
+    assert risks and all(r.file_path == ' file.py' for r in risks)
+    validate_risk_target(context, risks[0].to_risk_target())
+
+
+def test_risk_rejects_internal_parent_segments_before_normalizing():
+    assert prioritize_risks(_path_identity_context('bad/../file.py')) == []
+
+
+def test_generated_sanitized_risk_target_is_accepted_downstream():
+    context = _path_identity_context('file.py', '\x1b[31meval(user_input)\x1b[0m')
+    risks = prioritize_risks(context)
+    assert risks
+    validate_risk_target(context, risks[0].to_risk_target())

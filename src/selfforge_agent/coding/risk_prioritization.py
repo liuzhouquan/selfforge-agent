@@ -42,7 +42,9 @@ def _normalize_safe_file_path(path: str) -> str | None:
     """Normalize path and ensure it does not escape workspace or contain invalid segments."""
     if not isinstance(path, str) or not path.strip() or "\0" in path or len(path) > 500:
         return None
-    clean = path.strip().replace("\\", "/")
+    if "\\" in path or ".." in path.split("/"):
+        return None
+    clean = path
     norm = posixpath.normpath(clean)
     if norm.startswith(("/", "../")) or norm in ("..", "."):
         return None
