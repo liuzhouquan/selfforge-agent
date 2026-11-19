@@ -30,13 +30,6 @@ class WorkspaceSnapshotError(RuntimeError):
     """No stable, complete snapshot was available; do not retain evidence."""
 
 
-def _normalize_mode(mode: int, *, is_dir: bool = False) -> int:
-    """Normalize file modes for cross-platform/umask determinism while preserving execution semantics."""
-    if is_dir:
-        return 0o755 if (mode & 0o111) else 0o700
-    return 0o755 if (mode & 0o111) else 0o644
-
-
 def workspace_fingerprint(
     root: Path | str,
     *,
@@ -128,12 +121,11 @@ def workspace_fingerprint(
 
             for name in sorted(names, key=lambda n: (unicodedata.normalize("NFC", n), n)):
                 check()
-                norm_name = unicodedata.normalize("NFC", name)
-                path = (prefix + norm_name).replace("\\", "/")
+                path = prefix + name
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                field(path.encode("utf-8"))
+                field(os.fsencode(path))
                 if stat.S_ISDIR(info.st_mode):
-                    field(str(_normalize_mode(info.st_mode, is_dir=True)).encode())
+                    field(str(stat.S_IMODE(info.st_mode)).encode())
                     field(b"directory")
                     if (info.st_dev, info.st_ino) in ancestor_dirs:
                         raise WorkspaceSnapshotError("Workspace fingerprint detected directory cycle")
@@ -159,7 +151,7 @@ def workspace_fingerprint(
                     if identity(info) != identity(os.stat(name, dir_fd=fd, follow_symlinks=False)):
                         raise WorkspaceSnapshotError("Workspace changed during fingerprint")
                 elif stat.S_ISREG(info.st_mode):
-                    field(str(_normalize_mode(info.st_mode, is_dir=False)).encode())
+                    field(str(stat.S_IMODE(info.st_mode)).encode())
                     field(b"file")
                     if info.st_size < 0:
                         raise WorkspaceSnapshotError("Workspace fingerprint encountered invalid file size")
@@ -218,8 +210,8 @@ def workspace_fingerprint(
             if stat.S_ISLNK(lstat_st.st_mode) or (lstat_st.st_dev, lstat_st.st_ino) != (root_st.st_dev, root_st.st_ino):
                 raise WorkspaceSnapshotError("Workspace root changed or is a symlink")
 
-            field(str(root_abs).replace("\\", "/").encode("utf-8"))
-            field(str(_normalize_mode(root_st.st_mode, is_dir=True)).encode())
+            field(os.fsencode(root_abs))
+            field(str(stat.S_IMODE(root_st.st_mode)).encode())
             walk(root_fd, "", 0)
             if identity(root_st) != identity(os.lstat(clean_abs_str)):
                 raise WorkspaceSnapshotError("Workspace root changed during fingerprint")
