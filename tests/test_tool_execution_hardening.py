@@ -201,3 +201,13 @@ class TestOutputBoundingAndExceptionIsolation:
         assert res.ok
         assert "[output truncated]" in res.content
         assert len(res.content) <= 6_000 + 30
+
+
+def test_tool_output_budget_includes_truncation_notice(tmp_path):
+    from selfforge_agent.runtime.tools import MAX_TOOL_OUTPUT, ToolRegistry
+
+    (tmp_path / 'long.txt').write_text('x' * 7000)
+    result = ToolRegistry(tmp_path).execute('read_file', {'path': 'long.txt'})
+    assert result.ok
+    assert len(result.content) <= MAX_TOOL_OUTPUT
+    assert result.content.endswith('[output truncated]')

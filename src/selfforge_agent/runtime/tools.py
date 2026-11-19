@@ -277,7 +277,8 @@ class ToolRegistry:
         if "\x00" in content:
             content = content.replace("\x00", "\ufffd")
         if len(content) > MAX_TOOL_OUTPUT:
-            content = content[:MAX_TOOL_OUTPUT] + "\n[output truncated]"
+            marker = "\n[output truncated]"
+            content = content[:MAX_TOOL_OUTPUT - len(marker)] + marker
         return ToolOutcome(content, outcome.ok, time.monotonic() - started)
 
     @contextmanager
