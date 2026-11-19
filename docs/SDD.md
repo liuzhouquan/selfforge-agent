@@ -157,6 +157,7 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
+| 50 | [SF-FAIL-01](#sf-fail-01) | In Review | Antigravity | 无 | [PR #119](https://github.com/liuzhouquan/selfforge-agent/pull/119)：测试失败工件与诊断快照生命周期及安全加固：工件模型模式规范化（FailureArtifact）、Fail-Closed 类型守门与超限安全截断有界降级、目录隔离与原子无符链写盘、非普通文件/FIFO防御与确定性工件列表检索（list_failures）及统计聚合（summarize_failures） |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2137,6 +2138,42 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44079340729（最终组合；各源PR见审查记录） / 010897851b27dc920e1892cf5c35568bfee3682d
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填六个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-FAIL-01
+
+**目标：** 对测试失败工件与诊断快照模块（`failure_artifacts.py`）进行形式化模型与生命周期安全深度加固，建立契约模型（`FailureArtifact` / `FailureSummary`）、实现 Fail-Closed 输入参数类型门禁与超大载荷安全截断降级、强化双向目录隔离与原子无符链写盘、实现非普通文件防御与确定性工件列表检索（`list_failures`）及统计汇总（`summarize_failures`）。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/failure_artifacts.py` 与专项加固测试 `tests/test_failure_artifacts_hardening.py`；保持与既有 `test_runtime_execution_safety.py`、`benchmark.py` 和 CLI 的完全向后兼容。
+
+**行为：**
+1. 工件模型契约与 Fail-Closed 输入守门：定义 `FailureArtifact` Pydantic 模型，校验 `version == 1`、用例名称正则（`^[A-Za-z0-9_-]{1,128}\Z`）与重复次数（`0 <= repeat <= 100_000`）；`write_failure` 对 `visible` 与 `holdout` 严格校验必须为 `TestResult` 实例或 `None`（非法类型抛出 `TypeError`，绝不泄露未受控 `AttributeError`）；`reason` 校验非空、非纯空白（抛出 `ValueError`），拦截空字节 `\0` 与 ANSI 控制转义序列；
+2. 目录隔离双向校验与原子覆盖冲突防御：`prepare_artifacts` 施行双向隔离校验，工件目录既不能位于被评测仓库内，被评测仓库也不能位于工件目录内，严格防御软链接穿透；目录使用私有权限（`0o700`）创建；原子 `link` 发布工件时若目标已存在，映射为受控的 `FileExistsError`，防止并发冲突覆盖；
+3. 超大诊断载荷安全截断与有界降级：当 `TestResult` 中包含超长 `error_message` 或大量 `failure_details` 导致工件序列化大小超出 `MAX_ARTIFACT_BYTES`（128 KiB）时，不崩溃抛出异常而执行受控优雅截断（在 `error_message` 尾部附加 `[truncated]`，缩减 `failure_details` 并设置 `failure_details_truncated = True`），保证诊断信息有效持久化且文件严格有界；
+4. 确定性工件列表检索、统计聚合与临时文件清理：新增 `list_failures(root)`，使用 `O_NOFOLLOW` 拒绝符号链接根目录，安全过滤非普通文件，按 `(case, repeat)` 升序排序返回；新增 `summarize_failures(root)`，聚合总失败次数、受影响用例集与各失败原因分布；新增 `cleanup_temporary_artifacts(root)`，清理中断遗留的临时工件文件（`.*.tmp`）。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-FAIL-01-A1 | visible/holdout 非 TestResult 抛出 TypeError，reason 纯空白/空字节/ANSI 被拒，FailureArtifact 模型严格校验版本与结构 | `tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema` 各用例 | E1 |
+| SF-FAIL-01-A2 | prepare_artifacts 双向防御仓库与工件目录相互嵌套，write_failure 重复写入同一工件触发受控 FileExistsError | `tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense` 各用例 | E2 |
+| SF-FAIL-01-A3 | 超大 error_message（>128 KiB）与大载荷 failure_details 触发优雅截断降级，工件体积保持 <=128 KiB 且正常解析 | `tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary` 各用例 | E3 |
+| SF-FAIL-01-A4 | list_failures 确定性排序并过滤杂音，summarize_failures 正确汇总聚合失败用例与原因，cleanup 清理临时工件文件 | `tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup` 各用例 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-FAIL-01-A1 | `tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema::test_write_failure_rejects_invalid_visible_or_holdout_types`、`tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema::test_write_failure_rejects_empty_or_whitespace_or_null_byte_reason`、`tests/test_failure_artifacts_hardening.py::TestFailureArtifactInputGatingAndModelSchema::test_failure_artifact_pydantic_model_validation` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_failure_artifacts_hardening.py`；GitHub Actions CI `Unit tests` | `51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569`；passed；CI [Run #44459929004](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004) |
+| E2 | SF-FAIL-01-A2 | `tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense::test_prepare_artifacts_rejects_bidirectional_repo_nesting`、`tests/test_failure_artifacts_hardening.py::TestRepositoryIsolationAndCollisionDefense::test_write_failure_raises_controlled_error_on_collision` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_failure_artifacts_hardening.py`；GitHub Actions CI `Unit tests` | `51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569`；passed；CI [Run #44459929004](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004) |
+| E3 | SF-FAIL-01-A3 | `tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary::test_write_failure_gracefully_truncates_large_error_message`、`tests/test_failure_artifacts_hardening.py::TestOversizedPayloadTruncationAndBoundary::test_write_failure_both_visible_and_holdout_large_payloads` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_failure_artifacts_hardening.py`；GitHub Actions CI `Unit tests` | `51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569`；passed；CI [Run #44459929004](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004) |
+| E4 | SF-FAIL-01-A4 | `tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_list_failures_returns_deterministic_sorted_artifacts`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_list_failures_rejects_symlink_root`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_summarize_failures_aggregates_diagnostics`、`tests/test_failure_artifacts_hardening.py::TestDeterministicListingAggregationAndCleanup::test_cleanup_temporary_artifacts_removes_orphaned_tmp_files` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_failure_artifacts_hardening.py`；GitHub Actions CI `Unit tests` | `51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569`；passed；CI [Run #44459929004](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-fail-01 (worktree: selfforge-sf-fail-01) / 已验证源码 51bbb25fe9dc615a6b0cfa0b0736e4f35a4d6569
+已完成验收与证据 ID：SF-FAIL-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未完成项；加固及关联套件 33 passed；全量 CI 测试通过；无未提交源码改动
+PR / 准确 head CI / merge SHA（有则填）：PR #119 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查并合并 PR #119，更新 main 基线。
 ```
 
 ## 5. 验收追踪与执行记录格式
