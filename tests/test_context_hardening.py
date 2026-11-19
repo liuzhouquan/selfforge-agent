@@ -219,3 +219,26 @@ class TestCompactionReportAndContextMetrics:
         assert report.original_tokens > report.compacted_tokens
         assert report.tokens_saved == report.original_tokens - report.compacted_tokens
         assert manager.estimate(compacted) <= 900
+
+
+def test_nested_content_keeps_the_full_text_token_estimate():
+    text = 'a' * 100_000
+    nested = text
+    for _ in range(8):
+        nested = [nested]
+    assert estimate_message_tokens({'role': 'assistant', 'content': nested}) >= estimate_tokens(text)
+    messages = [{'role': 'system', 'content': 'System'}, {'role': 'user', 'content': 'Task'},
+                {'role': 'assistant', 'content': nested}]
+    compacted, changed = ContextManager(500).compact(messages)
+    assert changed
+    assert ContextManager(500).estimate(compacted) <= 500
+
+
+def test_compaction_removes_osc_and_control_characters_from_summary():
+    messages = [{'role': 'system', 'content': 'System'}, {'role': 'user', 'content': 'Task'},
+                {'role': 'assistant', 'content': '\x1b]0;spoof\x07diagnostic ' * 1000}]
+    compacted, changed = ContextManager(500).compact(messages)
+    assert changed
+    summary = next(m['content'] for m in compacted if m['role'] == 'system' and 'Earlier steps' in m['content'])
+    assert '\x1b' not in summary
+    assert '\x07' not in summary

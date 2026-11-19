@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 MAX_CONTEXT_BUDGET = 2_000_000
 MAX_ESTIMATE_CHARS = 4 * 1024 * 1024
-MAX_RECURSION_DEPTH = 5
+MAX_CONTENT_NODES = 100_000
 _SUMMARY_PREFIX = "Earlier steps (compressed; preserve original task constraints):\n"
 
 _TOKEN_PATTERN = re.compile(
@@ -80,25 +80,42 @@ def estimate_tokens(text: str) -> int:
     return max(0, tokens + (len(text) - last_end + 3) // 4)
 
 
-def _estimate_content_tokens(content: Any, depth: int = 0) -> int:
-    if depth > MAX_RECURSION_DEPTH:
-        return estimate_tokens(str(content)[:1000])
-    if isinstance(content, str):
-        return estimate_tokens(content)
-    elif isinstance(content, list):
-        return sum(_estimate_content_tokens(part, depth + 1) for part in content)
-    elif isinstance(content, dict):
-        total = 0
-        part_text = content.get("text")
-        if isinstance(part_text, str):
-            total += estimate_tokens(part_text)
-        else:
-            for k, v in content.items():
-                total += estimate_tokens(str(k)[:100]) + _estimate_content_tokens(v, depth + 1)
-        return total
-    elif content is not None:
-        return estimate_tokens(str(content))
-    return 0
+def _estimate_content_tokens(content: Any) -> int:
+    """Walk nested JSON content without recursion or silently truncating evidence."""
+    pending = [content]
+    nodes = chars = total = 0
+    while pending:
+        part = pending.pop()
+        nodes += 1
+        if nodes > MAX_CONTENT_NODES:
+            raise ValueError("Message content exceeds node limit")
+        if isinstance(part, list):
+            if nodes + len(pending) + len(part) > MAX_CONTENT_NODES:
+                raise ValueError("Message content exceeds node limit")
+            pending.extend(part)
+            continue
+        if isinstance(part, dict):
+            if isinstance(part.get("text"), str):
+                part = part["text"]
+            else:
+                if nodes + len(pending) + 2 * len(part) > MAX_CONTENT_NODES:
+                    raise ValueError("Message content exceeds node limit")
+                for key, value in part.items():
+                    pending.extend((str(key), value))
+                continue
+        if part is not None:
+            text = part if isinstance(part, str) else str(part)
+            chars += len(text)
+            if chars > MAX_ESTIMATE_CHARS:
+                raise ValueError("Message content exceeds token estimation limit")
+            total += estimate_tokens(text)
+    return total
+
+
+def _clean_summary(text: str) -> str:
+    text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", text)
+    text = _ANSI_PATTERN.sub("", text)
+    return "".join(c for c in text if c.isprintable() or c in "\n\t")
 
 
 def _recent_interactions(messages: list[dict], limit: int) -> list[dict]:
@@ -402,7 +419,7 @@ class ContextManager:
                 if clean_content:
                     digest.append("Assistant: " + clean_content[:200])
 
-        summary_body = "\n".join(d for d in digest if d)
+        summary_body = _clean_summary("\n".join(d for d in digest if d))
         base_overhead = self.estimate([*systems, *users, *recent_preserved])
         allowed = max(100, (budget - base_overhead) * 3)
 
