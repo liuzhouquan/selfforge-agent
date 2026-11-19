@@ -4,6 +4,7 @@ import ast
 import json
 import math
 import os
+import posixpath
 import stat
 import tempfile
 import time
@@ -87,14 +88,17 @@ _SYSTEM = (
 def validate_risk_target(context: PRContext, target: RiskTarget | None) -> None:
     if target is None:
         return
+    norm_target_path = posixpath.normpath(target.file_path.strip().replace("\\", "/"))
     for change in context.files:
-        if change.path != target.file_path:
+        norm_change_path = posixpath.normpath(change.path.strip().replace("\\", "/"))
+        if norm_change_path != norm_target_path:
             continue
         for hunk in change.hunks:
             for line in hunk.lines:
-                if (line.kind == ChangeKind.added and line.new_line == target.line_number
-                        and (line.content.strip() or "<blank added line>") == target.evidence):
-                    return
+                if line.kind == ChangeKind.added and line.new_line == target.line_number:
+                    raw = line.content.replace("\0", "").replace("\r", "").strip() or "<blank added line>"
+                    if raw == target.evidence or raw[:2000] == target.evidence:
+                        return
     raise ValueError("Risk target must match an added line in this Base/Head diff")
 
 
