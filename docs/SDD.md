@@ -158,6 +158,7 @@ flowchart LR
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
 | 50 | [SF-PRICE-02](#sf-price-02) | In Review | Codex（本轮开发） | SF-PRICE-01（Merged） | [PR #107](https://github.com/liuzhouquan/selfforge-agent/pull/107)：费率卡与成本估算深度加固：布尔费率严格拒绝、成本对象总额与细项线性不变式守卫、未校准成本严格扣留、总Token数反向矛盾Fail-Closed拒绝、深层JSON递归防御与有界并发缓存 |
+| 51 | [SF-DELIV-02](#sf-deliv-02) | In Review | Codex（本轮开发） | SF-DELIV-01（Merged） | [PR #108](https://github.com/liuzhouquan/selfforge-agent/pull/108)：工作区交付工作流二次安全加固：交付结果模型严格校验与路径穿越防御、base_sha十六进制格式校验与Git Ref规则守卫、Git配置注入防御与会话ID一致性校验、超大文件列表分批执行及PR结果有界防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2174,9 +2175,56 @@ Owner / 状态：Codex（本轮开发） / In Review
 已完成验收与证据 ID：SF-PRICE-02-A1..A4（E1–E4）
 未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1352 passed、无跳过；CI Run #44131513062 全绿；文档提交准备就绪
 PR / 准确 head CI / merge SHA（有则填）：PR #107 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062 / 待合入
-仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；等待文档提交与 R2 CI
-下一步：推送文档提交并触发 R2 CI 验证，更新交付状态。
 ```
+
+### SF-DELIV-02
+
+**目标：** 在工作区交付工作流模块（`src/selfforge_agent/runtime/delivery.py`）中深度加固输入防御、Git Ref 规则守卫与数据完整性校验，杜绝非法交付结果模型绕过校验、`workspace.base_sha` 选项注入与畸形分支名、Git 仓库配置 CRLF/空字节注入、跨会话状态污染、超大变更加载引发 `ARG_MAX` 命令行溢出及临时 PR 正文权限泄露。
+
+**范围/入口：** `src/selfforge_agent/runtime/delivery.py`、`tests/test_delivery_hardening.py`。加固 `CommitResult`、`PRResult`、`RevertResult` 模型校验；加固 `_validate_workspace` 基础 SHA 与分支 Ref 命名守卫；加固 `commit_workspace` 仓库 Git 配置注入过滤与大文件分批暂存；加固 `revert_workspace` 与 `create_pull_request` 会话 ID 一致性校验及临时正文文件权限保护。
+
+**行为与防御：**
+1. `CommitResult`、`PRResult`、`RevertResult` 强类型与字段契约加固：`commit_sha` 强制要求 40 位 16 进制规范小写（拒绝非 hex、超长、截断或布尔值并自动规范化大写），`session_id` 严格校验字母数字与下划线有界格式防路径穿越，`pr_url` 严格要求符合 GitHub 规范 PR 地址并杜绝 `..` 等路径穿越，`pr_number` 必须为严格正整数（`int > 0` 且排除布尔值），`title` 与 `message` 严格校验长度上限并拦截空字节与换行注入，`files_committed` 与 `reverted_files` 严格校验相对路径并杜绝绝对路径与路径穿越。
+2. `_validate_workspace` 与 Git Ref 安全防御：`workspace.base_sha` 强制校验 40 位 16 进制 SHA，杜绝选项注入（如以 `-` 开头注入 `git rev-list` 参数）；分支名（`workspace.branch` 与 `base_branch`）排斥选项注入（`-`）、路径穿越（`..`）、连续斜杠（`//`）、非法字符与以 `.lock`/`.`/`/` 结尾的畸形命名；在 `create_pull_request` 中强制断言 `base_branch != workspace.branch`，严格拒绝无效的自我 PR。
+3. Git 配置注入防御与跨会话状态保护：读取本地仓库 git config 的 `user.name` 与 `user.email` 时过滤 CRLF、空字节与选项注入（以 `-` 开头），畸形配置安全回退默认值（`"selfForge Agent"` 与 `"agent@selfforge.local"`）；`revert_workspace` 与 `create_pull_request` 强制校验 `session.session_id == workspace.session_id`，杜绝跨会话状态污染；大文件列表（`git add` 与 `git restore`）按每批 100 项分块执行，防止超大变更加载引发 `ARG_MAX` 命令行溢出。
+4. 既有 PR 检测（`_existing_pull_request`）深度校验返回记录列表有界（上限 100 项）、PR 编号大于 0、标题无空字节与换行，URL 无路径穿越；临时 PR 正文文件强制设置 0600 安全文件权限；本地静态检查（ruff）、SDD 契约检查及全量测试通过。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-DELIV-02-A1 | CommitResult、PRResult 与 RevertResult 强制要求 40 位十六进制 commit_sha、合法 session_id 与分支名，校验 pr_url 正则且拒绝路径穿越，限制 pr_number 为严格正整数，拦截非法路径与超长/空字节标题 | `tests/test_delivery_hardening.py` 模型字段与类型契约防御测试 | E1 |
+| SF-DELIV-02-A2 | _validate_workspace 强制校验 base_sha 格式拒绝选项注入，分支名校验拦截路径穿越（..）与畸形 ref 规则，create_pull_request 严格拒绝 base_branch 与工作区分支同名 | `tests/test_delivery_hardening.py` 工作区基础 SHA 与 Git ref 规则测试 | E2 |
+| SF-DELIV-02-A3 | commit_workspace 自动清洗过滤本地仓库 git config 的恶意用户名称与邮箱，revert_workspace 与 create_pull_request 严格校验 SessionStore 与工作区 session_id 一致性，大文件列表分批执行防止命令行溢出 | `tests/test_delivery_hardening.py` 配置注入清洗、会话一致性与批量操作测试 | E3 |
+| SF-DELIV-02-A4 | _existing_pull_request 限制 PR 列表上限 100 项并严格校验记录编号与标题，create_pull_request 临时 body 文件设置 0600 权限，本地静态检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_delivery_hardening.py` 既有 PR 防御与临时文件权限测试，本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-DELIV-02-A1 | `tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_commit_sha`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_session_id_and_branch`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_message_and_files`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_pr_result_validates_pr_url_and_number`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_revert_result_validates_paths` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
+| E2 | SF-DELIV-02-A2 | `tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_invalid_base_sha`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_malicious_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_same_base_and_head_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_traversal_or_malformed_base_branch` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
+| E3 | SF-DELIV-02-A3 | `tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_sanitizes_malicious_repo_git_config`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_revert_workspace_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_create_pull_request_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_batches_large_file_lists` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
+| E4 | SF-DELIV-02-A4 | `tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_invalid_pr_records`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_excessive_pr_list`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_create_pull_request_sets_0600_permissions_on_body_file`、`tests/test_delivery_security.py` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1658 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+
+分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-deliv-02`；Worktree=`selfforge-sf-deliv-02`；PR=[#108](https://github.com/liuzhouquan/selfforge-agent/pull/108)。源码提交 `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc` 已通过本地回归与 CI `Run #44213078416` 全套验证。
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-deliv-02 (worktree: selfforge-sf-deliv-02) / d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc
+已完成验收与证据 ID：SF-DELIV-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1658 passed、无跳过；CI Run #44213078416 全绿；文档提交准备就绪
+PR / 准确 head CI / merge SHA（有则填）：PR #108 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416 / 待合入
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## 5. 验收追踪与执行记录格式
 
