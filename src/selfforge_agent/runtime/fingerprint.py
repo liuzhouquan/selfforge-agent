@@ -5,6 +5,7 @@ import math
 import os
 import stat
 import time
+import unicodedata
 from pathlib import Path
 from threading import Event
 
@@ -15,8 +16,10 @@ from selfforge_agent.runtime.execution import (
 )
 
 MAX_SNAPSHOT_DEPTH = 128
+MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024  # 10 MiB limit per regular file
 
 __all__ = [
+    "MAX_SINGLE_FILE_BYTES",
     "MAX_SNAPSHOT_DEPTH",
     "WorkspaceSnapshotError",
     "workspace_fingerprint",
@@ -42,10 +45,15 @@ def workspace_fingerprint(
     if isinstance(root, str):
         if "\0" in root:
             raise ValueError("null byte in root path")
+        if not root.strip():
+            raise ValueError("root cannot be empty or whitespace")
         root_path = Path(root)
     elif isinstance(root, Path):
         if "\0" in str(root):
             raise ValueError("null byte in root path")
+        raw_parts = getattr(root, "_raw_paths", [str(root)])
+        if not str(root).strip() or any(isinstance(p, str) and not p.strip() for p in raw_parts):
+            raise ValueError("root cannot be empty or whitespace")
         root_path = root
     else:
         raise TypeError("root must be a Path or str instance")
@@ -77,8 +85,14 @@ def workspace_fingerprint(
         digest.update(value)
 
     def identity(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
-        return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
-                info.st_mtime_ns, info.st_ctime_ns)
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
 
     ancestor_dirs: set[tuple[int, int]] = set()
 
@@ -105,17 +119,21 @@ def workspace_fingerprint(
                         raise WorkspaceSnapshotError("Workspace fingerprint entry limit exceeded")
                     names.append(entry.name)
 
-            for name in sorted(names):
+            for name in sorted(names, key=lambda n: (unicodedata.normalize("NFC", n), n)):
                 check()
                 path = prefix + name
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 field(os.fsencode(path))
-                field(str(stat.S_IMODE(info.st_mode)).encode())
                 if stat.S_ISDIR(info.st_mode):
+                    field(str(stat.S_IMODE(info.st_mode)).encode())
                     field(b"directory")
                     if (info.st_dev, info.st_ino) in ancestor_dirs:
                         raise WorkspaceSnapshotError("Workspace fingerprint detected directory cycle")
-                    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+                    child = os.open(
+                        name,
+                        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+                        dir_fd=fd,
+                    )
                     try:
                         child_st = os.fstat(child)
                         if identity(info) != identity(child_st):
@@ -127,14 +145,18 @@ def workspace_fingerprint(
                     finally:
                         os.close(child)
                 elif stat.S_ISLNK(info.st_mode):
+                    field(str(0o777).encode())
                     field(b"symlink")
                     field(os.fsencode(os.readlink(name, dir_fd=fd)))
                     if identity(info) != identity(os.stat(name, dir_fd=fd, follow_symlinks=False)):
                         raise WorkspaceSnapshotError("Workspace changed during fingerprint")
                 elif stat.S_ISREG(info.st_mode):
+                    field(str(stat.S_IMODE(info.st_mode)).encode())
                     field(b"file")
                     if info.st_size < 0:
                         raise WorkspaceSnapshotError("Workspace fingerprint encountered invalid file size")
+                    if info.st_size > MAX_SINGLE_FILE_BYTES:
+                        raise WorkspaceSnapshotError("Workspace fingerprint file size limit exceeded")
                     field(str(info.st_size).encode())
                     if size + info.st_size > MAX_STAGED_BYTES:
                         raise WorkspaceSnapshotError("Workspace fingerprint byte limit exceeded")
@@ -153,9 +175,13 @@ def workspace_fingerprint(
                             file_bytes += len(block)
                             if size > MAX_STAGED_BYTES:
                                 raise WorkspaceSnapshotError("Workspace fingerprint byte limit exceeded")
+                            if file_bytes > MAX_SINGLE_FILE_BYTES:
+                                raise WorkspaceSnapshotError("Workspace fingerprint file size limit exceeded")
                             digest.update(block)
-                        if (file_bytes != info.st_size
-                                or identity(info) != identity(os.fstat(source.fileno()))):
+                        if (
+                            file_bytes != info.st_size
+                            or identity(info) != identity(os.fstat(source.fileno()))
+                        ):
                             raise WorkspaceSnapshotError("Workspace changed during fingerprint")
                     if identity(info) != identity(os.stat(name, dir_fd=fd, follow_symlinks=False)):
                         raise WorkspaceSnapshotError("Workspace changed during fingerprint")
