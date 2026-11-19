@@ -262,3 +262,29 @@ class TestGitContextSHAHardening:
             eoo_idx = call.index("--end-of-options")
             base_idx = call.index(base)
             assert eoo_idx < base_idx
+
+
+def test_timeout_grace_period_reaches_children_after_parent_exit(tmp_path):
+    import os
+
+    if os.name != 'posix':
+        pytest.skip('POSIX process group contract')
+    ready = tmp_path / 'ready'
+    cleaned = tmp_path / 'cleaned'
+    program = '''
+import os, signal, sys, time
+from pathlib import Path
+if os.fork() == 0:
+    def cleanup(signum, frame):
+        time.sleep(0.05)
+        Path(sys.argv[2]).write_text('cleaned')
+        os._exit(0)
+    signal.signal(signal.SIGTERM, cleanup)
+    Path(sys.argv[1]).write_text('ready')
+while True:
+    time.sleep(1)
+'''
+    with pytest.raises(TimeoutError):
+        run_bounded([sys.executable, '-c', program, str(ready), str(cleaned)], timeout=0.8, max_bytes=1024)
+    assert ready.exists()
+    assert cleaned.read_text() == 'cleaned'

@@ -9,7 +9,7 @@ import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 
 MAX_COMMAND_ARGS = 1000
 MAX_ARG_LENGTH = 128 * 1024
@@ -246,16 +246,20 @@ def run_bounded(
     finally:
         # Graceful process group termination: SIGTERM first, followed by escalation to SIGKILL
         if os.name == "posix":
-            if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            else:
+                # The parent exiting does not end its children's cleanup grace.
+                grace_end = monotonic() + 0.15
                 try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError, OSError):
+                    process.wait(timeout=0.15)
+                except (subprocess.TimeoutExpired, OSError):
                     pass
-                else:
-                    try:
-                        process.wait(timeout=0.15)
-                    except (subprocess.TimeoutExpired, OSError):
-                        pass
+                remaining_grace = grace_end - monotonic()
+                if remaining_grace > 0:
+                    sleep(remaining_grace)
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError, OSError):
