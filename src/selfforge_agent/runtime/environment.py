@@ -240,7 +240,7 @@ def load_requirement_profile(repository: Path | None = None, *, lock_file: Path 
     try:
         parse_locked_requirements(contents)
         decoded = contents.decode("utf-8")
-        if re.search(r"--hash=[sS][hH][aA]256:[0-9a-zA-Z]*[A-F]", decoded) or "--hash=SHA256:" in decoded:
+        if any(m.group() != m.group().lower() for m in re.finditer(r"--hash=\S+", decoded)):
             return export_requirements_txt(contents), path, True
         return decoded, path, False
     except ValueError:

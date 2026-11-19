@@ -270,6 +270,8 @@ def _inputs(
     seen = {"sha256:" + hashlib.sha256(data).hexdigest() for data in wheels.values()}
     if any(not set(pkg["hashes"]).intersection(seen) for pkg in packages):
         raise ValueError("Wheelhouse is missing a hash-matching wheel for a locked requirement")
+    lock = re.sub(rb"--hash=(?i:sha256):([0-9a-fA-F]{64})",
+                  lambda m: b"--hash=sha256:" + m.group(1).lower(), lock)
     return lock, wheels
 
 
