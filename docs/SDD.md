@@ -3,17 +3,20 @@
 本文件是新 Agent 的**首读文档和当前任务状态的唯一维护入口**。读完即可选择下面的 Ready 任务并开始；仅在涉及具体模块时查阅链接的详细契约，不要求先遍历全部历史文档。
 
 - 文档版本：1；更新：2026-11-19。
-- 已核验产品基线：`04452154addaeff3375fcd15996585c2d5e374e3`；开工必须重新 fetch 并记录实际基线，不把这里的 SHA 当作永远最新。
+- 已核验历史产品基线：`04452154addaeff3375fcd15996585c2d5e374e3`；开工必须重新 fetch 并记录实际基线，不把这里的 SHA 当作永远最新。
 - 前轮 SF-DEV-01 / SF-DOC-01 / SF-TEST-01 的已验证快照：源码 `9bc111cb07cb3b6b6dd8e44a7483c49e34960220`，完整 pytest 653 passed、无跳过。合并状态以第 4 节及审查记录为准；SF-EVAL-08 的新策略与无模型预检已交付；该策略下的真实模型测量尚未运行。
+- 本次方向调整基线：`59d607ec995392b50d497ddcd5c193748d3eed1d`；[PR #107–#121 审查](./review-pr107-121.md)记录原 Python 组合 1908 项测试与 Docker 验证，属于历史 Python 证据，不是多语言验收。
 - 当前用户指令优先。SDD 不增加外部服务、付费模型调用、推送或合并授权，也不增加重复确认程序；沿用会话已有授权和仓库保护。
 
 ## 1. 产品目标与范围
 
-**selfForge Agent — A Python Coding Agent with Reliable Execution and Self-Testing**。
+**selfForge Agent — Coding Agent + Language-Agnostic Test Harness**。
 
-面向 Python Git 仓库，从 Web/CLI 接收自然语言任务，在独立 worktree 中自主读、搜索、修改代码，在 Docker 中执行测试，交付可检查的 Diff、测试证据与执行轨迹；支持取消和显式恢复。PR Review、差异测试与 Repair 是专项工作流。
+产品目标调整为面向多语言 Git 仓库的 Coding Agent 与**可独立使用、不依赖模型的通用测试器**：测试器接收明确的项目/测试计划，在隔离环境执行对应框架，归一化结构化证据；Coding Agent 复用同一个测试器完成读、改、测和交付。CLI/API 可以只运行测试而不创建模型。PR Review、差异测试与 Repair 继续作为专项工作流。
 
-产品主线：**任务 → 受限工具调用 → 修改代码 → 隔离测试 → 证据验证 → 用户检查 → 显式 commit/PR**。
+**当前实现仍只有 Python/pytest 的正式测试闭环。** 本次仅更新规格，不把可通过 bash 执行其他命令算成原生多语言支持；以下多语言任务均未实现、未验证。selfForge 本身继续用 Python 实现，不要求改写 Agent Runtime。
+
+产品主线：**任务 → 受限工具调用 → 修改代码 → 共享多语言测试器 → 证据验证 → 用户检查 → 显式 commit/PR**。独立测试主线：**用户选择测试计划 → 环境预检 → 框架适配器 → 共享隔离执行 → 结构化结果与证据**。
 
 本阶段不增加产品 Multi-Agent、通用 MCP、额外 RAG、大型前端、跨语言 IDE 或另一套 Agent Runtime。开发者之间并行协作与产品 Multi-Agent 是两件事；是否使用子 Agent 服从当前工具/用户规则。
 
@@ -26,10 +29,52 @@
 | Harness | 持久会话/轨迹、启发式上下文压缩、取消、恢复、非空 JUnit 与工作区指纹 | 非精确 tokenizer；非断电事务；阻塞 HTTP 不保证即时取消 |
 | 隔离与工作区 | Docker 默认、Host 显式信任、持久 worktree、共享协同锁、dirty guard、审计/prune | 文件指纹非原子快照；外部编辑器/Git/不同 XDG 不参与锁 |
 | 环境 | 只读发现、有限锁导出、离线准备计划、wheelhouse 审计、显式镜像构建/会话绑定、声明诊断 | 不自动安装；哈希可用不等于可安装；Host markers 不等于目标容器解析 |
-| 测试与交付 | Review/差异测试/Repair、worktree Diff、显式提交/PR、重试恢复、CI | 通过既有测试不代表全部需求充分验证；不自动合并 PR |
+| 测试与交付 | Python/pytest 的 Review/差异测试/Repair、worktree Diff、显式提交/PR、重试恢复、CI | 通过既有测试不代表全部需求充分验证；不自动合并 PR |
+| 多语言测试器 | 目标规格与任务拆分已定义，适配器尚未交付 | 不能声称已支持 JS/TS、Go、Java；目标支持矩阵见下表 |
 | Eval | 冻结 v2 20 题、两道独立多文件候选、无模型参考正负控、来源元数据/报告比较 | 两道新题未加入历史正式成绩；不能把旧分数当作当前 Runtime 成绩 |
 
 已核验基线的本地完整 pytest 为 568 passed，无跳过；[基线 main CI](https://github.com/liuzhouquan/selfforge-agent/actions/runs/43135807788) 为 555 单元 + 13 Docker，无跳过。此数字仅属于上述基线，不是后续任务验收配额。历史 53/60 模型成绩及来源限制见[评测记录](./evaluation.md)。
+
+### 多语言通用测试器目标契约（待实现）
+
+本节是用户新目标的实施规格，不描述已存在的后端或可直接使用的新 CLI 参数。具体开发状态只在第 4 节维护。
+
+**首批范围与交付顺序：** 先以 Python + JS/TS 打通独立测试和 Agent 共用链路，再扩展 Go、Java；各后端单独验收。通用性来自相同的请求、执行、证据和扩展接口，不来自声称所有语言/框架开箱即用。
+
+| 语言 / 后端标识（拟定） | 执行与结构化证据 | 当前状态 / 边界 |
+| --- | --- | --- |
+| Python / pytest | 复用现有 pytest 与 JUnit XML 解析、Host/Docker Runner | 已实现旧入口；迁移共享契约仍待验收 |
+| JS/TS / vitest | 已准备的 Vitest 单次运行，独立文件 JUnit XML，不使用 watch 或 stdout 文本推断 | 待实现；Jest、浏览器/E2E 后端另行立项，不自动视为同一框架 |
+| Go / go-test | Go 原生 JSON 事件流；按 package/test 分离生命周期和结果，不强制先转 JUnit | 待实现；编译/包级失败、无测试包、子测试及交错事件单独验证 |
+| Java / maven-surefire | Maven 测试生命周期与本次运行的 Surefire XML 集合 | 待实现；编译失败也须失败；Failsafe 集成测试不在此适配器范围 |
+| Java / gradle-test | 明确的 Gradle Test 任务与本次 XML 集合 | 待实现；多模块显式选择；跳过/缓存结果不能冒充本次测试 |
+| 其他语言 / 框架 | 通过版本化适配器和相同验收矩阵扩展 | 尚未支持；Rust、C/C++、Jest、浏览器/E2E 等不因通用接口自动获支持声明 |
+
+**共享职责：** 保留一个 CodingAgent、ToolRegistry、工作区管理与执行器。在现有 verification 路径建立薄的 TestHarness/适配器边界；不得为每种语言复制 Agent、沙箱、会话、取消或证据状态机。适配器负责只读发现线索、校验选择器、生成计划、收集/解析框架报告；共享层负责授权、资源预算、进程/容器生命周期、工件读取、指纹与成功门槛。现有 Python TestResult/Runner 的消费者需兼容迁移，而不是一次替换整个产品数据模型。
+
+**请求与计划：** 版本化 TestRequest 指明仓库/子项目相对目录、backend、框架特有的 typed selection、总预算、环境/镜像与显式准备依赖的身份。版本化 TestPlan 冻结实际 argv、工作目录、白名单环境、报告集合、选择范围和适配器版本。用户选择配置存于哪个文件由 SF-HARNESS-02 交付时固定；本次不承诺现有仓库已能识别某个新配置文件或新 CLI 标志。
+
+- 支持“自动发现候选”和“显式选择”，但只读发现不加载可执行 JS 配置、不运行 Maven/Gradle/包管理器或仓库脚本；多框架/多模块歧义要显式选择，不静默选 pytest 或第一个项目。
+- profile/执行计划在一次运行前冻结并计算摘要，测试中的配置改写不能缩小已选测试范围。Agent 修改 profile、环境或选择器须撤销旧证据；独立回归与隐藏测试的计划由验证端冻结，不能由被测 Agent 放宽。
+- adapter 使用受控 argv 和框架专用选择器，不把用户字符串拼成宿主 shell 命令，不把 pytest 的 -k 直接复用于其他框架。Docker 字符串桥接仍须正确引用 argv；自由 bash 结果不能经通用命令入口直接升级为可信测试证据。
+- monorepo 的计划是一组明确的 test job；分别记录 cwd/backend/selection、结果和工件。必要 job 全部取得非空测试成功后才能整体通过，不用一个子项目的绿灯覆盖其他失败、缺失或空选择；不隐式全仓扫描无限个项目。
+
+**结构化结果与统一成功门槛：** 目标 TestRunResult 包含 schema/adapter 版本、run/job ID、执行状态与原因代码、退出码、用例级 passed/failed/errors/skipped、发现与实际执行数量（可知时）、耗时、受限诊断、工件摘要、冻结计划摘要、执行环境/镜像身份、测试前后工作区指纹。原始报告格式可以是 JUnit XML 或经过验证的原生事件协议，归一化后才进入共享门槛。
+
+1. 进程正常结束、退出码 0、报告完整合法、至少一个**实际测试用例**通过、无失败/错误、必需 job 齐全，且测试前后和当前源码指纹一致，才有可复用的通过证据。Agent 还须给出非空最终答复才能 completed。
+2. package/build/编译/lint/benchmark 成功不能充当用例通过；编译失败、缺报告、截断/畸形报告、事件未终结、计数矛盾、空选择、全 skip、超时/取消均不能通过。unsupported_backend、ambiguous_selection、environment_unavailable、build_error、test_failure、invalid_evidence 等要有可消费的独立原因，不静默回退 Host、别的框架或 exit-code-only。
+3. Go package pass 不计为 testcase pass；并行包/子测试须正确配对和避免同一 testcase 重复计数。Java/JS 报告目录不跨运行累积，不读取旧 XML 当本次结果；缓存/UP-TO-DATE/重试结果须显式呈现，初版强制实际运行，不用重试后绿灯掩盖本次失败。
+4. 证据绑定 workspace、冻结计划/选择范围、adapter/schema、环境/镜像和报告摘要；只读解析任意外部 XML/JSON不能伪装成一次已执行测试。新会话格式版本由迁移任务确定；旧 junit-workspace-v2 可读，不自动变成跨语言证据，缺少新绑定信息需重测，不改写历史成绩。
+5. 解析与收集沿用现有有界/no-follow 普通文件与 JSON/XML 防御；每种报告声明字节、文件/事件数量和诊断上限。不得新增无界 stdout 缓冲或把未结束的 Go 事件流当成功。未知字段/新版本按 adapter 明确规则拒绝或保守忽略，不能默认通过。
+6. 这是证据质量与状态绑定，不声称可以防御恶意测试代码伪造报告或具有可信 Host 权限的代码。源码 fingerprint/隔离边界仍服从现有工程不变量。
+
+**环境与执行：** 扩展现有 DockerExecutor/HostExecutor，而不是用测试命令本身安装语言。测试阶段继续默认 Docker、无网络、非 root、资源/输出/截止期上限、取消与进程组清理。Node/Go/JDK/构建工具及依赖通过显式准备的不可变镜像/依赖材料提供，记录工具链、锁文件及材料摘要；无材料时 environment_unavailable，不自动下载或读取宿主全局凭证。初版非 Python 后端要求 Docker；Host 只有在具体适配器声明并完成显式信任验证后才支持。
+
+现有 staging 会排除 node_modules、私有目录和缓存；不能简单取消过滤以让 Node 测试跑通。SF-HARNESS-02 须设计来自已准备镜像/依赖材料的独立装载，不继承宿主任意依赖目录；生成文件只留在执行副本。不得为了消除编译产物导致的指纹差异，广泛忽略源码目录或缩小内容证据。Maven/Gradle/Go 的下载、工具链自动切换和守护进程复用必须受显式离线计划约束，仓库构建配置只在授权的隔离测试阶段运行。
+
+**能力分层：** 测试执行、独立回归验证、测试生成、修复、真实仓库评测分别列 capability。某语言 test runner 可用，不代表已有该语言 AST 校验、测试生成/Repair 或真实模型成绩。优先交付跨语言独立测试；Python 专项生成/Repair 保留现状，未接入语言显式 unsupported，不通过改后缀或 Python 包装测试宣称原生支持。
+
+**后端协议依据（实现时固定并记录版本）：** [Vitest JUnit reporter](https://vitest.dev/guide/reporters#junit-reporter)、[Go test2json](https://pkg.go.dev/cmd/test2json)、[Maven Surefire](https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo.html)、[Gradle Test reporting](https://docs.gradle.org/current/userguide/java_testing.html)。外部文档用于协议设计，不是当前实现或已执行验证的证据。
 
 ## 2. 开工与选择任务
 
@@ -92,9 +137,9 @@ flowchart LR
 
 不可回退的约束：
 
-1. 保持一个通用 `CodingAgent`、共享 ToolRegistry/JUnit Runner；Repair 的独立 proposer 是现有边界，不新增竞争 Runtime。
+1. 保持一个通用 `CodingAgent`、共享 ToolRegistry 与测试执行/证据层；当前后端是 pytest/JUnit，目标按上节扩展框架适配器。Repair 的独立 proposer 是现有边界，不新增竞争 Runtime。
 2. Docker 是默认执行方式；Host 必须显式信任。文件保护、路径/链接校验、网络/资源限制、输出/输入/超时上限继续生效；不默认运行仓库 hooks、setup.py 或自动安装脚本。
-3. `completed` 必须有非空 JUnit 成功、测试前后及当前指纹一致、非空最终答复。bash 退出 0、旧测试布尔值、LLM 自评均不能替代证据。
+3. 当前 `completed` 仍须非空 JUnit 成功、测试前后及当前指纹一致、非空最终答复；跨语言迁移后由各适配器产生等价的规范化非空结构化证据，具体门槛见第 1 节。迁移前不改变现有行为；bash 退出 0、旧测试布尔值、LLM 自评均不能替代证据。
 4. 新任务、写入/编辑尝试、持久 Host 命令或新测试之前先持久化撤销旧证据；取消、超时、异常、恢复均不能复活失效证据。
 5. 保持 assistant/tool 消息成组与 user 约束；预算提示瞬态生成，不能持久化成旧预算；token 估算明确标为启发式。
 6. CLI/Web 对同一工作区使用共享锁。持久 worktree 不强制删除；dirty/ignored 用户输入保留；prune 在锁内重查；commit/PR 证据只绑定实际推送 SHA。
@@ -104,7 +149,7 @@ flowchart LR
 
 ## 4. 下一阶段里程碑与任务队列
 
-当前阶段目标：**使新环境可复现开发与验证，让规格能追溯到测试，并把自主编程后的回归测试验证补成可复用流程。** 不按功能数量或测试数量宣称产品完成。
+当前阶段目标：**把 Python/pytest 专用测试链路演进为可独立使用、可供同一个 Coding Agent 调用的多语言通用测试器。** 先交付 Python + JS/TS 的统一链路，再按独立后端扩展 Go、Java。以下历史 Merged 项保持原记录；新增 Ready/Waiting 项是当前实施队列，不再以继续堆输入加固任务代替此产品目标。
 
 | 顺序 | 任务 ID | 状态 | Owner | 前提 | 交付结果 |
 | --- | --- | --- | --- | --- | --- |
@@ -172,8 +217,19 @@ flowchart LR
 | 62 | [SF-FAIL-01](#sf-fail-01) | Merged | Codex（审查整合） | 无 | [PR #119](https://github.com/liuzhouquan/selfforge-agent/pull/119)：测试失败工件与诊断快照生命周期及安全加固：工件模型模式规范化（FailureArtifact）、Fail-Closed 类型守门与超限安全截断有界降级、目录隔离与原子无符链写盘、非普通文件/FIFO防御与确定性工件列表检索（list_failures）及统计聚合（summarize_failures） |
 | 63 | [SF-IMG-02](#sf-img-02) | Merged | Codex（审查整合） | SF-IMG-01（Merged） | [PR #120](https://github.com/liuzhouquan/selfforge-agent/pull/120)：离线依赖镜像二级深度安全加固：哈希规范化、Wheelhouse诊断抽象、镜像引用防注入与构建模型Schema形式化 |
 | 64 | [SF-CTX-02](#sf-ctx-02) | Merged | Codex（审查整合） | SF-CTX-01（Merged） | [PR #121](https://github.com/liuzhouquan/selfforge-agent/pull/121)：模型上下文管理器二级深度安全加固：估算边界防护、交互切片严格单射配对、压缩锚点序保护与度量报告Schema形式化 |
+| 65 | [SF-HARNESS-01](#sf-harness-01) | Ready | 未认领 | 现有 pytest/JUnit、执行器、指纹 | 共享请求/计划/结果契约、统一成功门槛与 pytest 兼容适配（未实现、未验证） |
+| 66 | [SF-HARNESS-02](#sf-harness-02) | Waiting | 未认领 | SF-HARNESS-01 | 只读发现、冻结测试 profile、工具链/离线依赖与隔离 staging（未实现、未验证） |
+| 67 | [SF-HARNESS-03](#sf-harness-03) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | JS/TS Vitest 后端与独立 JUnit 工件（未实现、未验证） |
+| 68 | [SF-HARNESS-04](#sf-harness-04) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | Go 原生 JSON 事件后端及用例/包级状态归一化（未实现、未验证） |
+| 69 | [SF-HARNESS-05](#sf-harness-05) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | Java Maven Surefire 后端与编译/测试失败分类（未实现、未验证） |
+| 70 | [SF-HARNESS-06](#sf-harness-06) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | Java Gradle Test 后端与新鲜报告/缓存边界（未实现、未验证） |
+| 71 | [SF-HARNESS-07](#sf-harness-07) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 / SF-HARNESS-03 | 独立 CLI/API 与 Agent run_tests 共用调度、会话证据迁移（未实现、未验证） |
+| 72 | [SF-HARNESS-08](#sf-harness-08) | Waiting | 未认领 | SF-HARNESS-07 | 跨语言独立回归验证与专项生成/Repair 能力门禁（未实现、未验证） |
+| 73 | [SF-HARNESS-09](#sf-harness-09) | Waiting | 未认领 | SF-HARNESS-03 / SF-HARNESS-04 / SF-HARNESS-05 / SF-HARNESS-06 / SF-HARNESS-07 / SF-HARNESS-08 | 多语言真实仓库固定源与无模型参考资格验证、CI矩阵（未实现、未验证） |
 
-阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
+本阶段完成条件：M1 为 01/02/03/07 闭合，证明 Python + JS/TS 共用独立入口和 Agent 证据门槛；M2 为 04/05/06 闭合，加入 Go 与 Java 两种构建路径；M3 为 08/09 闭合，验证回归边界与真实仓库参考结果。没有真实各后端执行证据不得声称对应语言已支持。
+
+前阶段历史完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
 上表同时记录当前交付状态与未来任务。需要并行认领时先核对开放 PR；状态/Owner 回填到同一行。多个分支基于最新 main 开发，合并前更新基线并复查公共入口，不机械拼接表尾。
 
@@ -2836,6 +2892,177 @@ PR / 准确 head CI / merge SHA（有则填）：PR #121 / https://github.com/li
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
+### SF-HARNESS-01
+
+**目标：** 共享测试契约与 pytest 兼容适配。以现有 verification 层为基础定义版本化请求、冻结执行计划、归一化结果和共享通过门槛，首先用 pytest 证明兼容；本任务不交付其他语言后端或新 Agent Runtime。
+
+**范围/入口：** `src/selfforge_agent/verification/runner.py`、`src/selfforge_agent/verification/junit.py`、`src/selfforge_agent/models.py`；新增契约模块/测试名称在实现 PR 中固定，不将计划路径当既有代码。
+
+**前提 / 状态：** 现有 pytest/JUnit、执行器、指纹；Ready，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-01-A1 | 明确 backend/cwd/选择器/预算/报告契约输入可生成稳定计划摘要；未知版本、未知字段、越界路径或歧义不得降级执行 | 拟新增请求/计划契约和错误边界测试，证明未通过预检时无进程启动 | 未实现、未验证 |
+| SF-HARNESS-01-A2 | pytest 由兼容适配器复用现有 Host/Docker Runner 与 JUnit 解析；旧 Python 调用签名、结果及显式信任行为保持 | 既有 Python Runner、工具与调用方回归；真实 Host 小型夹具和 Docker 用例 | 未实现、未验证 |
+| SF-HARNESS-01-A3 | 退出0但缺报告/空/全skip/计数矛盾、未终结或失败报告均不通过；规范化结果不能只靠进程输出创建 | 共享结果归一化契约反例，覆盖非有限数值、错误状态与报告完整性 | 未实现、未验证 |
+| SF-HARNESS-01-A4 | 超时、取消、输出/报告越界、缺工具链受控分类；不复制执行器或用通用bash充当测试证据 | 共享进程/容器故障路径与既有 Python 完整组合回归 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 认领本任务，以pytest兼容适配和坏证据负控开始实现；不先开发另一套执行器。
+
+### SF-HARNESS-02
+
+**目标：** 冻结测试计划与多语言环境。只读发现项目候选并要求明确选择；冻结包含环境的测试profile，安全供给语言工具链和离线依赖，复用现有隔离与绑定边界。
+
+**范围/入口：** `src/selfforge_agent/runtime/environment.py`、`src/selfforge_agent/runtime/execution.py`、`src/selfforge_agent/runtime/fingerprint.py`、`src/selfforge_agent/runtime/session.py`；Python wheelhouse 接口保持兼容。
+
+**前提 / 状态：** SF-HARNESS-01；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-02-A1 | 读取manifest给出项目/框架候选，monorepo多候选需明确job范围；不加载可执行配置或运行仓库脚本 | 拟新增只读发现/歧义/子项目路径测试，以可观测副作用证明没有执行发现阶段代码 | 未实现、未验证 |
+| SF-HARNESS-02-A2 | 一次运行冻结profile/argv/选择器/报告与adapter版本；repo改写profile不改变独立验证端已冻结范围 | 实际文件改写负控与计划摘要、工作目录、selection绑定测试 | 未实现、未验证 |
+| SF-HARNESS-02-A3 | 明确准备且绑定不可变镜像及工具链/依赖材料身份，Node/Go/JDK缺失时报告environment_unavailable；测试期间无安装/联网回退 | 各环境最小真实Docker冒烟；缺缓存、缺二进制、镜像/锁摘要不符与恢复绑定反例 | 未实现、未验证 |
+| SF-HARNESS-02-A4 | 保留node_modules/敏感文件staging过滤，准备材料独立装载且有界；不把编译输出复制回源码或任意扩大fingerprint排除项 | 真实Docker staging与依赖装载正负控，原保护路径、取消、deadline及指纹回归 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
+### SF-HARNESS-03
+
+**目标：** JavaScript / TypeScript Vitest 后端。支持已显式准备的 JS/TS Vitest 项目执行与结构化证据；不把 Jest、浏览器模式或任意 npm script 自动当作同一已支持后端。
+
+**范围/入口：** 共享 verification 适配器入口与既有 DockerExecutor；实现时固定 Vitest/Node/依赖版本及报告输出配置。
+
+**前提 / 状态：** SF-HARNESS-01 / SF-HARNESS-02；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-03-A1 | JS和TS正控都能在无网络Docker单次执行，明确选择测试文件/名称；不启watch或触发npx下载安装 | 真实JS/TS夹具各含正控和断言失败；记录工具链/镜像及实际执行计划 | 未实现、未验证 |
+| SF-HARNESS-03-A2 | 从本次独立工件文件读取JUnit，日志不能污染XML；错报告路径、旧报告、输出截断、空/全skip均不成功 | 报告生命周期、UTF-8、日志混合、缺工件、malformed XML与零测试反例 | 未实现、未验证 |
+| SF-HARNESS-03-A3 | 配置/导入/转译错误归为构建或执行错误，不能误称断言回归；超时/取消不保留旧通过证据 | 真实TypeScript语法错误、配置错误与进程超时/取消用例 | 未实现、未验证 |
+| SF-HARNESS-03-A4 | 工具结果和归一化结果符合共享门槛；Python后端无回退或选择变化 | 后端参数化契约测试及实际Docker结果经共享成功判定 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
+### SF-HARNESS-04
+
+**目标：** Go 原生事件测试后端。直接消费所固定Go版本的原生JSON测试事件，不要求先包装成Python或先转换为JUnit；只验证显式选择的包/测试范围。
+
+**范围/入口：** 共享 verification 适配器入口与既有执行/工件层；Go工具链/模块材料由显式环境提供。
+
+**前提 / 状态：** SF-HARNESS-01 / SF-HARNESS-02；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-04-A1 | 明确包/测试选择，禁止测试阶段隐式下载模块或切换工具链；缺依赖和编译失败单独分类 | 真实Go模块正控、断言失败、缺模块、语法/编译错误与无网络验证 | 未实现、未验证 |
+| SF-HARNESS-04-A2 | 按package和test ID处理交错事件；每个ID终态只处理一次，子测试父容器不重复计作叶用例；package pass不计testcase | 多包并发、子测试、重复终态、包级失败、无测试包和benchmark-only反例 | 未实现、未验证 |
+| SF-HARNESS-04-A3 | 事件流完整结束且进程正常退出并有实际通过用例才成功；全skip、截断、坏JSON、未终结测试不能通过 | 逐事件/总量边界测试和原生协议fixture；不得使用日志passed文本兜底 | 未实现、未验证 |
+| SF-HARNESS-04-A4 | 取消、超时及有界诊断结果与共享门槛一致，失败分类不泄漏私有路径/原始输出 | 实际Docker取消/超时用例与Python兼容回归 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
+### SF-HARNESS-05
+
+**目标：** Java Maven Surefire 后端。支持明确模块的Maven单元测试与本次Surefire XML证据，保持构建失败和测试失败区别；不同时承诺Failsafe或任意其他Maven插件。
+
+**范围/入口：** 共享 verification/环境边界；固定JDK/Maven/Surefire及本地依赖材料，不改仓库测试代码来注入报告。
+
+**前提 / 状态：** SF-HARNESS-01 / SF-HARNESS-02；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-05-A1 | 选定模块离线构建并执行单元测试；缺JDK、插件或依赖时不能自动联网补齐 | 真实Java最小项目正控/断言失败/编译失败/离线缺依赖用例 | 未实现、未验证 |
+| SF-HARNESS-05-A2 | 报告集合属于本run和选定模块，读取前清理或隔离旧目录，限制文件数/总字节并拒符链/特殊文件 | 旧XML、报告缺失、路径别名、超量和多模块报告身份反例 | 未实现、未验证 |
+| SF-HARNESS-05-A3 | 所有必需模块执行且有实际通过用例才能成功；skipTests/无匹配用例/编译成功不能代替测试 | 明确跳过、空选择、模块遗漏及退出0但失败报告反例 | 未实现、未验证 |
+| SF-HARNESS-05-A4 | 初版不将失败重试后的绿灯掩盖为本次纯通过；取消/超时仍清理整个进程组 | 真实失败结果、重试配置边界和Docker进程生命周期回归 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
+### SF-HARNESS-06
+
+**目标：** Java Gradle Test 后端。执行明确的Gradle Test任务并消费新鲜XML证据，验证其独立生命周期；不因Maven适配器已完成就宣称支持Gradle。
+
+**范围/入口：** 共享 verification/环境边界；固定JDK/Gradle与离线材料，明确模块、任务、报告路径和缓存策略。
+
+**前提 / 状态：** SF-HARNESS-01 / SF-HARNESS-02；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-06-A1 | 明确项目与Test任务，离线且不复用不可追溯的宿主daemon/依赖；wrapper分发缺失时明确环境失败 | 真实Gradle Java正控、断言失败、编译失败与离线材料缺失用例 | 未实现、未验证 |
+| SF-HARNESS-06-A2 | 初版强制本次实际执行测试，不接受UP-TO-DATE、FROM-CACHE、旧XML或跳过任务充当新通过 | 缓存/任务跳过/旧工件负控及本次报告生成正控 | 未实现、未验证 |
+| SF-HARNESS-06-A3 | 多模块明确job范围并聚合完整新鲜报告；缺失必需job、空选择、全skip不能整体成功 | 多模块一绿一红/一缺、全空/全skip、报告路径/数量边界用例 | 未实现、未验证 |
+| SF-HARNESS-06-A4 | 适配器复用共享结果、取消与指纹，不添加Gradle独立证据状态机 | 真实Docker超时/取消/报告损坏及共享gate兼容测试 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
+### SF-HARNESS-07
+
+**目标：** 统一独立测试入口与 Agent 证据接入。让CLI/API独立运行测试而不创建模型，并让现有Agent的run_tests调用同一调度器。先以pytest和Vitest验收；后续已交付适配器通过相同入口接入。
+
+**范围/入口：** `src/selfforge_agent/cli.py`、`src/selfforge_agent/api/app.py`、`src/selfforge_agent/runtime/tools.py`、`src/selfforge_agent/runtime/agent.py`、`src/selfforge_agent/runtime/session.py`；保持旧Python路径与导出兼容。
+
+**前提 / 状态：** SF-HARNESS-01 / SF-HARNESS-02 / SF-HARNESS-03；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-07-A1 | CLI/API按显式backend/job执行真实测试且不初始化/调用模型；未实现backend/歧义是可消费错误 | 实际CLI退出码/JSON、安全导出与TestClient请求，安装模型构造fail-fast替身证明独立性 | 未实现、未验证 |
+| SF-HARNESS-07-A2 | Agent run_tests复用同一计划/结果和共享通过门槛；自由bash、一个子项目绿灯或无报告不能completed | pytest/Vitest实际Agent闭环与monorepo多job负控，不只测dispatch helper | 未实现、未验证 |
+| SF-HARNESS-07-A3 | 运行前持久化撤销旧证据；恢复时绑定backend/plan/schema/环境与源码；旧v2记录可读但不能自动升级为新跨语言成功 | 会话恢复/中断、选择器/后端/profile变化、持久化故障与指纹变化回归 | 未实现、未验证 |
+| SF-HARNESS-07-A4 | Web/CLI保留归一化计数、错误类别和有限诊断；host信任/本机API约束不因后端切换放宽 | 消费者和权限测试，Python完整组合及真Docker多语言入口复验 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
+### SF-HARNESS-08
+
+**目标：** 跨语言独立回归验证与专项能力门禁。把“旧版本失败、新版本通过”的独立验证复用到已支持runner的语言，保持测试/源码/计划冻结与版本方向；测试生成、Repair按语言显式声明能力，不假装同时交付全语言生成器。
+
+**范围/入口：** `src/selfforge_agent/coding/regression_validation.py`、`src/selfforge_agent/coding/test_generation.py`、`src/selfforge_agent/coding/agent.py`及共享验证入口。
+
+**前提 / 状态：** SF-HARNESS-07；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-08-A1 | 已支持后端可在独立Base/Head副本安装同一冻结候选并执行；不能只放宽.py后缀或调用Python包装证明原生支持 | 至少Python与一个非Python语言的真实Git旧失败/新通过正控及测试摘要一致性 | 未实现、未验证 |
+| SF-HARNESS-08-A2 | 断言失败与编译/收集/环境失败区别明确；方向反转、修改候选、范围不符、全skip或无用例不能构成回归证据 | 真实源码/测试变更反例及门槛状态、计数、工件/计划绑定检查 | 未实现、未验证 |
+| SF-HARNESS-08-A3 | test execution、regression validation、generation、repair分别声明capability；未实现的语言专项明确拒绝且不调用模型 | API/CLI能力矩阵、参数错误和模型调用负控；已有Python专项兼容回归 | 未实现、未验证 |
+| SF-HARNESS-08-A4 | Base/Head/holdout互相独立，不把隐藏测试诊断或参考补丁放入Agent工作区/报告 | 实际工作区隔离、保护路径、允许改动集合与隐藏工件保密负控 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
+### SF-HARNESS-09
+
+**目标：** 多语言真实仓库参考资格验证与 CI。建立语言/框架分别可复现的固定源与无模型参考资格验证，证明通用测试器而不是语言包装demo；真实模型任务成绩另行授权与评测。
+
+**范围/入口：** `scripts/prepare_eval_sources.py`、`src/selfforge_agent/runtime/benchmark.py`、`.github/workflows/ci.yml`与评测规格；现有冻结Python资产/成绩不覆写。
+
+**前提 / 状态：** SF-HARNESS-03 / SF-HARNESS-04 / SF-HARNESS-05 / SF-HARNESS-06 / SF-HARNESS-07 / SF-HARNESS-08；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-HARNESS-09-A1 | 每种首批语言至少1个固定SHA真实开源仓库、1个项目自编回归任务；Java两个后端各有真实Docker运行证据 | 记录仓库许可证/固定SHA、工具链/镜像、锁/材料摘要和选择范围；离线可复现 | 未实现、未验证 |
+| SF-HARNESS-09-A2 | 各任务基线确实因目标断言失败，参考源码修复后独立可见/隐藏选择都有非空通过；编译错误不算合格负控 | 无模型参考正负控及允许修改集合检查；夹具和真实仓库分表 | 未实现、未验证 |
+| SF-HARNESS-09-A3 | CI覆盖Python兼容和已交付语言实际Docker矩阵；共享坏报告、空/全skip、缺环境、超时/取消反例可复现 | 准确提交CI与执行命令、计数、skip和环境限制，不能把mock或镜像缺失当通过 | 未实现、未验证 |
+| SF-HARNESS-09-A4 | 报告按语言/后端/任务/源码与环境分别归档；不把Python历史53/60或1908自测数当新语言成功率 | 结果归档/比较与溯源字段验证；真实模型成绩保持未运行且不触发付费调用 | 未实现、未验证 |
+
+**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+
+**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+
 ## 5. 验收追踪与执行记录格式
 
 每项验收使用全局 ID `任务ID-A序号`，实现后把上表“初始证据”替换为相应记录 ID（如 E1）。在**同一规格节**追加以下表，不要求再建 task 文件：
@@ -2864,7 +3091,7 @@ PR / 准确 head CI / merge SHA（有则填）：PR #121 / https://github.com/li
 
 ## 6. 安装与验证门槛
 
-Python 3.11+、Git、uv；CI 为 Python 3.12。仓库未配置类型检查器，Ruff 不能称作类型检查。
+selfForge 服务与当前项目自测仍需要 Python 3.11+、Git、uv；CI 为 Python 3.12。它们是本项目的开发工具链，不是未来被测仓库的语言限制。Node/Go/JDK 等目标工具链由对应后端的显式测试环境提供；尚未交付前不得把下面 pytest 命令称作多语言验收。仓库未配置类型检查器，Ruff 不能称作类型检查。
 
 ```sh
 uv sync --locked --dev
@@ -2905,6 +3132,14 @@ PR / 准确 head CI / merge SHA（有则填）：
 ```
 
 新 Agent 先核对 Git/PR/CI 的实时状态，再信任旧交接。模板不是权限确认流程；已有授权范围内的常规设计和可逆修复自主完成。
+
+### 本次多语言方向调整交接
+
+2026-11-19，用户明确将目标扩展为多语言通用测试器。本次仅修订产品/执行/证据目标、当前边界和九项实施任务；规划基线为 `59d607ec995392b50d497ddcd5c193748d3eed1d`，文档工作区为 docs/multilang-testing。未实现新的后端、配置文件、新CLI参数或新证据版本，未执行新语言测试或模型测量。历史Merged任务及其源SHA/CI证据保持原样。
+
+SF-HARNESS-01 为唯一前提已满足的 Ready 项，其余为 Waiting；任务Owner均未认领。下一次“继续开发”应先核对远端/开放PR，再领取 SF-HARNESS-01，优先打通pytest适配与统一反例，而不是继续领取历史加固项。具体语言优先级可按用户后续选择调整；当前按Python、JS/TS、Go、Java规划。
+
+本次文档验证：SDD结构/本地引用检查为73项任务、291条验收；11份改动文档的本地链接/锚点和git diff --check均通过；原64项历史任务规格逐节对比保持不变。仅文档变更，未重跑Python源码测试，未将文档检查当成多语言运行证据。
 
 ## 8. 已合并状态快照与历史资料
 

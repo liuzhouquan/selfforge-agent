@@ -1,6 +1,10 @@
 # Roadmap
 
-This is a capability map, not a task queue. Start from the [unified SDD](./SDD.md) for the active task queue, acceptance and handoff. This page is a historical capability map, not a second current-state ledger. Consult the [development guide](./development.md) for technical details. Historical test counts and model results stay in their pinned [integration](./runtime-integration.md), [delivery review](./pr-delivery-review.md) and [evaluation](./evaluation.md) records. Formal evaluation coverage is the next product priority; automatic dependency installation, causal proof and model-specific exact tokenization remain open.
+This is a capability map, not a task queue. Start from the [unified SDD](./SDD.md) for the active task queue, acceptance and handoff. This page is a historical capability map, not a second current-state ledger. Consult the [development guide](./development.md) for technical details. Historical test counts and model results stay in their pinned [integration](./runtime-integration.md), [delivery review](./pr-delivery-review.md) and [evaluation](./evaluation.md) records. The current product priority is the language-extensible standalone testing harness specified in SDD SF-HARNESS-01..09; existing Python formal-evaluation records remain historical evidence.
+
+## Current target (planned, not delivered)
+
+Preserve Python/pytest compatibility, unify standalone CLI/API and Agent testing, then add Vitest, Go test, Maven Surefire and Gradle Test adapters with the same structured-evidence gate. Toolchain preparation, per-language capability reporting, independent regression validation and real-repository reference qualification are explicit tasks. See the [SDD target contract](./SDD.md#多语言通用测试器目标契约待实现); this roadmap does not own a second task queue.
 
 | Priority | Status | Work |
 | --- | --- | --- |

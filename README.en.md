@@ -1,13 +1,13 @@
 # selfForge Agent
 
-**A Python Coding Agent with Reliable Execution and Self-Testing**
+**Reliable Coding and Language-Agnostic Test Verification**
 
-A Python coding agent with a complete foundational harness, focused on autonomous coding and test-backed verification.
+The product target combines a Coding Agent with a standalone, language-extensible test harness using shared isolation and structured evidence. **The current verified execution path remains Python/pytest; JS/TS, Go and Java adapters are not implemented yet.** See the [SDD target contract](./docs/SDD.md#多语言通用测试器目标契约待实现) for the implementation queue.
 
 [简体中文](./README.md) · [English](./README.en.md) · [Architecture](./docs/architecture.md) · [Product scope](./docs/product-scope.en.md) · [Roadmap](./docs/roadmap.md) · [Development guide (中文)](./docs/development.md) · [Development SDD (中文)](./docs/SDD.md)
 
 ```text
-User task → native tool calling → search/read code → exact edits → pytest → JUnit evidence and trace
+User task → native tool calling → search/read code → exact edits → pytest (current backend) → JUnit evidence and trace
 ```
 
 Run an end-to-end demo without an API key:
@@ -24,6 +24,7 @@ This demo checks the protocol and execution path; live model results are below. 
 
 | Capability | Status | Current boundary |
 | --- | --- | --- |
+| Multi-language test harness | Planned | Preserve pytest compatibility, then add Vitest, Go and Maven/Gradle adapters; standalone CLI/API testing without a model is not delivered yet |
 | Coding Agent Runtime | Implemented | OpenAI-compatible native tool calling, multiple turns, step/time limits, dynamic budget and verification feedback, provider fallback |
 | Tools and sessions | Implemented | read/edit/search/bash/run_tests; bounded line-range reads of large files, pytest `-k` selection, workspace path checks, resumable JSONL sessions and traces |
 | Context management & controls | Implemented | Truncated output, heuristic syntax/CJK-aware estimates, complete recent tool turns, interactive approval, reported tokens, and optional configured-rate cost estimates |

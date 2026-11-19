@@ -1,6 +1,6 @@
 # Test evidence contract
 
-General Coding, PR Repair, differential test generation, and benchmark verification reuse the JUnit-backed runners. A model answer or successful command stdout is not test evidence.
+The implemented Python workflows (General Coding, PR Repair, differential test generation and benchmark verification) reuse JUnit-backed pytest runners. A model answer or successful command stdout is not test evidence. The [SDD multi-language contract](./SDD.md#多语言通用测试器目标契约待实现) defines a planned extension; native non-Python backends are not implemented yet.
 
 ## Successful run
 
@@ -51,3 +51,11 @@ uv run --no-sync ruff check .
 ```
 
 The marked Docker test requires a running daemon and `selfforge-agent-sandbox:latest`; absent prerequisites are reported as skips. The tests cover Host and real Docker all-skipped behavior, success controls, resume/migration, empty selections, timeout, corrupt/missing reports, inconsistent counts, cancellation propagation, interruption cleanup, and rejection of an all-skipped Repair baseline. Scripted models make these execution checks deterministic; they do not measure model ability.
+
+## Planned normalized evidence and migration
+
+The target harness separates the report carrier from the success gate: JUnit remains the pytest/Vitest/Java carrier, while Go may supply a validated native event stream. The normalized result must describe actual testcases, process outcome, build/environment/test errors, exact job/selection scope, artifact freshness and identities. Do not count a Go package pass, successful compilation, benchmark, empty suite, cached task or stdout success string as a passing test. Multi-job success requires every required job to complete with nonempty passing evidence.
+
+Before Agent integration, freeze and bind the backend, adapter/schema version, execution plan/selection, immutable environment and pre/post/current source fingerprints. A new attempt or changed plan revokes old evidence before execution. Retain readable old session history, but missing new bindings require retesting and never silently upgrade junit-workspace-v2 records. Version names and persistence fields are implementation work, not a feature delivered by this documentation change.
+
+Shared negative controls must cover no/all-skipped tests, wrong exit code, conflicting counts, stale/missing/truncated reports, unfinished native events, package/build failures, partial monorepo execution, timeout/cancellation and environment mismatch. Diagnostics remain bounded and private; hidden tests and reference patches stay outside the evaluated Agent. New language results and reference qualifications must be recorded independently of historical Python scores. Existing limitations concerning malicious report producers and trusted Host execution still apply.

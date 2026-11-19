@@ -1,13 +1,13 @@
 # selfForge Agent
 
-**A Python Coding Agent with Reliable Execution and Self-Testing**
+**Reliable Coding and Language-Agnostic Test Verification**
 
-具备完整基础 Harness、以自主编程与测试验证为特色的 Python Coding Agent。
+产品目标是 Coding Agent 与可独立使用的多语言通用测试器，共用隔离执行与结构化证据。**当前正式测试闭环仍为 Python/pytest；JS/TS、Go、Java 适配器尚未实现。** 实施任务与验收以 [SDD](./docs/SDD.md#多语言通用测试器目标契约待实现) 为准。
 
 [简体中文](./README.md) · [English](./README.en.md) · [架构](./docs/architecture.md) · [产品边界](./docs/product-scope.md) · [路线图](./docs/roadmap.md) · [开发指南](./docs/development.md) · [开发规格 SDD](./docs/SDD.md)
 
 ```text
-用户任务 → 原生 Tool Calling → 搜索与阅读代码 → 精确修改 → 运行 pytest → 检查 JUnit 证据与轨迹
+用户任务 → 原生 Tool Calling → 搜索与阅读代码 → 精确修改 → 运行 pytest（当前后端）→ 检查 JUnit 证据与轨迹
 ```
 
 先运行一个无需 API Key 的端到端演示：
@@ -28,7 +28,8 @@ uv run python examples/coding_demo.py
 | 工具与会话 | Implemented | read/edit/search/bash/run_tests；大文件有界分段读取、pytest `-k` 选择、工作区路径校验、JSONL 恢复与轨迹 |
 | Context 管理与审批 | Implemented | 工具输出截断、语法与 CJK 敏感的启发式 token 估算、完整工具轮次保留、交互式审批与供应商 Token 统计；费用需显式配置费率 |
 | Docker 执行器 | Implemented | 真实 Docker 容器测试通过；无网络、资源限制，临时工作区通过 tar 送入 tmpfs，产物单独取回 |
-| Self-Testing | Implemented | 非空 JUnit 成功与工作区内容指纹共同验证；外部改动撤销证据，旧证据需重测 |
+| 多语言通用测试器 | Planned | Python/pytest 作为兼容基线；先接入 Vitest，再扩展 Go、Maven/Gradle；独立 CLI/API 无需模型，尚未交付 |
+| Self-Testing | Implemented（Python/pytest） | 非空 JUnit 成功与工作区内容指纹共同验证；外部改动撤销证据，旧证据需重测 |
 | Web Coding 工作台 | Implemented | 本机 Git 仓库任务、实时状态与轨迹、跨进程取消、历史任务查询和会话续跑；服务中断的任务需手动续跑 |
 | Coding 工作区 | Implemented | 默认从已提交的 HEAD 创建独立分支与持久 worktree；可续跑、查看有界 Diff、提交改动并创建 PR、手动清理 |
 | PR Review / Repair | Implemented | Web 审查与 checkout；修复编辑复用受限 Tool Registry、Docker 执行器、JUnit 证据与 JSONL 轨迹，模型提案循环仍独立 |

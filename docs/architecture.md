@@ -2,6 +2,29 @@
 
 Contributor entry points and verification gates are in the [development guide](./development.md). Before changing a path below, read its [engineering invariants](./engineering-invariants.md) and use the [agent workflow](./agent-workflow.md) to define the task and handoff; this architecture overview is not a backlog.
 
+This document describes the implemented Python/pytest architecture. The product target now includes a standalone, language-extensible test harness; the following target section is planned and does not imply new backends or CLI flags already exist.
+
+## Target multi-language testing architecture (planned)
+
+The authoritative contract and task queue live in the [SDD](./SDD.md#多语言通用测试器目标契约待实现). Keep the existing CodingAgent, ToolRegistry, Docker/Host executors, workspace locks, cancellation and evidence invalidation. A shared TestHarness dispatches a frozen test plan to a framework adapter and validates its normalized result; standalone CLI/API calls need no model. Agent run_tests must call the same path.
+
+```mermaid
+flowchart LR
+    C[Standalone CLI / API] --> H[Shared TestHarness - planned]
+    A[Existing CodingAgent / run_tests] --> H
+    H --> P[Frozen request / plan / environment]
+    P --> B[pytest / Vitest / Go / Maven / Gradle adapters]
+    B --> X[Existing isolated execution and artifact collection]
+    X --> E[Validated normalized test evidence]
+    E --> G[Shared positive-test / plan / image / fingerprint gate]
+```
+
+Adapters own selector validation, command planning and report interpretation, not sandbox policy or Agent completion state. Pytest remains the compatibility backend; Vitest and Java consume bounded fresh XML files, while Go consumes its native structured event stream. A native event protocol is not required to pass through a lossy XML conversion. Shared results retain actual testcase counts, process outcome, build/test/environment error categories, artifact identities and the exact selected job scope.
+
+Read-only discovery never executes project configuration. Toolchains and dependencies come from explicit, identified preparation; test execution stays offline and cannot silently fall back to a host, download tools, or run another backend. Existing staging excludes node_modules and private state; planned dependency materialization must not remove those protections. Monorepo jobs are explicit, bounded and independently reported. Every required job must have actual nonempty passing tests; build success, stale XML, cached/skipped runs or one green subproject do not establish the whole plan.
+
+Before integration, existing pytest/JUnit and junit-workspace-v2 behavior stays unchanged. The migration must bind future evidence to the frozen backend/adapter/schema, selection, environment and workspace, retain readable history, and require retesting when bindings are absent. Test execution, regression validation, test generation, Repair and model evaluation have separate capabilities. Python AST/test-generation assumptions are not automatically reusable for another language. This is a thin extension to the current harness, not another Runtime or a universal plugin execution service.
+
 ## General Coding Runtime
 
 `cli code` resolves a provider (DeepSeek, OpenRouter, or a custom OpenAI-compatible endpoint), creates a `SessionStore` under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/sessions/`, selects a command executor, and starts `CodingAgent`. For new tasks, `CodingWorkspaceManager` creates a persistent `selfforge/SESSION_ID` branch and Git worktree from committed HEAD. A resume validates repository ownership and branch before reopening the same worktree. Metadata is mode 0600 under `${XDG_DATA_HOME:-~/.local/share}/selfforge-agent/worktrees/`; listing validates each record independently and warns with the metadata path when it skips a malformed or mismatched entry. The worktree stays there for review and commit. Cleanup uses plain `git worktree remove`, so modified or untracked files block removal, and the branch remains. Explicit `--workspace direct` uses the source checkout instead. Uncommitted source-checkout changes are not copied into a new worktree. CLI sessions formerly stored in a target repository's `.selfforge/` remain discoverable by ID when direct mode is selected.

@@ -54,6 +54,14 @@ Verification entry points: `tests/test_providers.py`, `tests/test_coding_jobs_du
 
 - CLI Coding and managed delivery/removal must share the Web advisory workspace lock within the same user/XDG home, independent of record/worktree storage roots. Stop old workers before the lock-namespace upgrade. External editors/Git and different XDG homes are not coordinated.
 
+## Multi-language extension boundary (planned)
+
+The [SDD target contract](./SDD.md#多语言通用测试器目标契约待实现) extends product scope; the current implementation and historical evidence remain Python/pytest. Framework adapters must reuse the existing execution, cancellation, locking, fingerprint and write-ahead invalidation boundaries. Do not create a second Agent Runtime or accept arbitrary command exit codes as test evidence.
+
+The target success gate accepts validated JUnit or a versioned native structured protocol and requires normal process completion, exit code 0, at least one actual passing testcase, no failures/errors, all required jobs, and matching source/plan/environment identities. Missing, partial, malformed, stale, empty or all-skipped results cannot pass. Build/package/benchmark success is not testcase evidence. New protocol parsers must have finite input/event/diagnostic limits and retain non-following artifact reads. Preserve the explicit trusted-Host gate; non-Python Host support is not implied by a Docker adapter.
+
+Detection is read-only; repository configuration is executable only inside the explicitly selected execution environment. Dependencies/toolchains are prepared explicitly and bound to immutable identities, without test-time network/installation fallback or removal of staging protection. Verification-owned profiles and hidden test plans are frozen outside Agent control. Old evidence is readable but must not be relabelled as new cross-language evidence when backend/plan/schema bindings are missing. A new runner does not imply generation, Repair or benchmark qualification for that language. These target rules do not claim stronger resistance to malicious report-producing test code or trusted Host code than the current evidence contract.
+
 ## JUnit, diagnostics and workspace evidence
 
 Verification entry points: [Test evidence](./test-evidence.md), [workspace evidence](./workspace-evidence.md), [diagnostics](./test-diagnostics.md); `tests/test_coding_evidence.py`, `tests/test_workspace_evidence.py`, `tests/test_workspace_fingerprint.py`.

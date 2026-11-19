@@ -2,7 +2,7 @@
 
 当前开发从 [统一 SDD](./SDD.md) 开始；本指南作为技术参考，不维护第二套任务队列。
 
-本指南回答新贡献者或 coding agent 的四个问题：先读什么、改哪里、怎样验收、如何交接。产品目标是面向 Python Git 仓库的 Coding Agent 与测试框架；CLI/Web 共用 Runtime，PR Review/差异测试/Repair 是专项流程。
+本指南回答新贡献者或 coding agent 的四个问题：先读什么、改哪里、怎样验收、如何交接。产品目标是面向多语言 Git 仓库的 Coding Agent 与可独立运行的通用测试器；当前实现仍为 Python/pytest，后端实施状态见 SDD。selfForge 自身用 Python 开发，不要求被测项目也用 Python。CLI/Web 共用 Runtime 与验证层，PR Review/差异测试/Repair 是专项流程。
 
 ## Reading order
 

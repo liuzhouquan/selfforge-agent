@@ -1,6 +1,6 @@
 # Working on selfForge Agent
 
-selfForge Agent is a Python Coding Agent with a testing harness. General Coding is the primary workflow; PR Review, differential tests and Repair are specialized workflows. The repository/package name is `selfforge-agent` / `selfforge_agent`; the existing checkout directory may still be named `verified-pr-agent`. Do not switch to a sibling project because of IDE tabs.
+selfForge Agent combines a Coding Agent with a language-extensible testing harness. The product target is standalone multi-language testing plus test-backed Coding; the current executable verification path remains Python/pytest until the SDD adapter tasks are delivered. The service itself remains implemented in Python. PR Review, differential tests and Repair are specialized workflows. The repository/package name is `selfforge-agent` / `selfforge_agent`; the existing checkout directory may still be named `verified-pr-agent`. Do not switch to a sibling project because of IDE tabs.
 
 Current non-goals: product Multi-Agent orchestration, a general MCP platform, extra RAG, a large frontend or another Runtime, unless the user explicitly changes the scope.
 
@@ -19,7 +19,7 @@ Current non-goals: product Multi-Agent orchestration, a general MCP platform, ex
 - Each simultaneous developer/agent needs an owned branch and checkout/worktree. Do not switch a shared checkout, overwrite another agent's changes, or stage unknown files. Parallel agent work still depends on the current user's/tool's authorization; this document does not automatically request it.
 - For a bug, establish a concrete failing case before the fix. Test the public boundary and meaningful error paths, not just a private helper. Never delete tests, weaken assertions, or adapt production code to a test double merely to get green checks.
 - Preserve protected paths, default Docker isolation, explicit Host trust, bounded execution, cancellation and write-ahead evidence invalidation. A passing test boolean is not proof about a later workspace or commit. Read the owning invariants before changing these paths.
-- Keep native tool messages and all their tool replies together; preserve user constraints on compaction. Keep one general `CodingAgent`, shared tools and JUnit runners. Repair's separate proposer loop is a documented boundary.
+- Keep native tool messages and all their tool replies together; preserve user constraints on compaction. Keep one general `CodingAgent`, shared tools, execution and evidence gates; language adapters must reuse them. Current verification uses pytest/JUnit, and future adapters require equivalent structured, nonempty, workspace-bound evidence. Repair's separate proposer loop is a documented boundary.
 - Do not call heuristic token estimates exact, stack matches causal proof, synthetic fixtures real-repository benchmarks, or configured-rate estimates actual billing. Describe implemented, partial and unverified behavior separately.
 - Keep keys, `.env`, provider settings, private sessions/traces, generated logs/reports and external course source out of commits and public PRs. Publish sanitized evidence only.
 
