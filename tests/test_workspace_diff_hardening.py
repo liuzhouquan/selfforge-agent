@@ -82,7 +82,7 @@ class TestWorkspaceDiffHardening:
         assert len(diff["files"]) > 0
         total_patch_bytes = sum(len(f["patch"].encode("utf-8")) for f in diff["files"])
         assert total_patch_bytes <= MAX_TOTAL_DIFF_BYTES + 1024
-        exhausted = [f for f in diff["files"] if "Total patch budget exhausted" in f["patch"]]
+        exhausted = [f for f in diff["files"] if "total diff budget reached" in f["patch"]]
         assert len(exhausted) > 0
 
     def test_tracked_binary_diff_is_sanitized(self, test_repo: Path) -> None:
@@ -209,3 +209,104 @@ class TestWorkspaceLifecycleAndPruneHardening:
         p1 = manager._paths(test_repo, "norm1")
         p2 = manager._paths(repo_with_slash, "norm1")
         assert p1 == p2
+
+
+def test_diff_uses_literal_tracked_paths_without_selecting_protected_files(test_repo):
+    (test_repo / ':!safe.txt').write_text('old')
+    (test_repo / '.env').write_text('old')
+    git(test_repo, '--literal-pathspecs', 'add', '--', ':!safe.txt', '.env')
+    git(test_repo, 'commit', '-m', 'Literal path fixture')
+    manager = CodingWorkspaceManager(test_repo.parent / 'worktrees')
+    ws = manager.create(test_repo, 'literalpaths')
+    (ws.path / ':!safe.txt').write_text('new literal content')
+    (ws.path / '.env').write_text('PRIVATE_FIXTURE')
+    report = workspace_diff(ws)
+    assert 'PRIVATE_FIXTURE' not in str(report)
+    patch = next(f['patch'] for f in report['files'] if f['path'] == ':!safe.txt')
+    assert 'new literal content' in patch
+
+
+def test_workspace_lock_does_not_follow_a_replaced_path(test_repo, tmp_path, monkeypatch):
+    import selfforge_agent.runtime.workspace as module
+
+    locks = tmp_path / 'locks'
+    path = workspace_lock_path(test_repo, root=locks)
+    outside = tmp_path / 'outside'
+    outside.write_text('unchanged')
+    outside.chmod(0o644)
+    original_open = os.open
+    swapped = False
+
+    def swap(target, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and (str(target) == str(path) or (str(target) == path.name and 'dir_fd' in kwargs)):
+            swapped = True
+            path.symlink_to(outside)
+        return original_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, 'open', swap)
+    try:
+        fd = try_workspace_lock(test_repo, root=locks)
+    except (OSError, WorkspaceError):
+        pass
+    else:
+        assert fd is not None
+        unlock_workspace(fd)
+    assert swapped
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o644
+    assert outside.read_text() == 'unchanged'
+
+
+def test_diff_rejects_a_file_replaced_by_fifo(test_repo, monkeypatch):
+    import threading
+    import time
+
+    manager = CodingWorkspaceManager(test_repo.parent / 'worktrees')
+    ws = manager.create(test_repo, 'fiforace')
+    target = ws.path / 'race.txt'
+    target.write_text('original')
+    original_open = os.open
+    swapped = False
+    workers = []
+
+    def produce():
+        time.sleep(0.05)
+        try:
+            fd = original_open(target, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            return
+        try:
+            os.write(fd, b'FIFO_UNTRUSTED')
+        finally:
+            os.close(fd)
+
+    def swap(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and (str(path) == str(target) or (str(path) == target.name and 'dir_fd' in kwargs)):
+            swapped = True
+            target.unlink()
+            os.mkfifo(target)
+            worker = threading.Thread(target=produce, daemon=True)
+            workers.append(worker)
+            worker.start()
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'open', swap)
+    report = workspace_diff(ws)
+    for worker in workers:
+        worker.join(timeout=1)
+    assert swapped
+    assert 'FIFO_UNTRUSTED' not in str(report)
+
+
+def test_diff_total_budget_includes_truncation_markers(test_repo, monkeypatch):
+    import selfforge_agent.runtime.workspace_diff as module
+
+    manager = CodingWorkspaceManager(test_repo.parent / 'worktrees')
+    ws = manager.create(test_repo, 'totalbudget')
+    for index in range(3):
+        (ws.path / f'file{index}.txt').write_text('x' * 200)
+    monkeypatch.setattr(module, 'MAX_TOTAL_DIFF_BYTES', 100)
+    report = module.workspace_diff(ws)
+    assert sum(len(f['patch'].encode()) for f in report['files']) <= 100
+    assert any(f['truncated'] for f in report['files'])
