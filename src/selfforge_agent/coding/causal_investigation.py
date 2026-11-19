@@ -6,25 +6,39 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from selfforge_agent.coding.models import RiskTarget
 from selfforge_agent.models import TestResult
 
-_TRACEBACK_FRAME = re.compile(r'File\s+"([^"\n\r]+)",\s+line\s+(\d{1,8})(?!\d)')
-_PYTEST_LOCATION = re.compile(r'([^\s:\n\r]+\.py):(\d{1,8}):')
+_TRACEBACK_FRAME = re.compile(r'File\s+["\']([^"\'\n\r]+)["\'],\s+line\s+(\d{1,8})(?!\d)')
+_PYTEST_LOCATION = re.compile(r'["\']?([^\s:\n\r\'"]+\.py)["\']?:(\d{1,8})(?::|\s+in\s+)')
 
 MAX_INVESTIGATION_TEXT_BYTES = 64 * 1024
 MAX_COMBINED_TEXT_BYTES = 128 * 1024
 MAX_LINE_NUMBER = 1_000_000
 MAX_OBSERVED_FRAMES = 100
 MAX_LOCATION_DISPLAY = 5
+MAX_LOCATION_PATH_CHARS = 256
 MAX_EXPLANATION_CHARS = 2048
 
 GENERIC_STEMS = {
     "test", "tests", "conftest", "utils", "util", "helpers",
     "helper", "common", "base", "core", "app", "main",
+    "init", "__init__", "config", "settings", "types", "models",
+    "constants", "errors", "exceptions", "compat", "version",
+    "schema", "views", "urls", "setup", "cli", "runner",
 }
+
+_EXTERNAL_PATH_INDICATORS = (
+    "/site-packages/",
+    "/dist-packages/",
+    "/.venv/",
+    "/venv/",
+    "/usr/lib/",
+    "/usr/local/lib/",
+    "/lib/python",
+)
 
 
 def _truncate_text(text: str | None, max_bytes: int = MAX_INVESTIGATION_TEXT_BYTES) -> str:
@@ -52,6 +66,24 @@ class CausalInvestigation(BaseModel):
     observed_locations: list[str] = Field(default_factory=list)
     explanation: str
 
+    @field_validator("causally_linked")
+    @classmethod
+    def _enforce_not_causally_linked(cls, value: bool) -> bool:
+        if value is True:
+            raise ValueError(
+                "Traceback associations cannot establish causality; causally_linked must be False"
+            )
+        return False
+
+    @field_validator("explanation")
+    @classmethod
+    def _validate_explanation(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("explanation must be a non-empty string")
+        if len(value) > MAX_EXPLANATION_CHARS:
+            return value[:MAX_EXPLANATION_CHARS]
+        return value
+
 
 def _normalize_path(path_str: str) -> str:
     if not isinstance(path_str, str):
@@ -73,8 +105,17 @@ def _normalize_path(path_str: str) -> str:
     return "/".join(parts)
 
 
+def _is_external_frame(norm_path: str) -> bool:
+    if norm_path.startswith("<") and norm_path.endswith(">"):
+        return True
+    path_with_slashes = f"/{norm_path.strip('/')}/"
+    return any(indicator in path_with_slashes for indicator in _EXTERNAL_PATH_INDICATORS)
+
+
 def _sanitize_location_str(file_path: str, line_number: int) -> str:
-    cleaned = "".join(char for char in file_path if char.isprintable()).strip()
+    cleaned = "".join(char for char in file_path if char.isprintable() and char not in "\n\r\t").strip()
+    if len(cleaned) > MAX_LOCATION_PATH_CHARS:
+        cleaned = cleaned[:MAX_LOCATION_PATH_CHARS - 3] + "..."
     return f"{cleaned}:{line_number}"
 
 
@@ -130,6 +171,8 @@ def _collect_test_text(test_result: TestResult | None) -> str:
 
 def _matches_target(frame_path: str, target_name: str) -> bool:
     norm_frame = _normalize_path(frame_path)
+    if _is_external_frame(norm_frame) and not _is_external_frame(target_name):
+        return False
     return norm_frame == target_name or norm_frame.endswith("/" + target_name)
 
 
@@ -147,6 +190,8 @@ def investigate_causality(
         raise TypeError("base_test must be a TestResult instance or None")
     if not isinstance(test_code, str):
         raise TypeError("test_code must be a string")
+    if "\0" in test_code:
+        raise ValueError("test_code must not contain null bytes")
 
     if target is None:
         return CausalInvestigation(
@@ -158,6 +203,8 @@ def investigate_causality(
 
     if not isinstance(target.file_path, str) or "\0" in target.file_path:
         raise ValueError("Invalid target file path: must be a string without null bytes")
+    if not target.file_path.strip():
+        raise ValueError("Invalid target file path: must not be empty or whitespace")
 
     if type(target.line_number) is not int or not 1 <= target.line_number <= MAX_LINE_NUMBER:
         return CausalInvestigation(
@@ -181,9 +228,13 @@ def investigate_causality(
     target_name = _normalize_path(target.file_path)
     target_stem = Path(target.file_path).stem
 
-    observed: list[str] = [
-        _sanitize_location_str(f, l) for f, l in frames[:MAX_OBSERVED_FRAMES]
-    ]
+    seen_locs: set[str] = set()
+    observed: list[str] = []
+    for f, l in frames[:MAX_OBSERVED_FRAMES]:
+        loc_str = _sanitize_location_str(f, l)
+        if loc_str not in seen_locs:
+            seen_locs.add(loc_str)
+            observed.append(loc_str)
 
     direct_line_match = False
     module_match = False
@@ -235,6 +286,26 @@ def investigate_causality(
         )
 
     if module_match:
+        # Secondary hardening (SF-CAUSAL-02): check if base_test already failed in the same module
+        if base_test is not None and base_test.status == "failed" and base_test.failed > 0:
+            base_text = _collect_test_text(base_test)
+            base_frames = _extract_frames(base_text)
+            for base_file, base_line in base_frames:
+                if _matches_target(base_file, target_name):
+                    return CausalInvestigation(
+                        target=target,
+                        causally_linked=False,
+                        trace_associated=True,
+                        confidence="none",
+                        matched_file=True,
+                        matched_line=False,
+                        observed_locations=observed[:MAX_LOCATION_DISPLAY],
+                        explanation=(
+                            f"Head test failure stack trace passes through target module {target.file_path} at line {best_line}, "
+                            "but this module failure was already present in base test; cannot establish causal link to head changes"
+                        ),
+                    )
+
         return CausalInvestigation(
             target=target,
             causally_linked=False,
