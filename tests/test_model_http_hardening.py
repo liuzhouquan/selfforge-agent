@@ -285,3 +285,14 @@ class TestStreamingBudgetAndMethodValidation:
 
         res = request_json("https://api.example.com/v1", "key")
         assert res == {"fallback": True}
+
+
+def test_huge_backoff_is_controlled_before_network(monkeypatch):
+    from selfforge_agent.integrations import model_http
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid backoff reached network")
+
+    monkeypatch.setattr(model_http, "urlopen", unexpected)
+    with pytest.raises(ValueError, match="backoff_factor"):
+        model_http.request_json("http://localhost/v1", "", backoff_factor=10**400)
