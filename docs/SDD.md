@@ -157,6 +157,7 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
+| 50 | [SF-CTX-02](#sf-ctx-02) | In Review | Codex（本轮开发） | SF-CTX-01（Merged） | [PR #121](https://github.com/liuzhouquan/selfforge-agent/pull/121)：模型上下文管理器二级深度安全加固：估算边界防护、交互切片严格单射配对、压缩锚点序保护与度量报告Schema形式化 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2137,6 +2138,44 @@ Owner / 状态：Codex（审查整合） / Merged
 PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44079340729（最终组合；各源PR见审查记录） / 010897851b27dc920e1892cf5c35568bfee3682d
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；最终main CI准确结论回填六个PR交付描述
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
+```
+
+### SF-CTX-02
+
+**目标：** 模型上下文管理器二级深度安全加固：估算边界防护、交互切片严格单射配对、压缩锚点序保护与度量报告Schema形式化。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/context.py` 与专项复现安全测试 `tests/test_context_hardening.py`；保持对 `CodingAgent`、既有会话压缩及测试套件调用契约的完全向后兼容。
+
+**行为：**
+1. `estimate_tokens` 拦截空字节并设定 `MAX_ESTIMATE_CHARS = 4 MiB` 上限，防止超大文本引发内存耗尽或灾难性回溯；
+2. `estimate_message_tokens` 强化 `role` 类型与空字节校验，引入深度递归上限 `MAX_RECURSION_DEPTH = 5` 防止嵌套结构栈溢出，校验 `reasoning_content`、`tool_calls` 与 `tool_call_id` 边界；
+3. `_recent_interactions` 设定 `limit` 边界防御，对 assistant 中的 `tool_calls` 执行重复 ID 检查，对 `tool` 响应执行单射配对（严格拒绝孤儿响应与重复响应）；
+4. `ContextManager.compact` 强化锚点排布不变式：基准系统提示全部置于最前，历史压缩摘要紧随基准系统提示之后、用户任务之前，所有用户指令按原绝对顺序保留在摘要之后；
+5. 扩展工具调用摘要识别（覆盖 `edit_file`、`write_file`、`read_file`、`search_code`、`run_command`、`run_tests` 等），并自动脱敏工具输出中的 ANSI 转义序列及控制字符；
+6. 形式化 Pydantic 模型 `ContextMetrics` 与 `CompactionReport`，扩展 `get_metrics` 与 `compact_with_report` 接口，并在构造函数中严格执行 `MAX_CONTEXT_BUDGET = 2_000_000` 上限门禁。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-CTX-02-A1 | Token 估算拦截空字节、超大文本上限生效，消息角色严格校验且深度嵌套列表安全解析防栈溢出 | `tests/test_context_hardening.py::TestTokenEstimationHardening` 相关用例 | E1 |
+| SF-CTX-02-A2 | 交互切片提取严格防御重复 tool_call_id、孤儿响应与重复响应，保持 assistant 与 tool 单射配对 | `tests/test_context_hardening.py::TestRecentInteractionsHardening` 相关用例 | E2 |
+| SF-CTX-02-A3 | 压缩管线严格遵循系统提示 -> 历史摘要 -> 用户任务顺序，扩展工具摘要识别并脱敏 ANSI 控制字符 | `tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization` 相关用例 | E3 |
+| SF-CTX-02-A4 | ContextMetrics 与 CompactionReport 模型 Schema 校验生效，get_metrics 与 compact_with_report 正常输出，预算上限受控拦截 | `tests/test_context_hardening.py::TestCompactionReportAndContextMetrics` 相关用例 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-CTX-02-A1 | `tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_tokens_rejects_null_byte`、`tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_tokens_rejects_oversized_text`、`tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_message_tokens_rejects_invalid_role_or_null_bytes`、`tests/test_context_hardening.py::TestTokenEstimationHardening::test_estimate_message_tokens_handles_deep_nesting_without_overflow` | `PYTHONPATH=src pytest tests/test_context_hardening.py -k TestTokenEstimationHardening`；GitHub Actions CI `Unit tests` | `12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1`；passed；CI [R1 44478800444](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444) |
+| E2 | SF-CTX-02-A2 | `tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_duplicate_tool_call_ids_in_assistant`、`tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_duplicate_tool_responses`、`tests/test_context_hardening.py::TestRecentInteractionsHardening::test_recent_interactions_rejects_orphan_tool_response` | `PYTHONPATH=src pytest tests/test_context_hardening.py -k TestRecentInteractionsHardening`；GitHub Actions CI `Unit tests` | `12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1`；passed；CI [R1 44478800444](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444) |
+| E3 | SF-CTX-02-A3 | `tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_places_summary_between_system_and_user_prompts`、`tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_sanitizes_ansi_escape_codes_in_tool_output`、`tests/test_context_hardening.py::TestCompactionOrderingAndToolSanitization::test_compaction_summarizes_write_file_and_run_command` | `PYTHONPATH=src pytest tests/test_context_hardening.py -k TestCompactionOrderingAndToolSanitization`；GitHub Actions CI `Unit tests` | `12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1`；passed；CI [R1 44478800444](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444) |
+| E4 | SF-CTX-02-A4 | `tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_context_manager_rejects_excessive_token_budget`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_context_metrics_model_validation`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_compaction_report_model_validation`、`tests/test_context_hardening.py::TestCompactionReportAndContextMetrics::test_get_metrics_and_compact_with_report` | `PYTHONPATH=src pytest tests/test_context_hardening.py -k TestCompactionReportAndContextMetrics`；GitHub Actions CI `Unit tests` | `12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1`；passed；CI [R1 44478800444](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444) |
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-ctx-02 (worktree: selfforge-sf-ctx-02) / 已验证源码 12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1；本次状态提交仅文档
+已完成验收与证据 ID：SF-CTX-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地及CI全量测试通过；等待合并
+PR / 准确 head CI / merge SHA（有则填）：PR #121 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44478800444（head commit 12e6ad63d3c73bbad19194ec7b8bc277c07e2cf1） / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #121 审查合并。
 ```
 
 ## 5. 验收追踪与执行记录格式
