@@ -23,7 +23,9 @@ def _is_safe_relative_path(path: str) -> bool:
         return False
     if path.startswith("/"):
         return False
-    norm = posixpath.normpath(path.strip())
+    if ".." in path.split("/"):
+        return False
+    norm = posixpath.normpath(path)
     return not (norm in (".", "..") or norm.startswith("../") or "/../" in f"/{norm}/")
 
 
@@ -65,7 +67,7 @@ class BaselineReviewer:
             path = getattr(changed, "path", None)
             if not isinstance(path, str) or not _is_safe_relative_path(path):
                 continue
-            safe_path = posixpath.normpath(path.strip())
+            safe_path = path
 
             hunks = getattr(changed, "hunks", [])
             if not isinstance(hunks, list):
