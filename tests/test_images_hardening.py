@@ -346,3 +346,25 @@ class TestDependencyImageResultModelAndIntrospection:
             assert verified.image_id == fake_built_id
             assert verified.base_image_id == fake_base_id
             assert wheel_path.name in verified.wheels
+
+
+@pytest.mark.parametrize('algorithm', ['Sha256', 'sHA256', 'shA256'])
+def test_mixed_case_hash_reaches_profile_and_builder_in_canonical_form(tmp_path, algorithm):
+    import hashlib
+    import time
+
+    from selfforge_agent.runtime.environment import load_requirement_profile
+    from selfforge_agent.runtime.images import _inputs
+
+    wheels = tmp_path / 'wheels'
+    wheels.mkdir()
+    wheel = b'fixture wheel bytes'
+    (wheels / 'fixture-1.0-py3-none-any.whl').write_bytes(wheel)
+    digest = hashlib.sha256(wheel).hexdigest()
+    requirements = tmp_path / 'requirements.txt'
+    requirements.write_text(f'fixture==1.0 --hash={algorithm}:{digest}\n')
+    text, _, converted = load_requirement_profile(requirements_file=requirements)
+    assert converted
+    assert f'--hash=sha256:{digest}' in text
+    lock, _ = _inputs(requirements, wheels, time.monotonic() + 10)
+    assert f'--hash=sha256:{digest}'.encode() in lock
