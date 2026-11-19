@@ -41,7 +41,9 @@ def _is_safe_relative_path(path: str) -> bool:
         return False
     if path.startswith("/"):
         return False
-    norm = posixpath.normpath(path.strip())
+    if ".." in path.split("/"):
+        return False
+    norm = posixpath.normpath(path)
     return not (norm in (".", "..") or norm.startswith("../") or "/../" in f"/{norm}/")
 
 
@@ -61,7 +63,7 @@ def _clean_description(text: str) -> str:
 
 def _extract_json_content(content: str) -> str:
     text = content.strip()
-    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+    fence_match = re.fullmatch(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if fence_match:
         text = fence_match.group(1).strip()
     if not text.startswith(("{", "[")):
@@ -121,9 +123,8 @@ class ProviderReviewer:
         if (
             not isinstance(timeout, (int, float))
             or isinstance(timeout, bool)
+            or not 0 < timeout <= MAX_HTTP_TIMEOUT
             or not math.isfinite(timeout)
-            or timeout <= 0
-            or timeout > MAX_HTTP_TIMEOUT
         ):
             raise DeepSeekReviewError(f"Timeout must be a finite positive number not exceeding {int(MAX_HTTP_TIMEOUT)}")
 
@@ -154,7 +155,7 @@ class ProviderReviewer:
             path = getattr(file, "path", None)
             if not isinstance(path, str) or not _is_safe_relative_path(path):
                 continue
-            safe_path = posixpath.normpath(path.strip())
+            safe_path = path
 
             hunks = getattr(file, "hunks", [])
             if not isinstance(hunks, list):

@@ -550,3 +550,49 @@ class TestReviewServiceHardening:
         # timeout upper bound (> 3600)
         with pytest.raises(ValueError, match="timeout"):
             service.review(repo_dir, "0" * 40, "1" * 40, timeout=7200)
+
+
+def _literal_review_context(path):
+    return _make_context([ChangedFile(path=path, status="M", hunks=[DiffHunk(
+        header="@@ -1 +1 @@", old_start=1, new_start=1,
+        lines=[DiffLine(kind=ChangeKind.added, content="eval(user_input)", new_line=1)],
+    )])])
+
+
+@pytest.mark.parametrize("engine", ["baseline", "provider"])
+@pytest.mark.parametrize("path", [" file.py ", "bad/../file.py"])
+def test_review_binds_literal_paths_without_normalizing_traversal(monkeypatch, engine, path):
+    import json
+
+    context = _literal_review_context(path)
+    if engine == "baseline":
+        reviewer = BaselineReviewer()
+    else:
+        cfg = ProviderConfig(name="fixture", label="Fixture", key="fixture", model="fixture", base_url="http://localhost/v1", status_url="")
+        reviewer = ProviderReviewer(cfg)
+        response = {"choices": [{"message": {"content": json.dumps({"findings": [{
+            "file_path": path, "line_number": 1, "severity": "high", "category": "dynamic-code", "description": "Fixture risk",
+        }]})}}]}
+        monkeypatch.setattr("selfforge_agent.review.deepseek.request_json", lambda *a, **kw: response)
+    findings = reviewer.review(context)
+    if ".." in path:
+        assert findings == []
+    else:
+        assert len(findings) == 1
+        assert findings[0].file_path == path
+
+
+def test_review_preserves_json_with_markdown_inside_description(monkeypatch):
+    import json
+
+    cfg = ProviderConfig(name="fixture", label="Fixture", key="fixture", model="fixture", base_url="http://localhost/v1", status_url="")
+    content = json.dumps({"findings": [{"file_path": "file.py", "line_number": 1,
+        "severity": "high", "category": "dynamic-code", "description": "Example ```python\nprint(1)\n```"}]})
+    monkeypatch.setattr("selfforge_agent.review.deepseek.request_json", lambda *a, **kw: {"choices": [{"message": {"content": content}}]})
+    assert len(ProviderReviewer(cfg).review(_literal_review_context("file.py"))) == 1
+
+
+def test_reviewer_huge_timeout_is_controlled():
+    cfg = ProviderConfig(name="fixture", label="Fixture", key="fixture", model="fixture", base_url="http://localhost/v1", status_url="")
+    with pytest.raises(DeepSeekReviewError, match="Timeout"):
+        ProviderReviewer(cfg, timeout=10**400)
