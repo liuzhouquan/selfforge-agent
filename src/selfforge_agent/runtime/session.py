@@ -70,6 +70,7 @@ _SENSITIVE_FIELD_NAMES = frozenset({
     "access_token",
     "auth",
     "authorization",
+    "reasoning_content",
 })
 
 
@@ -126,31 +127,36 @@ def _atomic_write_file(target_path: Path, content: bytes) -> Path:
         raise ValueError(f"Cannot export to symlinked path: {target_path}")
 
     target_dir = target_path.parent
-    target_dir.mkdir(parents=True, exist_ok=True)
-    if any(p.is_symlink() for p in (target_dir, *target_dir.parents)):
-        raise ValueError(f"Cannot export to symlinked directory: {target_dir}")
-
-    tmp_path = target_dir / f".{target_path.name}.tmp.{uuid4().hex}"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(str(tmp_path), flags, 0o600)
+    directory_fd = _directory_fd(target_dir, create=True)
+    tmp_name = f".{target_path.name}.tmp.{uuid4().hex}"
     try:
-        view = memoryview(content)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise OSError("Atomic write made no progress")
-            view = view[written:]
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(tmp_name, flags, 0o600, dir_fd=directory_fd)
         try:
-            os.fdatasync(fd)
-        except (AttributeError, OSError):
+            view = memoryview(content)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("Atomic write made no progress")
+                view = view[written:]
             try:
-                os.fsync(fd)
-            except OSError:
-                pass
+                os.fdatasync(fd)
+            except (AttributeError, OSError):
+                try:
+                    os.fsync(fd)
+                except OSError:
+                    pass
+        finally:
+            os.close(fd)
+        os.replace(tmp_name, target_path.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
     finally:
-        os.close(fd)
+        try:
+            os.unlink(tmp_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(directory_fd)
 
-    os.replace(tmp_path, target_path)
     return target_path
 
 

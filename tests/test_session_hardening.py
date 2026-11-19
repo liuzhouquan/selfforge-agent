@@ -187,3 +187,30 @@ class TestCorruptedSessionDegradationAndRecovery:
     def test_session_corrupt_error_type(self):
         from selfforge_agent.runtime.session import SessionCorruptError
         assert issubclass(SessionCorruptError, ValueError)
+
+
+def test_default_snapshot_redacts_private_reasoning_without_changing_session(tmp_path):
+    store = SessionStore(tmp_path, "privateexport")
+    store.record_message({"role": "assistant", "content": "Public answer", "reasoning_content": "PRIVATE_REASONING_FIXTURE"})
+    target = tmp_path / "snapshot.json"
+    store.export_snapshot(target)
+    assert "PRIVATE_REASONING_FIXTURE" not in target.read_text()
+    assert store.load()[0][0]["reasoning_content"] == "PRIVATE_REASONING_FIXTURE"
+
+
+def test_snapshot_replace_failure_cleans_private_temporary_file(tmp_path, monkeypatch):
+    import selfforge_agent.runtime.session as module
+
+    store = SessionStore(tmp_path, "failedexport")
+    store.record_message({"role": "user", "content": "Private session"})
+    target = tmp_path / "snapshot.json"
+    target.write_text("old snapshot")
+
+    def fail(*args, **kwargs):
+        raise OSError("injected rename failure")
+
+    monkeypatch.setattr(module.os, "replace", fail)
+    with pytest.raises(OSError, match="rename failure"):
+        store.export_snapshot(target)
+    assert target.read_text() == "old snapshot"
+    assert list(tmp_path.glob(".snapshot.json.tmp.*")) == []
