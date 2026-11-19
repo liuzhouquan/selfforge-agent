@@ -8,9 +8,10 @@ from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from selfforge_agent.models import TestResult
+from selfforge_agent.runtime.session import _directory_fd
 
 MAX_ARTIFACT_BYTES = 128 * 1024
 MAX_REPEAT_INDEX = 100_000
@@ -34,6 +35,8 @@ __all__ = [
 
 
 class FailureArtifact(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
     version: int = Field(default=1)
     case: str = Field(min_length=1, max_length=128)
     repeat: int = Field(ge=0, le=MAX_REPEAT_INDEX)
@@ -60,8 +63,7 @@ class FailureArtifact(BaseModel):
     def _validate_reason(cls, value: str) -> str:
         if "\0" in value:
             raise ValueError("null byte is not allowed in failure reason")
-        if _ANSI_ESCAPE_RE.search(value):
-            raise ValueError("ANSI escape sequences are not allowed in failure reason")
+        _validate_reason_text(value)
         clean = value.replace("\r", "").strip()
         if not clean:
             raise ValueError("failure reason cannot be empty or whitespace")
@@ -70,12 +72,7 @@ class FailureArtifact(BaseModel):
     @field_validator("visible", "holdout")
     @classmethod
     def _validate_summary(cls, value: dict | None) -> dict | None:
-        if value is None:
-            return None
-        excluded = {"command", "environment", "stdout", "stderr"}
-        allowed = set(TestResult.model_fields) - excluded
-        if not isinstance(value, dict) or not set(value) <= allowed:
-            raise ValueError("Invalid artifact test summary structure")
+        _validate_test_summary(value)
         return value
 
 
@@ -91,8 +88,9 @@ def _validate_reason_text(reason: str) -> str:
         raise TypeError("Invalid failure reason: must be string")
     if "\0" in reason:
         raise ValueError("null byte is not allowed in failure reason")
-    if _ANSI_ESCAPE_RE.search(reason):
-        raise ValueError("ANSI escape sequences are not allowed in failure reason")
+    if (_ANSI_ESCAPE_RE.search(reason)
+            or any((ord(c) < 32 and c not in "\n\r\t") or ord(c) == 127 for c in reason)):
+        raise ValueError("ANSI or control sequences are not allowed in failure reason")
     clean = reason.replace("\r", "").strip()
     if not clean or len(clean) > MAX_REASON_CHARS:
         raise ValueError("Invalid failure reason: empty, whitespace, or exceeds 4096 characters")
@@ -106,9 +104,9 @@ def prepare_artifacts(directory: Path | str, repositories: list[Path | str]) -> 
         raise ValueError("null bytes not allowed in directory path")
 
     directory_path = Path(directory).expanduser()
-    if directory_path.is_symlink():
+    if any(p.is_symlink() for p in (directory_path, *directory_path.parents)):
         raise ValueError("Failure artifacts directory must be a non-symlink")
-    parent = directory_path.resolve()
+    parent = directory_path.absolute()
 
     if not isinstance(repositories, list):
         raise TypeError("repositories must be a list of Path instances")
@@ -119,7 +117,7 @@ def prepare_artifacts(directory: Path | str, repositories: list[Path | str]) -> 
         if "\0" in str(repository):
             raise ValueError("null bytes not allowed in repository path")
         repo_path = Path(repository).expanduser()
-        if repo_path.is_symlink():
+        if any(p.is_symlink() for p in (repo_path, *repo_path.parents)):
             raise ValueError("repository path must not be a symlink")
         repo_resolved = repo_path.resolve()
         if parent == repo_resolved or parent.is_relative_to(repo_resolved):
@@ -127,9 +125,12 @@ def prepare_artifacts(directory: Path | str, repositories: list[Path | str]) -> 
         if repo_resolved.is_relative_to(parent):
             raise ValueError("Evaluated repositories must stay outside failure artifacts directory")
 
-    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory_fd = _directory_fd(parent, create=True)
     root = parent / uuid4().hex
-    root.mkdir(mode=0o700)
+    try:
+        os.mkdir(root.name, mode=0o700, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
     return root
 
 
@@ -178,7 +179,7 @@ def write_failure(root: Path, *, case: str, repeat: int, reason: str,
     if holdout is not None and not isinstance(holdout, TestResult):
         raise TypeError(f"holdout must be a TestResult instance or None, got {type(holdout).__name__}")
 
-    if root.is_symlink() or not root.is_dir():
+    if any(p.is_symlink() for p in (root, *root.parents)) or not root.is_dir():
         raise ValueError("Artifact root must be an existing non-symlink directory")
 
     filename = f"{case}-{repeat}.json"
@@ -222,7 +223,7 @@ def write_failure(root: Path, *, case: str, repeat: int, reason: str,
 
     _validate_payload(data, filename)
 
-    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory_fd = _directory_fd(root)
     temporary = f".{filename}.{uuid4().hex}.tmp"
     try:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -251,7 +252,7 @@ def read_failure(root: Path, filename: str) -> dict:
             or not _FILENAME_PATTERN.fullmatch(filename)
             or filename != Path(filename).name):
         raise ValueError("Invalid failure artifact filename or path traversal detected")
-    if root.is_symlink() or not root.is_dir():
+    if any(p.is_symlink() for p in (root, *root.parents)) or not root.is_dir():
         raise ValueError("Artifact root must be an existing non-symlink directory")
 
     path = root / filename
@@ -262,7 +263,7 @@ def read_failure(root: Path, filename: str) -> dict:
 
     directory_fd = fd = -1
     try:
-        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory_fd = _directory_fd(root)
         fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
@@ -299,23 +300,27 @@ def _validate_payload(data: object, filename: str) -> None:
             or filename != f"{data['case']}-{data['repeat']}.json"
             or not isinstance(data["reason"], str) or len(data["reason"]) > MAX_REASON_CHARS):
         raise ValueError("Invalid artifact format, identity, or version")
+    _validate_reason_text(data["reason"])
+    for key in ("visible", "holdout"):
+        _validate_test_summary(data[key])
+
+
+def _validate_test_summary(summary: dict | None) -> None:
+    if summary is None:
+        return
     excluded = {"command", "environment", "stdout", "stderr"}
     allowed = set(TestResult.model_fields) - excluded
-    for key in ("visible", "holdout"):
-        summary = data[key]
-        if summary is None:
-            continue
-        if not isinstance(summary, dict) or not set(summary) <= allowed:
-            raise ValueError("Invalid artifact test summary")
-        try:
-            result = TestResult.model_validate(
-                {**summary, "command": [], "environment": "artifact", "stdout": "", "stderr": ""},
-                strict=True,
-            )
-            if not 0 <= result.duration_seconds < float("inf"):
-                raise ValueError("Invalid artifact duration")
-        except ValueError as exc:
-            raise ValueError("Invalid artifact test summary") from exc
+    if not isinstance(summary, dict) or not set(summary) <= allowed:
+        raise ValueError("Invalid artifact test summary")
+    try:
+        result = TestResult.model_validate(
+            {**summary, "command": [], "environment": "artifact", "stdout": "", "stderr": ""},
+            strict=True,
+        )
+        if not 0 <= result.duration_seconds < float("inf"):
+            raise ValueError("Invalid artifact duration")
+    except ValueError as exc:
+        raise ValueError("Invalid artifact test summary") from exc
 
 
 def list_failures(root: Path | str) -> list[str]:
@@ -323,14 +328,14 @@ def list_failures(root: Path | str) -> list[str]:
     root_path = Path(root) if isinstance(root, str) else root
     if not isinstance(root_path, Path):
         raise TypeError("root must be a Path or str instance")
-    if root_path.is_symlink() or not root_path.is_dir():
+    if any(p.is_symlink() for p in (root_path, *root_path.parents)) or not root_path.is_dir():
         raise ValueError("Artifact root must be an existing non-symlink directory")
 
     items: list[tuple[str, int, str]] = []
     directory_fd = -1
     try:
-        directory_fd = os.open(root_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        with os.scandir(root_path) as scanner:
+        directory_fd = _directory_fd(root_path)
+        with os.scandir(directory_fd) as scanner:
             for entry in scanner:
                 name = entry.name
                 if not _FILENAME_PATTERN.fullmatch(name):
@@ -383,14 +388,14 @@ def summarize_failures(root: Path | str) -> FailureSummary:
 def cleanup_temporary_artifacts(root: Path | str) -> int:
     """Clean up orphaned temporary artifact files (.*.tmp) in root directory."""
     root_path = Path(root) if isinstance(root, str) else root
-    if root_path.is_symlink() or not root_path.is_dir():
+    if any(p.is_symlink() for p in (root_path, *root_path.parents)) or not root_path.is_dir():
         raise ValueError("Artifact root must be an existing non-symlink directory")
 
     removed_count = 0
     directory_fd = -1
     try:
-        directory_fd = os.open(root_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        for name in os.listdir(root_path):
+        directory_fd = _directory_fd(root_path)
+        for name in os.listdir(directory_fd):
             if name.startswith(".") and name.endswith(".tmp"):
                 try:
                     os.unlink(name, dir_fd=directory_fd)
