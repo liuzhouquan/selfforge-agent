@@ -157,7 +157,10 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
-| 50 | [SF-LOCK-01](#sf-lock-01) | In Review | Codex（本轮开发） | 无 | [PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110)：多格式依赖锁文件深度安全加固与规范化：非bytes输入受控拦截与5MiB尺寸防御、迭代式50层JSON深度限制防DoS、PEP 508平台条件标记全面拒绝、SHA-256大小写与前缀规范化及RequirementCollector共享抽取抽象 |
+| 50 | [SF-PRICE-02](#sf-price-02) | In Review | Codex（本轮开发） | SF-PRICE-01（Merged） | [PR #107](https://github.com/liuzhouquan/selfforge-agent/pull/107)：费率卡与成本估算深度加固：布尔费率严格拒绝、成本对象总额与细项线性不变式守卫、未校准成本严格扣留、总Token数反向矛盾Fail-Closed拒绝、深层JSON递归防御与有界并发缓存 |
+| 51 | [SF-DELIV-02](#sf-deliv-02) | In Review | Codex（本轮开发） | SF-DELIV-01（Merged） | [PR #108](https://github.com/liuzhouquan/selfforge-agent/pull/108)：工作区交付工作流二次安全加固：交付结果模型严格校验与路径穿越防御、base_sha十六进制格式校验与Git Ref规则守卫、Git配置注入防御与会话ID一致性校验、超大文件列表分批执行及PR结果有界防御 |
+| 52 | [SF-REV-02](#sf-rev-02) | In Review | Codex（本轮开发） | SF-REV-01（Merged） | [PR #109](https://github.com/liuzhouquan/selfforge-agent/pull/109)：代码审查流水线二次安全加固：路径穿越防御与布尔行号拦截、模型配置强校验与有界Prompt预算截断、Markdown代码块JSON容错与字段清洗转义、审查器契约守卫与全量异常Fail-Closed隔离 |
+| 53 | [SF-LOCK-01](#sf-lock-01) | In Review | Codex（本轮开发） | 无 | [PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110)：多格式依赖锁文件深度安全加固与规范化：非bytes输入受控拦截与5MiB尺寸防御、迭代式50层JSON深度限制防DoS、PEP 508平台条件标记全面拒绝、SHA-256大小写与前缀规范化及RequirementCollector共享抽取抽象 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2140,6 +2143,116 @@ PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/li
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
+### SF-PRICE-02
+
+**目标：** 在模型费率卡解析与货币成本估算模块（`src/selfforge_agent/runtime/pricing.py`）中深度加固输入防御与数据完整性校验，杜绝布尔费率隐式类型转换、成本总额与细项线性不一致、未校准成本盲目累加泄漏、总 Token 数反向矛盾与深层嵌套 JSON 递归风险。
+
+**范围/入口：** `src/selfforge_agent/runtime/pricing.py`、`tests/test_pricing_hardening.py`。加固 `ModelRates` 与 `MonetaryCost` 模型校验；加固 `estimate_monetary_cost` 参数防御、Token 反向矛盾与 JSON 递归解析；加固 `sum_monetary_costs` 未校准扣留、有界输入与线性不变式守卫；加固 `format_monetary_cost` 未校准与天文数值防御。
+
+**行为与防御：**
+1. `ModelRates` 拒绝布尔值费率（`prompt_per_million` / `completion_per_million` 传入 `True`/`False` 抛出 `TypeError`/`ValueError`/`ValidationError`）；`MonetaryCost` 校验总额与细项线性一致性（`abs(total_cost_usd - (prompt_cost_usd + completion_cost_usd)) <= 1e-4 * max(1.0, total_cost_usd)`），反向矛盾或不一致时拒绝并报错。
+2. `estimate_monetary_cost` 强化输入防御与反向矛盾校验：拦截纯空白、超长（>256字符）、包含ASCII控制字符的 provider 与 model；校验 `usage.total_tokens` 与 `prompt_tokens + completion_tokens` 逻辑一致性，若 `total_tokens < prompt_tokens + completion_tokens` 属于反向矛盾，Fail-Closed 拒绝并返回 `None`；反序列化 `SELFFORGE_PRICING_JSON` 时防御深层嵌套 JSON 递归（max depth <= 4），防止堆栈溢出或 DoS 攻击。
+3. `sum_monetary_costs` 严格扣留未校准成本：当输入列表中任一成本项 `calibrated is False` 时，不盲目累加不可信数字，严格扣留总额返回 `None`；非 Sequence 类型或输入项超过 100,000 项时受控拒绝；对累加结果校验 `total == prompt + completion` 线性不变式。
+4. `format_monetary_cost` 边界与未校准安全回退：当 `cost.calibrated is False` 时直接返回 `"uncalibrated"`；对天文数字金额（任意项 > 1e12）进行有界防御，安全回退返回 `"uncalibrated"`；全量单元测试与 Lint 静态检查全部通过。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-PRICE-02-A1 | ModelRates 必须拒绝布尔值费率，MonetaryCost 必须校验总额等于提示与补全成本之和（误差容限 1e-4），矛盾时拒绝抛出异常 | `tests/test_pricing_hardening.py` 布尔费率防御与成本线性一致性测试 | E1 |
+| SF-PRICE-02-A2 | estimate_monetary_cost 拒绝空白/超长/控制字符模型与提供商，当 total_tokens 小于提示与补全之和（反向矛盾）时拒绝返回 None，深层嵌套 JSON 递归时防御拒绝 | `tests/test_pricing_hardening.py` 模型与提供商防御、总Token矛盾测试与深层嵌套JSON防御测试 | E2 |
+| SF-PRICE-02-A3 | sum_monetary_costs 在任一输入成本未校准（calibrated=False）时严格扣留总额返回 None，拒绝非序列输入与超过 100,000 项的超长输入，校验合计结果线性不变式 | `tests/test_pricing_hardening.py` 未校准扣留测试、非序列与超大列表防御测试 | E3 |
+| SF-PRICE-02-A4 | format_monetary_cost 针对未校准成本与大于 1e12 的天文数值安全返回 "uncalibrated"；本地静态检查、契约检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_pricing_hardening.py` 格式化边界测试、本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-PRICE-02-A1 | `tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_model_rates_rejects_boolean_rates`、`tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_monetary_cost_rejects_inconsistent_total` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
+| E2 | SF-PRICE-02-A2 | `tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_empty_or_whitespace_model_or_provider`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_inconsistent_total_tokens`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_deeply_nested_pricing_json`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_control_characters_in_model` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
+| E3 | SF-PRICE-02-A3 | `tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_sum_monetary_costs_rejects_uncalibrated_costs`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_non_sequence_or_empty`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_excessive_item_count` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
+| E4 | SF-PRICE-02-A4 | `tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_returns_uncalibrated_for_uncalibrated_cost`、`tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_rejects_excessive_cost_values`、`tests/test_pricing.py::test_format_monetary_cost`、`tests/test_pricing_security.py::test_format_monetary_cost_handles_invalid_cost` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1352 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+
+分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-price-02`；Worktree=`selfforge-sf-price-02`；PR=[#107](https://github.com/liuzhouquan/selfforge-agent/pull/107)。源码提交 `8b680ac6a3248baed6fed62d027a3801c7aaf7be` 已通过本地回归与 CI `Run #44131513062` 全套验证。
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-price-02 (worktree: selfforge-sf-price-02) / 8b680ac6a3248baed6fed62d027a3801c7aaf7be
+已完成验收与证据 ID：SF-PRICE-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1352 passed、无跳过；CI Run #44131513062 全绿；文档提交准备就绪
+PR / 准确 head CI / merge SHA（有则填）：PR #107 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062 / 待合入
+```
+
+### SF-DELIV-02
+
+**目标：** 在工作区交付工作流模块（`src/selfforge_agent/runtime/delivery.py`）中深度加固输入防御、Git Ref 规则守卫与数据完整性校验，杜绝非法交付结果模型绕过校验、`workspace.base_sha` 选项注入与畸形分支名、Git 仓库配置 CRLF/空字节注入、跨会话状态污染、超大变更加载引发 `ARG_MAX` 命令行溢出及临时 PR 正文权限泄露。
+
+**范围/入口：** `src/selfforge_agent/runtime/delivery.py`、`tests/test_delivery_hardening.py`。加固 `CommitResult`、`PRResult`、`RevertResult` 模型校验；加固 `_validate_workspace` 基础 SHA 与分支 Ref 命名守卫；加固 `commit_workspace` 仓库 Git 配置注入过滤与大文件分批暂存；加固 `revert_workspace` 与 `create_pull_request` 会话 ID 一致性校验及临时正文文件权限保护。
+
+**行为与防御：**
+1. `CommitResult`、`PRResult`、`RevertResult` 强类型与字段契约加固：`commit_sha` 强制要求 40 位 16 进制规范小写（拒绝非 hex、超长、截断或布尔值并自动规范化大写），`session_id` 严格校验字母数字与下划线有界格式防路径穿越，`pr_url` 严格要求符合 GitHub 规范 PR 地址并杜绝 `..` 等路径穿越，`pr_number` 必须为严格正整数（`int > 0` 且排除布尔值），`title` 与 `message` 严格校验长度上限并拦截空字节与换行注入，`files_committed` 与 `reverted_files` 严格校验相对路径并杜绝绝对路径与路径穿越。
+2. `_validate_workspace` 与 Git Ref 安全防御：`workspace.base_sha` 强制校验 40 位 16 进制 SHA，杜绝选项注入（如以 `-` 开头注入 `git rev-list` 参数）；分支名（`workspace.branch` 与 `base_branch`）排斥选项注入（`-`）、路径穿越（`..`）、连续斜杠（`//`）、非法字符与以 `.lock`/`.`/`/` 结尾的畸形命名；在 `create_pull_request` 中强制断言 `base_branch != workspace.branch`，严格拒绝无效的自我 PR。
+3. Git 配置注入防御与跨会话状态保护：读取本地仓库 git config 的 `user.name` 与 `user.email` 时过滤 CRLF、空字节与选项注入（以 `-` 开头），畸形配置安全回退默认值（`"selfForge Agent"` 与 `"agent@selfforge.local"`）；`revert_workspace` 与 `create_pull_request` 强制校验 `session.session_id == workspace.session_id`，杜绝跨会话状态污染；大文件列表（`git add` 与 `git restore`）按每批 100 项分块执行，防止超大变更加载引发 `ARG_MAX` 命令行溢出。
+4. 既有 PR 检测（`_existing_pull_request`）深度校验返回记录列表有界（上限 100 项）、PR 编号大于 0、标题无空字节与换行，URL 无路径穿越；临时 PR 正文文件强制设置 0600 安全文件权限；本地静态检查（ruff）、SDD 契约检查及全量测试通过。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-DELIV-02-A1 | CommitResult、PRResult 与 RevertResult 强制要求 40 位十六进制 commit_sha、合法 session_id 与分支名，校验 pr_url 正则且拒绝路径穿越，限制 pr_number 为严格正整数，拦截非法路径与超长/空字节标题 | `tests/test_delivery_hardening.py` 模型字段与类型契约防御测试 | E1 |
+| SF-DELIV-02-A2 | _validate_workspace 强制校验 base_sha 格式拒绝选项注入，分支名校验拦截路径穿越（..）与畸形 ref 规则，create_pull_request 严格拒绝 base_branch 与工作区分支同名 | `tests/test_delivery_hardening.py` 工作区基础 SHA 与 Git ref 规则测试 | E2 |
+| SF-DELIV-02-A3 | commit_workspace 自动清洗过滤本地仓库 git config 的恶意用户名称与邮箱，revert_workspace 与 create_pull_request 严格校验 SessionStore 与工作区 session_id 一致性，大文件列表分批执行防止命令行溢出 | `tests/test_delivery_hardening.py` 配置注入清洗、会话一致性与批量操作测试 | E3 |
+| SF-DELIV-02-A4 | _existing_pull_request 限制 PR 列表上限 100 项并严格校验记录编号与标题，create_pull_request 临时 body 文件设置 0600 权限，本地静态检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_delivery_hardening.py` 既有 PR 防御与临时文件权限测试，本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-DELIV-02-A1 | `tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_commit_sha`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_session_id_and_branch`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_commit_result_validates_message_and_files`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_pr_result_validates_pr_url_and_number`、`tests/test_delivery_hardening.py::TestDeliveryModelsHardening::test_revert_result_validates_paths` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
+| E2 | SF-DELIV-02-A2 | `tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_invalid_base_sha`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_validate_workspace_rejects_malicious_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_same_base_and_head_branch`、`tests/test_delivery_hardening.py::TestWorkspaceAndRefHardening::test_create_pr_rejects_traversal_or_malformed_base_branch` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
+| E3 | SF-DELIV-02-A3 | `tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_sanitizes_malicious_repo_git_config`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_revert_workspace_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_create_pull_request_rejects_mismatched_session_store`、`tests/test_delivery_hardening.py::TestGitConfigInjectionAndSessionStoreHardening::test_commit_workspace_batches_large_file_lists` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_delivery_hardening.py`；GitHub Actions CI `Unit tests` | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) |
+| E4 | SF-DELIV-02-A4 | `tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_invalid_pr_records`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_existing_pull_request_rejects_excessive_pr_list`、`tests/test_delivery_hardening.py::TestExistingPRAndSecurityHardening::test_create_pull_request_sets_0600_permissions_on_body_file`、`tests/test_delivery_security.py` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1658 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc`；passed；CI [Run #44213078416](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+
+分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-deliv-02`；Worktree=`selfforge-sf-deliv-02`；PR=[#108](https://github.com/liuzhouquan/selfforge-agent/pull/108)。源码提交 `d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc` 已通过本地回归与 CI `Run #44213078416` 全套验证。
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-deliv-02 (worktree: selfforge-sf-deliv-02) / d76bff3595ff94ffbfa57b2cb5d0bf0a651910bc
+已完成验收与证据 ID：SF-DELIV-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1658 passed、无跳过；CI Run #44213078416 全绿；文档提交准备就绪
+PR / 准确 head CI / merge SHA（有则填）：PR #108 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416 / 待合入
+```
+
+### SF-REV-02
+
+**目标：** 在代码审查引擎与编排服务模块（`src/selfforge_agent/review/baseline.py`、`src/selfforge_agent/review/deepseek.py`、`src/selfforge_agent/service.py`）中深度加固输入防御、Prompt 预算截断与模型输出清洗防御，杜绝恶意文件路径穿越与绝对路径逃逸、布尔行号隐式类型混淆、模型配置注入、大 Diff 提示词超限失控、Markdown 伪代码块解析失败、审查建议中的控制字符/ANSI/HTML 脚本注入以及审查器未知异常导致服务崩溃。
+
+**范围/入口：** `src/selfforge_agent/review/baseline.py`、`src/selfforge_agent/review/deepseek.py`、`src/selfforge_agent/service.py`、`tests/test_review_hardening.py`。加固 `BaselineReviewer` 相对路径校验、布尔行号拒绝、单 hunk 行数上限与空字节清洗；加固 `ProviderReviewer` 模型/URL/Key/超时/max_tokens 配置校验、hunk/line 多维截断、Prompt 字节预算控制、Markdown 代码块剥离与伪十六进制转义规整、输出字段白名单与控制字符脱敏；加固 `ReviewService` 审查器与运行器契约校验、返回结果强类型校验与报告数量上限、仓库与 Git 修订参数选项注入防御、`trusted_tests` 严格布尔校验以及全量异常 Fail-Closed 隔离。
+
+**行为与防御：**
+1. `BaselineReviewer` 路径安全与边界防御：使用 `posixpath.normpath` 校验 `changed.path` 必须为规范相对路径（拦截绝对路径、以 `/` 开头、带有 `..` 或空字节 `\x00` 的路径）；严格校验 `line.new_line` 必须为非布尔合法整数（`isinstance(int) and not isinstance(bool)` 且 `1 <= new_line <= 10_000_000`）；单 hunk 扫描行数施加 `MAX_HUNK_LINES = 1000` 约束；行内容清洗过滤空字节 `\x00`；findings 结果按 `(file_path, line_number, category, severity)` 实行确定性稳定排序。
+2. `ProviderReviewer` 配置严格校验与 Prompt 预算截断：构造时严格校验 `provider.model`（非空、无控制字符与空字节、<= 128 字符）、`provider.base_url`（合规 URL、无空白/空字节、<= 1024 字符）、`provider.key`（无换行/空字节、<= 4096 字符）、`timeout`（有限正数且 <= 300 秒）与 `max_tokens`（1 至 8192 正整型）；收集差异时对每个文件最多扫描 500 个 hunk、单 hunk 最多扫描 1000 行，过滤路径穿越段与布尔行号，清洗空字节；在 `MAX_PROMPT_BYTES = 24_000` 边界下平滑有界截断代码行，确保组装确定合法的审查提示词。
+3. 模型输出 Markdown 容错与字段脱敏清洗：自动识别并剥离模型返回结果中包裹的 ````json ... ```` 或 ```` ... ```` markdown 代码块，并兼容处理包裹在解释性文本中的 JSON 对象；将 `\xHH` 伪十六进制转义安全规范化为 `\u00HH` 防止 JSON 解析异常；限制模型响应体最大字符数为 131,072 (128 KiB)；将 `severity` 归一化为小写，限定白名单 `{"critical", "high", "medium", "low", "info"}`（未知则受控回退为 `"medium"`）；彻底清洗 `category` 与 `description` 中的 `\x00` 空字节、ANSI 终端转义序列与 `<script>` 脚本注入；通信异常（`TimeoutError`、`OSError`、`URLError`）统一受控收敛为 `DeepSeekReviewError`。
+4. `ReviewService` 审查契约守卫与全量异常隔离：`__init__` 强制校验 `reviewer` 具备 callable `review` 方法、`runner` 具备 callable `run` 方法；`review_context` 校验 `reviewer.review` 返回结果必须为 `list`，且严格过滤非 `Finding` 元素，施加 `MAX_REPORT_FINDINGS = 1000` 报告上限；捕获所有 `Exception` 并受控记录至 `report.errors`，杜绝未捕获异常泄露；`review` 接口预检 `repository` 必须为已存在目录（非文件），严格校验 `base` 与 `head` 为合法 Git 引用或 SHA 格式（无控制字符/空字节，严禁以 `-` 开头防止 Git 选项注入），强制校验 `trusted_tests` 必须为严格布尔值，限制 `timeout <= 3600`。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-REV-02-A1 | `BaselineReviewer` 针对路径穿越与绝对路径文件执行过滤跳过，严格拒绝布尔行号混淆，对单 hunk 行数（1000）施加有界截断，清洗内容空字节并执行确定性排序 | `tests/test_review_hardening.py` 规则基线路径穿越防御、布尔行号拒绝、单 hunk 截断与排序测试 | E1 |
+| SF-REV-02-A2 | `ProviderReviewer` 构造时严格校验 Model、Base URL、Key、有限正超时与 Max Tokens，Diff 收集时施加 hunk 与行数多维截断并过滤非法路径，在 24,000 字节预算内有界组装有效提示词 | `tests/test_review_hardening.py` 提供商配置强校验、多维 hunk 截断与 Prompt 预算防御测试 | E2 |
+| SF-REV-02-A3 | `ProviderReviewer` 自动提取 Markdown 代码块 JSON，规范化十六进制转义，拦截超限响应（128 KiB），对 severity/category/description 执行白名单与控制字符/ANSI/HTML清洗，并将网络异常映射为受控错误 | `tests/test_review_hardening.py` Markdown 代码块容错、响应体大小防御、输出清洗转义与异常收敛测试 | E3 |
+| SF-REV-02-A4 | `ReviewService` 校验审查器与运行器方法契约，强校验返回结果并隔离全量异常，预检仓库目录存在性并阻断修订选项注入，静态检查与全量单元测试全部通过 | `tests/test_review_hardening.py`、`tests/test_review_engine_security.py`、本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-REV-02-A1 | `tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_rejects_path_traversal_and_absolute_paths`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_rejects_boolean_new_line`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_bounds_hunk_lines`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_cleans_null_bytes_in_content`、`tests/test_review_hardening.py::TestBaselineReviewerHardening::test_baseline_reviewer_findings_sorted_deterministically` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_review_hardening.py -k TestBaselineReviewerHardening`；GitHub Actions CI `Unit tests` | `40d442db1ef7fc64a595a5fbc40026e643ae2601`；passed；CI [Run #44223097238](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238) |
+| E2 | SF-REV-02-A2 | `tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_rejects_malicious_model_names`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_rejects_malicious_base_url_and_key`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_validates_max_tokens_and_timeout`、`tests/test_review_hardening.py::TestProviderReviewerConfigAndInputHardening::test_provider_reviewer_bounds_hunks_and_skips_traversal_paths` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_review_hardening.py -k TestProviderReviewerConfigAndInputHardening`；GitHub Actions CI `Unit tests` | `40d442db1ef7fc64a595a5fbc40026e643ae2601`；passed；CI [Run #44223097238](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238) |
+| E3 | SF-REV-02-A3 | `tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_extracts_json_from_markdown_code_fences`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_rejects_oversized_response_content`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_sanitizes_severity_category_description`、`tests/test_review_hardening.py::TestProviderReviewerOutputAndDefenseHardening::test_provider_reviewer_maps_socket_timeout_and_network_errors` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_review_hardening.py -k TestProviderReviewerOutputAndDefenseHardening`；GitHub Actions CI `Unit tests` | `40d442db1ef7fc64a595a5fbc40026e643ae2601`；passed；CI [Run #44223097238](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238) |
+| E4 | SF-REV-02-A4 | `tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_rejects_invalid_reviewer_and_runner`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_context_validates_and_filters_findings`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_context_catches_all_exceptions`、`tests/test_review_hardening.py::TestReviewServiceHardening::test_review_service_review_validates_repository_and_revisions` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1659 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `40d442db1ef7fc64a595a5fbc40026e643ae2601`；passed；CI [Run #44223097238](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+
+分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-rev-02`；Worktree=`selfforge-sf-rev-02`；PR=[#109](https://github.com/liuzhouquan/selfforge-agent/pull/109)。源码提交 `40d442db1ef7fc64a595a5fbc40026e643ae2601` 已通过本地回归与 CI `Run #44223097238` 全套验证。
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-rev-02 (worktree: selfforge-sf-rev-02) / 40d442db1ef7fc64a595a5fbc40026e643ae2601
+已完成验收与证据 ID：SF-REV-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1659 passed、无跳过；CI Run #44223097238 全绿；文档提交准备就绪
+PR / 准确 head CI / merge SHA（有则填）：PR #109 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238 / 待合入
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；等待文档提交与 R2 CI
+下一步：推送文档提交并触发 R2 CI 验证，更新交付状态。
+```
+
 ### SF-LOCK-01
 
 **目标：** 对多格式依赖锁文件导出与环境依赖解析器（`src/selfforge_agent/runtime/lockfiles.py`）进行深度安全加固与规范化：对非 `bytes` 输入与超限内容 Fail-Closed 拦截、迭代式有界深度遍历防范 JSON DoS 栈溢出、全面拦截带有 PEP 508 平台条件标记（markers / marker / sys_platform / platform_machine / targets / extra / environment 等）或 `optional = true` 的非无条件依赖、严格支持 `sha256:` 与 `sha256=` 前缀及大小写统一规范化、并引入 `RequirementCollector` 共享抽象统一 poetry.lock、Pipfile.lock、uv.lock 与 requirements.txt 的校验、版本去重与确定性渲染。
@@ -2177,6 +2290,17 @@ PR / 准确 head CI / merge SHA（有则填）：PR #110 / https://github.com/li
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；PR #110 R1 CI 已全部成功通过
 下一步：待 PR #110 审查合并至 main。
 ```
+
+
+
+
+
+
+
+
+
+
+
 
 ## 5. 验收追踪与执行记录格式
 
