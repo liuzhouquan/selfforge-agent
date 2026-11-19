@@ -239,7 +239,10 @@ def load_requirement_profile(repository: Path | None = None, *, lock_file: Path 
     contents = _read(path, MAX_LOCK_BYTES)
     try:
         parse_locked_requirements(contents)
-        return contents.decode("utf-8"), path, False
+        decoded = contents.decode("utf-8")
+        if re.search(r"--hash=[sS][hH][aA]256:[0-9a-zA-Z]*[A-F]", decoded) or "--hash=SHA256:" in decoded:
+            return export_requirements_txt(contents), path, True
+        return decoded, path, False
     except ValueError:
         return export_requirements_txt(contents), path, True
 

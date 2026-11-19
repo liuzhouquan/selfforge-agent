@@ -170,6 +170,7 @@ flowchart LR
 | 60 | [SF-CAUSAL-02](#sf-causal-02) | In Review | Antigravity | SF-CAUSAL-01（Merged） | [PR #117](https://github.com/liuzhouquan/selfforge-agent/pull/117)：测试故障因果推断二次加固：目标路径与代码空值门禁、单引号与Pytest格式调用栈提取、虚拟环境与运行时外部调用帧隔离、模块级基础测试反归因加固及通用词根防误报 |
 | 61 | [SF-RISK-02](#sf-risk-02) | In Review | Antigravity | SF-RISK-01（Merged） | [PR #118](https://github.com/liuzhouquan/selfforge-agent/pull/118)：PR风险优先级排序二次安全加固：路径穿越与非法路径/行号防御、跨层路径规范化、PrioritizedRisk与RiskTarget契约不变式及下游验证兼容、严重级别critical规范化与高危Heuristic扩展、测试文件降权与终端控制字符脱敏 |
 | 62 | [SF-FAIL-01](#sf-fail-01) | In Review | Antigravity | 无 | [PR #119](https://github.com/liuzhouquan/selfforge-agent/pull/119)：测试失败工件与诊断快照生命周期及安全加固：工件模型模式规范化（FailureArtifact）、Fail-Closed 类型守门与超限安全截断有界降级、目录隔离与原子无符链写盘、非普通文件/FIFO防御与确定性工件列表检索（list_failures）及统计聚合（summarize_failures） |
+| 63 | [SF-IMG-02](#sf-img-02) | In Review | Codex（本轮开发） | SF-IMG-01（Merged） | [PR #120](https://github.com/liuzhouquan/selfforge-agent/pull/120)：离线依赖镜像二级深度安全加固：哈希规范化、Wheelhouse诊断抽象、镜像引用防注入与构建模型Schema形式化 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2632,6 +2633,44 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #119 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44459929004 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查并合并 PR #119，更新 main 基线。
+```
+
+### SF-IMG-02
+
+**目标：** 离线依赖镜像构建器二级深度安全加固：哈希规范化、Wheelhouse诊断抽象、镜像引用防注入与构建模型Schema形式化。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/images.py`、`src/selfforge_agent/runtime/environment.py` 与专项复现安全测试 `tests/test_images_hardening.py`；保持对 `EnvironmentPlan`、既有 Docker 构建流程及测试套件调用契约的完全向后兼容。
+
+**行为：**
+1. `parse_locked_requirements` 采用忽略大小写正则提取 SHA-256 哈希并统一规范化为小写 `sha256:[0-9a-f]{64}`，严格拦截空字节、平台 markers、extras、URLs 及重复 PEP 503 包名；
+2. `scan_wheelhouse` 针对 `packages` 输入元素执行 Fail-Closed 字典结构与字段类型校验，忽略以 `.` 开头的隐藏/临时文件（如 `._*.whl`、`.DS_Store`），防止计入文件上限与错误拦截；
+3. 新增 `diagnose_wheelhouse` 共享诊断抽象，计算 `matched_packages`、`missing_packages`、`unsupported_wheels`、`mismatched_wheels` 与 `all_matched`，统一依赖预检；
+4. `validate_image_tag` 与 `_validate_base_image` 严格防御前导/尾随/连续斜杠、选项注入（`-` 前导）与非法特殊字符，支持不可变摘要引用（`@sha256:...`）；
+5. `_docker` 子进程执行严格防御空参数及首参数选项注入，并过滤输出中的 ANSI 转义序列与终端控制字符；
+6. 形式化 `DependencyImageResult` Pydantic 模型（`version=1`、`image_id`、`base_image_id`、`requirements_sha256`、`wheels`），新增只读镜像检查工具 `image_exists` 与 `resolve_image_id`，并严格限制归档上下文大小 `<= MAX_CONTEXT_BYTES`。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-IMG-02-A1 | 锁文件解析支持大写/混合大小写 SHA-256 并统一规范化为小写，重复规范包名与非法指令严格 Fail-Closed 拦截 | `tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating` 相关用例 | E1 |
+| SF-IMG-02-A2 | Wheelhouse 扫描过滤点前缀隐藏文件，对 packages 执行字典结构门禁，diagnose_wheelhouse 准确输出诊断报告 | `tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics` 相关用例 | E2 |
+| SF-IMG-02-A3 | 镜像 tag 校验拒绝前导/尾随/连续斜杠与前导横杠，base_image 支持摘要引用，_docker 拦截选项注入并脱敏 ANSI 控制字符 | `tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening` 相关用例 | E3 |
+| SF-IMG-02-A4 | DependencyImageResult 模型 Schema 校验生效，只读镜像存在性与 ID 解析工具正常工作，构建输出结构完整 | `tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection` 相关用例 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-IMG-02-A1 | `tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_uppercase_and_mixed_case_sha256_normalized_to_lowercase`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_mixed_case_hash_prefix_and_multiple_hashes_normalized`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_duplicate_canonical_package_names_rejected`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_empty_or_whitespace_or_comment_only`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_exceeding_200_packages`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_lines_with_urls_markers_extras_directives`、`tests/test_images_hardening.py::TestLockfileHashNormalizationAndInputGating::test_reject_non_bytes_or_oversized_lockfile` | `PYTHONPATH=src pytest tests/test_images_hardening.py -k TestLockfileHashNormalizationAndInputGating`；GitHub Actions CI `Unit tests` | `646a20f01eb0f93539e607ce1521ffae17a8080f`；passed；CI [R1 44471834146](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146) |
+| E2 | SF-IMG-02-A2 | `tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_scan_wheelhouse_rejects_malformed_packages_list`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_scan_wheelhouse_ignores_hidden_and_dot_prefixed_files`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_success_path`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_missing_and_mismatched`、`tests/test_images_hardening.py::TestWheelhouseScanPackageGatingAndDiagnostics::test_diagnose_wheelhouse_fail_closed_on_invalid_inputs` | `PYTHONPATH=src pytest tests/test_images_hardening.py -k TestWheelhouseScanPackageGatingAndDiagnostics`；GitHub Actions CI `Unit tests` | `646a20f01eb0f93539e607ce1521ffae17a8080f`；passed；CI [R1 44471834146](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146) |
+| E3 | SF-IMG-02-A3 | `tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_validate_image_tag_rejects_leading_trailing_consecutive_slashes`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_validate_image_tag_accepts_valid_names`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_rejects_empty_arguments`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_rejects_option_injection_in_subcommand`、`tests/test_images_hardening.py::TestImageTagAndDockerSubprocessHardening::test_docker_sanitizes_ansi_escape_sequences_in_output` | `PYTHONPATH=src pytest tests/test_images_hardening.py -k TestImageTagAndDockerSubprocessHardening`；GitHub Actions CI `Unit tests` | `646a20f01eb0f93539e607ce1521ffae17a8080f`；passed；CI [R1 44471834146](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146) |
+| E4 | SF-IMG-02-A4 | `tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_dependency_image_result_model_validation`、`tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_image_exists_and_resolve_image_id`、`tests/test_images_hardening.py::TestDependencyImageResultModelAndIntrospection::test_build_dependency_image_returns_validated_dict` | `PYTHONPATH=src pytest tests/test_images_hardening.py -k TestDependencyImageResultModelAndIntrospection`；GitHub Actions CI `Unit tests` | `646a20f01eb0f93539e607ce1521ffae17a8080f`；passed；CI [R1 44471834146](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146) |
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-img-02 (worktree: selfforge-sf-img-02) / 已验证源码 646a20f01eb0f93539e607ce1521ffae17a8080f；本次状态提交仅文档
+已完成验收与证据 ID：SF-IMG-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地及CI全量测试通过；等待合并
+PR / 准确 head CI / merge SHA（有则填）：PR #120 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44471834146（head commit 646a20f01eb0f93539e607ce1521ffae17a8080f） / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #120 审查合并。
 ```
 
 ## 5. 验收追踪与执行记录格式
