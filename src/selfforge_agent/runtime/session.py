@@ -18,8 +18,11 @@ MAX_REGRESSION_LINE_BYTES = 16 * 1024
 MAX_REGRESSION_EVENTS = 10000
 
 MAX_SESSION_BYTES = 16 * 1024 * 1024
+MAX_TRACE_BYTES = 16 * 1024 * 1024
 MAX_SESSION_LINE_BYTES = 1024 * 1024
 MAX_SESSION_ID_LENGTH = 64
+MAX_SESSION_EVENTS = 50_000
+MAX_TRACE_QUERY_LIMIT = 10_000
 
 
 def _directory_fd(path: Path, *, create: bool = False) -> int:
@@ -53,6 +56,103 @@ def _state_open(path: Path, flags: int, mode: int = 0o600) -> int:
 
 class RegressionJournalCorruptError(ValueError):
     """The last committed journal entry cannot be decoded as a JSON object."""
+
+
+class SessionCorruptError(ValueError):
+    """The session file contains unrecoverable or invalid structure."""
+
+
+_SENSITIVE_FIELD_NAMES = frozenset({
+    "api_key",
+    "token",
+    "secret",
+    "password",
+    "access_token",
+    "auth",
+    "authorization",
+})
+
+
+def redact_sensitive_text(text: str, *, root: Path | None = None) -> str:
+    if not isinstance(text, str):
+        return text
+    res = text
+    if root is not None:
+        try:
+            root_str = str(root.resolve())
+            if root_str and root_str in res:
+                res = res.replace(root_str, "[ROOT]")
+        except (OSError, RuntimeError, ValueError):
+            pass
+    try:
+        home_str = str(Path.home().resolve())
+        if home_str and len(home_str) > 1 and home_str in res:
+            res = res.replace(home_str, "~")
+    except (OSError, RuntimeError, ValueError):
+        pass
+
+    res = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", "sk-***", res)
+    res = re.sub(r"gh[pousr]_[a-zA-Z0-9]{20,}", lambda m: m.group(0)[:4] + "***", res)
+    res = re.sub(r"(?i)(bearer\s+)[a-zA-Z0-9_\-\.]{20,}", r"\1***", res)
+    res = re.sub(r"(https?://)([^:\s]+):([^@\s]+)@", r"\1\2:***@", res)
+    return res
+
+
+def redact_event(event: object, *, root: Path | None = None) -> object:
+    if isinstance(event, dict):
+        clean = {}
+        for k, v in event.items():
+            if isinstance(k, str) and (
+                k.lower() in _SENSITIVE_FIELD_NAMES
+                or any(k.lower().endswith(s) for s in ("_key", "_token", "_secret", "_password"))
+            ):
+                clean[k] = "***"
+            else:
+                clean[k] = redact_event(v, root=root)
+        return clean
+    if isinstance(event, list):
+        return [redact_event(item, root=root) for item in event]
+    if isinstance(event, str):
+        return redact_sensitive_text(event, root=root)
+    return event
+
+
+def _atomic_write_file(target_path: Path, content: bytes) -> Path:
+    if not isinstance(target_path, Path):
+        raise TypeError("target_path must be a Path instance")
+    if "\0" in str(target_path):
+        raise ValueError("target_path must not contain null bytes")
+    if target_path.is_symlink() or any(p.is_symlink() for p in (target_path, *target_path.parents)):
+        raise ValueError(f"Cannot export to symlinked path: {target_path}")
+
+    target_dir = target_path.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if any(p.is_symlink() for p in (target_dir, *target_dir.parents)):
+        raise ValueError(f"Cannot export to symlinked directory: {target_dir}")
+
+    tmp_path = target_dir / f".{target_path.name}.tmp.{uuid4().hex}"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(tmp_path), flags, 0o600)
+    try:
+        view = memoryview(content)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("Atomic write made no progress")
+            view = view[written:]
+        try:
+            os.fdatasync(fd)
+        except (AttributeError, OSError):
+            try:
+                os.fsync(fd)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
+
+    os.replace(tmp_path, target_path)
+    return target_path
+
 
 
 class SessionStore:
@@ -135,21 +235,45 @@ class SessionStore:
                 else:
                     os.ftruncate(fd, 0)
             end = os.lseek(fd, 0, os.SEEK_END)
-            if end + len(payload) > MAX_SESSION_BYTES:
-                raise ValueError(f"Session file exceeds maximum size of {MAX_SESSION_BYTES} bytes")
+            max_allowed = (
+                min(MAX_SESSION_BYTES, MAX_TRACE_BYTES)
+                if path.name.endswith(".trace.jsonl")
+                else MAX_SESSION_BYTES
+            )
+            if end + len(payload) > max_allowed:
+                raise ValueError(f"Session file exceeds maximum size of {max_allowed} bytes")
+            if end:
+                event_count = 0
+                pos = 0
+                while pos < end:
+                    chk = os.pread(fd, 65536, pos)
+                    if not chk:
+                        break
+                    event_count += chk.count(b"\n")
+                    pos += len(chk)
+                if event_count >= MAX_SESSION_EVENTS:
+                    raise ValueError(f"Session exceeds maximum event limit of {MAX_SESSION_EVENTS}")
             view = memoryview(payload)
             while view:
                 written = os.write(fd, view)
                 if written <= 0:
                     raise OSError("Session write made no progress")
                 view = view[written:]
+            try:
+                os.fdatasync(fd)
+            except (AttributeError, OSError):
+                try:
+                    os.fsync(fd)
+                except OSError:
+                    pass
         finally:
             os.close(fd)
 
     @staticmethod
-    def _complete_events(path: Path) -> Iterator[dict]:
+    def _read_file_chunks(path: Path, max_bytes: int | None = None) -> list[bytes]:
+        limit = MAX_SESSION_BYTES if max_bytes is None else max_bytes
         if not path.exists():
-            return
+            return []
         if path.is_symlink() or any(part.is_symlink() for part in (path, *path.parents)):
             raise ValueError(f"Cannot read symlinked session file: {path}")
         fd = None
@@ -158,33 +282,46 @@ class SessionStore:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
                 raise ValueError(f"Session path is not a regular file: {path}")
-            if st.st_size > MAX_SESSION_BYTES:
-                raise ValueError(f"Session file exceeds maximum size of {MAX_SESSION_BYTES} bytes")
+            if st.st_size > limit:
+                raise ValueError(f"Session file exceeds maximum size of {limit} bytes")
             fcntl.flock(fd, fcntl.LOCK_SH)
             chunks = []
             total = 0
-            while total <= MAX_SESSION_BYTES:
-                chunk = os.read(fd, min(65536, MAX_SESSION_BYTES + 1 - total))
+            while total <= limit:
+                chunk = os.read(fd, min(65536, limit + 1 - total))
                 if not chunk:
                     break
                 chunks.append(chunk)
                 total += len(chunk)
-            if total > MAX_SESSION_BYTES:
-                raise ValueError(f"Session file exceeds maximum size of {MAX_SESSION_BYTES} bytes")
+            if total > limit:
+                raise ValueError(f"Session file exceeds maximum size of {limit} bytes")
+            return chunks
         finally:
             if fd is not None:
                 os.close(fd)
 
+    @staticmethod
+    def _complete_events(path: Path, *, recover: bool = False) -> Iterator[dict]:
+        chunks = SessionStore._read_file_chunks(path)
         for line in io.BytesIO(b"".join(chunks)):
             if not line.endswith(b"\n"):
                 break  # A writer may still be finishing the last event.
             if len(line) > MAX_SESSION_LINE_BYTES:
+                if recover:
+                    continue
                 raise ValueError(f"Session line exceeds maximum size of {MAX_SESSION_LINE_BYTES} bytes")
             stripped = line.strip()
             if not stripped:
                 continue
-            data = json.loads(stripped)
+            try:
+                data = json.loads(stripped)
+            except (ValueError, TypeError, UnicodeError):
+                if recover:
+                    continue
+                raise
             if not isinstance(data, dict):
+                if recover:
+                    continue
                 raise TypeError(f"Session event must be a JSON object, got {type(data).__name__}")
             yield data
 
@@ -390,16 +527,25 @@ class SessionStore:
         if not isinstance(event, str) or not event.strip():
             return
         try:
-            self._append(self.trace_path, {"event": event.strip(), **fields})
+            if self.trace_path.exists():
+                try:
+                    if self.trace_path.stat().st_size >= MAX_TRACE_BYTES:
+                        return
+                except OSError:
+                    pass
+            sanitized_fields = redact_event(fields, root=self.root)
+            if not isinstance(sanitized_fields, dict):
+                sanitized_fields = fields
+            self._append(self.trace_path, {"event": event.strip(), **sanitized_fields})
         except (OSError, ValueError, TypeError):
             pass
 
-    def load(self) -> tuple[list[dict], str | None]:
+    def load(self, *, recover: bool = False) -> tuple[list[dict], str | None]:
         if not self.path.is_file():
             raise ValueError(f"Unknown session: {self.session_id}")
         messages: list[dict] = []
         status = None
-        for event in self._complete_events(self.path):
+        for event in self._complete_events(self.path, recover=recover):
             if not isinstance(event, dict):
                 continue
             ev_type = event.get("type")
@@ -417,9 +563,51 @@ class SessionStore:
                     status = s.strip()
         return messages, status
 
+    def recover_session(self) -> tuple[list[dict], str | None, int]:
+        if not self.path.is_file():
+            raise ValueError(f"Unknown session: {self.session_id}")
+        messages: list[dict] = []
+        status = None
+        corrupt_count = 0
+        chunks = self._read_file_chunks(self.path)
+        for line in io.BytesIO(b"".join(chunks)):
+            if not line.endswith(b"\n"):
+                break
+            if len(line) > MAX_SESSION_LINE_BYTES:
+                corrupt_count += 1
+                continue
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                data = json.loads(stripped)
+                if not isinstance(data, dict):
+                    corrupt_count += 1
+                    continue
+            except (ValueError, TypeError, UnicodeError):
+                corrupt_count += 1
+                continue
+            ev_type = data.get("type")
+            if ev_type == "message":
+                msg = data.get("message")
+                if isinstance(msg, dict):
+                    messages.append(msg)
+            elif ev_type == "compaction":
+                msgs = data.get("messages")
+                if isinstance(msgs, list):
+                    messages = [m for m in msgs if isinstance(m, dict)]
+            elif ev_type == "status":
+                s = data.get("status")
+                if isinstance(s, str) and s.strip():
+                    status = s.strip()
+        return messages, status, corrupt_count
+
     def trace_events(self, limit: int | None = None) -> list[dict]:
-        if limit is not None and (type(limit) is not int or limit <= 0):
-            raise ValueError("Trace limit must be positive integer")
+        if limit is not None:
+            if type(limit) is not int or limit <= 0:
+                raise ValueError("Trace limit must be positive integer")
+            if limit > MAX_TRACE_QUERY_LIMIT:
+                raise ValueError(f"Trace limit exceeds maximum of {MAX_TRACE_QUERY_LIMIT}")
         if not self.trace_path.exists():
             return []
         events: deque[dict] = deque(maxlen=limit)
@@ -427,6 +615,29 @@ class SessionStore:
             if isinstance(event, dict):
                 events.append(event)
         return list(events)
+
+    def export_snapshot(self, target_path: Path, *, redact: bool = True) -> Path:
+        messages, status = self.load(recover=True)
+        snapshot = {
+            "session_id": self.session_id,
+            "status": status,
+            "messages": messages,
+            "environment": self.environment(),
+            "verification_snapshot": self.verification_snapshot(),
+            "exported_at": datetime.now(UTC).isoformat(),
+        }
+        if redact:
+            snapshot = redact_event(snapshot, root=self.root)
+        serialized = json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n"
+        return _atomic_write_file(target_path, serialized.encode("utf-8"))
+
+    def export_trace(self, target_path: Path, *, redact: bool = True) -> Path:
+        events = self.trace_events()
+        if redact:
+            events = [redact_event(ev, root=self.root) for ev in events]
+        lines = [json.dumps(ev, ensure_ascii=False) for ev in events]
+        content = ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
+        return _atomic_write_file(target_path, content)
 
     def token_metrics(self) -> dict:
         from selfforge_agent.providers import TokenUsage

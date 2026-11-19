@@ -163,6 +163,7 @@ flowchart LR
 | 53 | [SF-LOCK-01](#sf-lock-01) | In Review | Codex（本轮开发） | 无 | [PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110)：多格式依赖锁文件深度安全加固与规范化：非bytes输入受控拦截与5MiB尺寸防御、迭代式50层JSON深度限制防DoS、PEP 508平台条件标记全面拒绝、SHA-256大小写与前缀规范化及RequirementCollector共享抽取抽象 |
 | 54 | [SF-WS-09](#sf-ws-09) | In Review | Codex（本轮开发） | 无 | [PR #111](https://github.com/liuzhouquan/selfforge-agent/pull/111)：工作区差异统计内存边界防御、二进制变更脱敏、文件锁安全加固及分支生命周期安全清理 |
 | 55 | [SF-CORE-02](#sf-core-02) | In Review | Codex（本轮开发） | 无 | [PR #112](https://github.com/liuzhouquan/selfforge-agent/pull/112)：进程执行管道死锁防御、优雅终止降级、环境变量有界脱敏与 Git Context 修订严格校验 |
+| 56 | [SF-SESS-02](#sf-sess-02) | In Review | Codex（本轮开发） | 无 | [PR #113](https://github.com/liuzhouquan/selfforge-agent/pull/113)：会话快照与导出原子写盘、Trace与敏感信息自动脱敏、事件配额防御及损坏会话恢复降级 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2366,6 +2367,42 @@ Owner / 状态：Codex（本轮开发） / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #112 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44241617859 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查与合并 PR #112，合并后更新基线 main 并回填 merge SHA。
+```
+
+### SF-SESS-02
+
+**目标：** 对会话存储（`SessionStore`）与执行追踪（Trace）实施深度安全加固，建立快照导出原子落盘机制、敏感凭证与本地绝对路径自动脱敏、单会话事件数与 Trace 磁盘配额防御，以及损坏会话降级解析恢复能力。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/session.py` 与专项复现安全测试 `tests/test_session_hardening.py`；保持对 `SessionStore` 既有消费者（`cli.py`、`api/app.py`、`coding/agent.py` 等）的完全向后兼容。
+
+**行为：**
+1. 新增 `export_snapshot` 与 `export_trace` 导出方法，采用同目录唯一临时文件（`.<target>.tmp.<uuid>`）配合 `os.fdatasync` 与 `os.replace` 原子原子写盘，拦截目标路径符号链接穿越与空字节；
+2. 新增 `redact_sensitive_text` 与 `redact_event` 工具，正则覆盖 API Key、GitHub Token、Bearer 认证、URL 内嵌密码及常见凭证字段，自动将工作区根路径与用户家目录替换为相对路径/标记，并在 `trace()` 写入及导出时默认自动执行敏感信息脱敏；
+3. 严格执行写入有界配额防御：单会话文件限制最大事件数量 `<= 50_000`（`MAX_SESSION_EVENTS`），`trace()` 检查并受控抑制超出 16 MiB（`MAX_TRACE_BYTES`）的写入，`trace_events(limit)` 限制查询上限 `<= 10_000`（`MAX_TRACE_QUERY_LIMIT`）；
+4. `load(recover=True)` 提供优雅降级容错机制，跳过包含损坏 JSON 的单行记录并返回全部可识别的有效消息与最新状态，默认 `recover=False` 保持 Fail-Closed 抛出 `json.JSONDecodeError`；新增 `recover_session()` 方法返回诊断恢复结果及损坏记录计数；新增 `SessionCorruptError(ValueError)` 异常类型。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-SESS-02-A1 | 快照与 Trace 导出采用临时文件及原子重命名安全写盘，严格拦截符号链接目标路径及父级软链接 | `tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport` 3 个测试 | E1 |
+| SF-SESS-02-A2 | 正则自动掩码 API Key、GitHub Token、URL 密码及本地用户/根路径，Trace 记录与快照导出默认脱敏 | `tests/test_session_hardening.py::TestTraceAndSessionRedaction` 4 个测试 | E2 |
+| SF-SESS-02-A3 | 单会话事件总数上限 50,000 超限拦截，Trace 写入受控抑制在 16 MiB 磁盘配额内，查询 limit 上限防御生效 | `tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds` 3 个测试 | E3 |
+| SF-SESS-02-A4 | 损坏 JSON 行在 recover=False 时 fail-closed，在 recover=True 时平滑跳过并恢复有效消息，recover_session 准确输出损坏计数 | `tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery` 3 个测试 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-SESS-02-A1 | `tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport::test_export_snapshot_creates_atomic_file`、`tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport::test_export_snapshot_rejects_symlink_target_and_parents`、`tests/test_session_hardening.py::TestSessionAtomicSnapshotAndExport::test_export_trace_creates_atomic_file` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_session_hardening.py`；GitHub Actions CI `Unit tests` | `77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319`；passed；CI [Run #44266341312](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312) |
+| E2 | SF-SESS-02-A2 | `tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_redact_sensitive_text_masks_credentials`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_redact_sensitive_text_masks_local_root_path`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_trace_automatically_masks_sensitive_fields`、`tests/test_session_hardening.py::TestTraceAndSessionRedaction::test_export_snapshot_redacts_credentials_by_default` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_session_hardening.py`；GitHub Actions CI `Unit tests` | `77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319`；passed；CI [Run #44266341312](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312) |
+| E3 | SF-SESS-02-A3 | `tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_append_enforces_max_session_events`、`tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_trace_enforces_max_trace_bytes_quota`、`tests/test_session_hardening.py::TestSessionDiskQuotaAndEventBounds::test_trace_events_enforces_max_query_limit` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_session_hardening.py`；GitHub Actions CI `Unit tests` | `77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319`；passed；CI [Run #44266341312](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312) |
+| E4 | SF-SESS-02-A4 | `tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_load_with_recover_true_skips_malformed_json_lines`、`tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_recover_session_returns_diagnostics`、`tests/test_session_hardening.py::TestCorruptedSessionDegradationAndRecovery::test_session_corrupt_error_type` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_session_hardening.py`；GitHub Actions CI `Unit tests` | `77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319`；passed；CI [Run #44266341312](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312) |
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-sess-02 (worktree: selfforge-sf-sess-02) / 77a3ea5d6ad6f4728bbc4f0aaa7156f978de0319
+已完成验收与证据 ID：SF-SESS-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码与测试已合入 PR #113并通过 R1 CI；本提交仅含文档更新
+PR / 准确 head CI / merge SHA（有则填）：PR #113 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44266341312 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查与合并 PR #113，合并后更新基线 main 并回填 merge SHA。
 ```
 
 ## 5. 验收追踪与执行记录格式
