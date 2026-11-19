@@ -322,3 +322,23 @@ class TestExistingPRAndSecurityHardening:
         assert len(observed_permissions) == 1
         # Check permissions: 0o600 (owner read and write only)
         assert observed_permissions[0] == 0o600
+
+
+@pytest.mark.parametrize("result_class,field", [(CommitResult, "files_committed"), (RevertResult, "reverted_files")])
+def test_delivery_results_preserve_literal_git_filenames(result_class, field):
+    kwargs = {"session_id": "literal", "branch": "main", field: [" file.py "]}
+    if result_class is CommitResult:
+        kwargs.update(commit_sha="a" * 40, message="Fixture")
+    assert getattr(result_class(**kwargs), field) == [" file.py "]
+
+
+@pytest.mark.parametrize("repo", [".github", "_tools"])
+def test_delivery_accepts_legal_github_repository_names(repo):
+    url = f"https://github.com/example/{repo}/pull/1"
+    result = PRResult(session_id="literal", branch="main", commit_sha="a" * 40, title="Fixture", pr_url=url, pr_number=1)
+    assert result.pr_url == url
+
+
+def test_delivery_preserves_legal_plus_branch():
+    result = CommitResult(session_id="literal", branch="feature+fix", commit_sha="a" * 40, message="Fixture")
+    assert result.branch == "feature+fix"
