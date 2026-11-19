@@ -69,12 +69,12 @@ def _validate_git_ref_name(ref: object, param_name: str = "branch") -> str:
     if (
         not r
         or len(r) > 256
-        or r.startswith("-")
+        or r.startswith(("-", "/"))
         or "\0" in r
         or "\n" in r
         or "\r" in r
         or any(ord(c) <= 32 or ord(c) == 127 or c in "~^:?*[\\" for c in r)
-        or r.startswith("/") or r == "@"
+        or r == "@"
         or any(p.startswith(".") or p.endswith(".lock") for p in r.split("/"))
         or ".." in r
         or "//" in r
