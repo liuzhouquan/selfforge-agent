@@ -168,6 +168,7 @@ flowchart LR
 | 58 | [SF-TOOL-02](#sf-tool-02) | In Review | Codex（自主开发） | 无 | [PR #115](https://github.com/liuzhouquan/selfforge-agent/pull/115)：工具执行器与参数模式安全加固：入参模式防御与非字典入参拒绝、路径/命令/关键字注入防护（杜绝空字节与前导选项）、编辑载荷与策略大小有界防御、输出有界安全截断与异常受控隔离 |
 | 59 | [SF-FP-02](#sf-fp-02) | In Review | Antigravity | SF-FPR-01（Merged） | [PR #116](https://github.com/liuzhouquan/selfforge-agent/pull/116)：工作区快照指纹加固与跨平台确定性：根路径输入防御与空值阻断、单文件大小有界上限防御、跨平台权限模式与路径规范化、Unicode文件名NFC排序稳定性及取消中断精准响应 |
 | 60 | [SF-CAUSAL-02](#sf-causal-02) | In Review | Antigravity | SF-CAUSAL-01（Merged） | [PR #117](https://github.com/liuzhouquan/selfforge-agent/pull/117)：测试故障因果推断二次加固：目标路径与代码空值门禁、单引号与Pytest格式调用栈提取、虚拟环境与运行时外部调用帧隔离、模块级基础测试反归因加固及通用词根防误报 |
+| 61 | [SF-RISK-02](#sf-risk-02) | In Review | Antigravity | SF-RISK-01（Merged） | [PR #118](https://github.com/liuzhouquan/selfforge-agent/pull/118)：PR风险优先级排序二次安全加固：路径穿越与非法路径/行号防御、跨层路径规范化、PrioritizedRisk与RiskTarget契约不变式及下游验证兼容、严重级别critical规范化与高危Heuristic扩展、测试文件降权与终端控制字符脱敏 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2558,6 +2559,42 @@ Owner / 状态：Antigravity / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #117 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44444415139 / 待合并
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待审查并合并 PR #117，更新 main 基线。
+```
+
+### SF-RISK-02
+
+**目标：** 对 PR 风险优先级排序（`prioritize_risks`）及 `RiskTarget` 契约转换进行二次深度安全加固，封堵路径穿越与非法路径/行号防御死角、实现跨层路径规范化、保障 `PrioritizedRisk` 契约不变式及与下游 `validate_risk_target` 的兼容性、规范化 `critical` 严重级别与扩展高危差异启发式模式、实现测试文件自动降权与终端控制字符脱敏。
+
+**范围/入口：** 改动 `src/selfforge_agent/coding/risk_prioritization.py`、`src/selfforge_agent/coding/test_generation.py` 与专项加固测试 `tests/test_risk_hardening.py`；保持与 `test_generation.py`、API/CLI 入口及既有测试 `tests/test_risk_prioritization.py`、`tests/test_risk_prioritization_security.py` 的完全向后兼容。
+
+**行为：**
+1. 路径穿越与非法路径/行号防御及跨层路径规范化：使用 POSIX 规范化统一处理 `context.files` 中的文件路径，受控跳过或拦截包含 `..` 路径穿越、绝对路径（`/`）、空字符（`\0`）或非法超长路径；规范化 `Finding.file_path` 使 `./foo.py` 与 `foo.py` 严格对齐匹配；校验并限制 `Finding.line_number` 在 `1 <= line_number <= 10_000_000` 有界区间内，安全过滤非正数或超大虚假行号；对 `context.files` 执行严格 Fail-Closed 类型校验；
+2. PrioritizedRisk 契约不变式及下游验证兼容：`PrioritizedRisk` 严格拒绝纯空白 `file_path`、`description` 和 `evidence`；`score` 强制校验为有限非负数（`>= 0.0`）并保留 2 位小数；`to_risk_target()` 生成的目标对象经由 `validate_risk_target` 校验时，兼容处理 POSIX 规范化路径与截断至 `MAX_EVIDENCE_CHARS` 的超长代码行，杜绝下游生成验证时发生虚假拒绝；
+3. 安全严重级别规范化与高危 Heuristic 扩展：将 `critical` 严重级别正确赋予最高基准分（150.0），`info`/`informational` 赋予基准分（10.0），避免历史缺陷中 `critical` 未命中字典被降级为 10.0；`_CATEGORY_BONUSES` 扩充 `path-traversal`、`deserialization`、`ssrf`、`crypto`、`redos` 等加分；差异启发式规则在无审查发现或未命中时精准识别 `dynamic-code`（`eval`、`exec`）、`shell-execution`（`os.system`、`subprocess`、`shell=True`）、`deserialization`（`pickle.loads`、`yaml.unsafe_load`）、`sql-injection`（`cursor.execute`、`SELECT ... FROM`）与 `tls-verification`（`verify=False`）等高危模式并评为高/中风险；
+4. 测试文件降权与终端控制字符脱敏安全：当 PR 变更同时包含应用业务代码与测试代码（`tests/`、`test_*.py`、`*_test.py`、`conftest.py`）时，对测试代码中的新增行赋予 `_TEST_FILE_PENALTY = -50.0` 降权惩罚，确保测试生成假设聚焦在被测业务逻辑；彻底清洗 `evidence`、`description` 与 `rationale` 中的 ANSI 转义字符（`\x1b[...]`）与回车符（`\r`），防范终端控制字符注入与日志伪造。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-RISK-02-A1 | 路径穿越（..）与绝对路径被安全忽略，./foo.py 规范化匹配 Finding，非法行号（<=0 或 >10,000,000）被过滤 | `tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization` 各用例 | E1 |
+| SF-RISK-02-A2 | PrioritizedRisk 拒绝纯空白字段，分值强制有限非负且四舍五入，超长/去空字节 evidence 生成的 RiskTarget 稳定通过 validate_risk_target | `tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation` 各用例 | E2 |
+| SF-RISK-02-A3 | critical 严重级别获得最高基准分（150 > 100），空 findings 下 eval 与 subprocess 正确被启发式扫描识别为高危模式 | `tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics` 各用例 | E3 |
+| SF-RISK-02-A4 | tests/ 目录下测试文件新增行相对实现代码自动降权（-50pts），ANSI 转义字符与回车符被彻底脱敏清洗 | `tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization` 各用例 | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-RISK-02-A1 | `tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization::test_path_traversal_and_absolute_paths_ignored`、`tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization::test_relative_path_prefix_normalized_and_matches_finding`、`tests/test_risk_hardening.py::TestRiskPathDefenseAndNormalization::test_invalid_line_number_in_findings_safely_ignored` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_risk_hardening.py`；GitHub Actions CI `Unit tests` | `47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c`；passed；CI [Run #44451357224](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224) |
+| E2 | SF-RISK-02-A2 | `tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_prioritized_risk_rejects_whitespace_only_strings`、`tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_prioritized_risk_enforces_score_non_negative_and_rounded`、`tests/test_risk_hardening.py::TestPrioritizedRiskContractAndTargetValidation::test_validate_risk_target_compatibility_with_truncated_and_sanitized_evidence` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_risk_hardening.py`；GitHub Actions CI `Unit tests` | `47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c`；passed；CI [Run #44451357224](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224) |
+| E3 | SF-RISK-02-A3 | `tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics::test_critical_severity_receives_highest_base_score`、`tests/test_risk_hardening.py::TestSeverityNormalizationAndHeuristics::test_high_risk_heuristics_detect_eval_and_subprocess` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_risk_hardening.py`；GitHub Actions CI `Unit tests` | `47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c`；passed；CI [Run #44451357224](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224) |
+| E4 | SF-RISK-02-A4 | `tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization::test_test_files_deprioritized_relative_to_implementation`、`tests/test_risk_hardening.py::TestTestFileDeprioritizationAndOutputSanitization::test_ansi_escape_and_carriage_return_sanitized` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest -v tests/test_risk_hardening.py`；GitHub Actions CI `Unit tests` | `47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c`；passed；CI [Run #44451357224](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224) |
+
+```text
+Owner / 状态：Antigravity / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-risk-02 (worktree: selfforge-sf-risk-02) / 已验证源码 47e176b6b71f9cfd54e4ae7117e651dff6e0ee9c
+已完成验收与证据 ID：SF-RISK-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未完成项；加固及关联套件 45 passed；全量 CI 测试通过；无未提交源码改动
+PR / 准确 head CI / merge SHA（有则填）：PR #118 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44451357224 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查并合并 PR #118，更新 main 基线。
 ```
 
 ## 5. 验收追踪与执行记录格式
