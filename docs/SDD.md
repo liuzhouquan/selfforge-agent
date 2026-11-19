@@ -157,7 +157,8 @@ flowchart LR
 | 47 | [SF-CLI-02](#sf-cli-02) | Merged | Codex（审查整合） | 无 | [PR #104](https://github.com/liuzhouquan/selfforge-agent/pull/104)：code 与 test 子命令结构化 --json 导出、安全 --output 落盘防御与显式命令分发加固 |
 | 48 | [SF-API-02](#sf-api-02) | Merged | Codex（审查整合） | SF-API-01（Merged） | [PR #105](https://github.com/liuzhouquan/selfforge-agent/pull/105)：Web Coding API 与会话管理深度加固：Job ID 与 Resume Session 参数校验防路径遍历、工作区/沙箱端点路径预检与空字节受控拒绝（路径预检400、请求模型字段422）、Fail-Closed 本地访问控制与全局异常受控收敛 |
 | 49 | [SF-VERIF-02](#sf-verif-02) | Merged | Codex（审查整合） | SF-VERIF-01（Merged） | [PR #106](https://github.com/liuzhouquan/selfforge-agent/pull/106)：验证执行器与 JUnit 解析二次安全加固：大小写不敏感 DTD/实体过滤、测试套件与测试用例数量上限、失败嵌套文本解析、工作区路径符链循环防御、进程组超时竞态防御与测试关键字注入防护 |
-| 50 | [SF-DELIV-02](#sf-deliv-02) | In Review | Codex（本轮开发） | SF-DELIV-01（Merged） | [PR #108](https://github.com/liuzhouquan/selfforge-agent/pull/108)：工作区交付工作流二次安全加固：交付结果模型严格校验与路径穿越防御、base_sha十六进制格式校验与Git Ref规则守卫、Git配置注入防御与会话ID一致性校验、超大文件列表分批执行及PR结果有界防御 |
+| 50 | [SF-PRICE-02](#sf-price-02) | In Review | Codex（本轮开发） | SF-PRICE-01（Merged） | [PR #107](https://github.com/liuzhouquan/selfforge-agent/pull/107)：费率卡与成本估算深度加固：布尔费率严格拒绝、成本对象总额与细项线性不变式守卫、未校准成本严格扣留、总Token数反向矛盾Fail-Closed拒绝、深层JSON递归防御与有界并发缓存 |
+| 51 | [SF-DELIV-02](#sf-deliv-02) | In Review | Codex（本轮开发） | SF-DELIV-01（Merged） | [PR #108](https://github.com/liuzhouquan/selfforge-agent/pull/108)：工作区交付工作流二次安全加固：交付结果模型严格校验与路径穿越防御、base_sha十六进制格式校验与Git Ref规则守卫、Git配置注入防御与会话ID一致性校验、超大文件列表分批执行及PR结果有界防御 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2140,6 +2141,42 @@ PR / 准确 head CI / merge SHA（有则填）：PR #106 / https://github.com/li
 下一步：后续开发先核对远端和开放PR，按当前用户任务选择未认领事项；不要自动执行付费模型测量。
 ```
 
+### SF-PRICE-02
+
+**目标：** 在模型费率卡解析与货币成本估算模块（`src/selfforge_agent/runtime/pricing.py`）中深度加固输入防御与数据完整性校验，杜绝布尔费率隐式类型转换、成本总额与细项线性不一致、未校准成本盲目累加泄漏、总 Token 数反向矛盾与深层嵌套 JSON 递归风险。
+
+**范围/入口：** `src/selfforge_agent/runtime/pricing.py`、`tests/test_pricing_hardening.py`。加固 `ModelRates` 与 `MonetaryCost` 模型校验；加固 `estimate_monetary_cost` 参数防御、Token 反向矛盾与 JSON 递归解析；加固 `sum_monetary_costs` 未校准扣留、有界输入与线性不变式守卫；加固 `format_monetary_cost` 未校准与天文数值防御。
+
+**行为与防御：**
+1. `ModelRates` 拒绝布尔值费率（`prompt_per_million` / `completion_per_million` 传入 `True`/`False` 抛出 `TypeError`/`ValueError`/`ValidationError`）；`MonetaryCost` 校验总额与细项线性一致性（`abs(total_cost_usd - (prompt_cost_usd + completion_cost_usd)) <= 1e-4 * max(1.0, total_cost_usd)`），反向矛盾或不一致时拒绝并报错。
+2. `estimate_monetary_cost` 强化输入防御与反向矛盾校验：拦截纯空白、超长（>256字符）、包含ASCII控制字符的 provider 与 model；校验 `usage.total_tokens` 与 `prompt_tokens + completion_tokens` 逻辑一致性，若 `total_tokens < prompt_tokens + completion_tokens` 属于反向矛盾，Fail-Closed 拒绝并返回 `None`；反序列化 `SELFFORGE_PRICING_JSON` 时防御深层嵌套 JSON 递归（max depth <= 4），防止堆栈溢出或 DoS 攻击。
+3. `sum_monetary_costs` 严格扣留未校准成本：当输入列表中任一成本项 `calibrated is False` 时，不盲目累加不可信数字，严格扣留总额返回 `None`；非 Sequence 类型或输入项超过 100,000 项时受控拒绝；对累加结果校验 `total == prompt + completion` 线性不变式。
+4. `format_monetary_cost` 边界与未校准安全回退：当 `cost.calibrated is False` 时直接返回 `"uncalibrated"`；对天文数字金额（任意项 > 1e12）进行有界防御，安全回退返回 `"uncalibrated"`；全量单元测试与 Lint 静态检查全部通过。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-PRICE-02-A1 | ModelRates 必须拒绝布尔值费率，MonetaryCost 必须校验总额等于提示与补全成本之和（误差容限 1e-4），矛盾时拒绝抛出异常 | `tests/test_pricing_hardening.py` 布尔费率防御与成本线性一致性测试 | E1 |
+| SF-PRICE-02-A2 | estimate_monetary_cost 拒绝空白/超长/控制字符模型与提供商，当 total_tokens 小于提示与补全之和（反向矛盾）时拒绝返回 None，深层嵌套 JSON 递归时防御拒绝 | `tests/test_pricing_hardening.py` 模型与提供商防御、总Token矛盾测试与深层嵌套JSON防御测试 | E2 |
+| SF-PRICE-02-A3 | sum_monetary_costs 在任一输入成本未校准（calibrated=False）时严格扣留总额返回 None，拒绝非序列输入与超过 100,000 项的超长输入，校验合计结果线性不变式 | `tests/test_pricing_hardening.py` 未校准扣留测试、非序列与超大列表防御测试 | E3 |
+| SF-PRICE-02-A4 | format_monetary_cost 针对未校准成本与大于 1e12 的天文数值安全返回 "uncalibrated"；本地静态检查、契约检查与全量测试全部通过，双提交工作流完成验证 | `tests/test_pricing_hardening.py` 格式化边界测试、本地命令矩阵与 CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-PRICE-02-A1 | `tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_model_rates_rejects_boolean_rates`、`tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_monetary_cost_rejects_inconsistent_total` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
+| E2 | SF-PRICE-02-A2 | `tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_empty_or_whitespace_model_or_provider`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_inconsistent_total_tokens`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_deeply_nested_pricing_json`、`tests/test_pricing_hardening.py::TestEstimateMonetaryCostHardening::test_estimate_monetary_cost_rejects_control_characters_in_model` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
+| E3 | SF-PRICE-02-A3 | `tests/test_pricing_hardening.py::TestModelRatesAndMonetaryCostHardening::test_sum_monetary_costs_rejects_uncalibrated_costs`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_non_sequence_or_empty`、`tests/test_pricing_hardening.py::TestSumMonetaryCostsHardening::test_sum_monetary_costs_rejects_excessive_item_count` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_pricing_hardening.py`；GitHub Actions CI `Unit tests` | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) |
+| E4 | SF-PRICE-02-A4 | `tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_returns_uncalibrated_for_uncalibrated_cost`、`tests/test_pricing_hardening.py::TestFormatMonetaryCostHardening::test_format_monetary_cost_rejects_excessive_cost_values`、`tests/test_pricing.py::test_format_monetary_cost`、`tests/test_pricing_security.py::test_format_monetary_cost_handles_invalid_cost` | 本地 `ruff check .`、`python scripts/check_sdd.py`、`git diff --check`、单元测试（1352 passed）；GitHub Actions CI Lint / SDD contract check / Unit tests (1352 passed) / Docker integration tests (15 passed) | `8b680ac6a3248baed6fed62d027a3801c7aaf7be`；passed；CI [Run #44131513062](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062) 全绿（Unit tests 1352 passed, Docker integration tests 15 passed） |
+
+分支执行记录：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-price-02`；Worktree=`selfforge-sf-price-02`；PR=[#107](https://github.com/liuzhouquan/selfforge-agent/pull/107)。源码提交 `8b680ac6a3248baed6fed62d027a3801c7aaf7be` 已通过本地回归与 CI `Run #44131513062` 全套验证。
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-price-02 (worktree: selfforge-sf-price-02) / 8b680ac6a3248baed6fed62d027a3801c7aaf7be
+已完成验收与证据 ID：SF-PRICE-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1352 passed、无跳过；CI Run #44131513062 全绿；文档提交准备就绪
+PR / 准确 head CI / merge SHA（有则填）：PR #107 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44131513062 / 待合入
+```
+
 ### SF-DELIV-02
 
 **目标：** 在工作区交付工作流模块（`src/selfforge_agent/runtime/delivery.py`）中深度加固输入防御、Git Ref 规则守卫与数据完整性校验，杜绝非法交付结果模型绕过校验、`workspace.base_sha` 选项注入与畸形分支名、Git 仓库配置 CRLF/空字节注入、跨会话状态污染、超大变更加载引发 `ARG_MAX` 命令行溢出及临时 PR 正文权限泄露。
@@ -2174,9 +2211,20 @@ Owner / 状态：Codex（本轮开发） / In Review
 已完成验收与证据 ID：SF-DELIV-02-A1..A4（E1–E4）
 未完成 / 环境限制 / 未提交内容归属：源码无未提交；本地全量测试 1658 passed、无跳过；CI Run #44213078416 全绿；文档提交准备就绪
 PR / 准确 head CI / merge SHA（有则填）：PR #108 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44213078416 / 待合入
-仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；等待文档提交与 R2 CI
-下一步：推送文档提交并触发 R2 CI 验证，更新交付状态。
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## 5. 验收追踪与执行记录格式
 
