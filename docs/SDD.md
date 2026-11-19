@@ -160,6 +160,7 @@ flowchart LR
 | 50 | [SF-PRICE-02](#sf-price-02) | In Review | Codex（本轮开发） | SF-PRICE-01（Merged） | [PR #107](https://github.com/liuzhouquan/selfforge-agent/pull/107)：费率卡与成本估算深度加固：布尔费率严格拒绝、成本对象总额与细项线性不变式守卫、未校准成本严格扣留、总Token数反向矛盾Fail-Closed拒绝、深层JSON递归防御与有界并发缓存 |
 | 51 | [SF-DELIV-02](#sf-deliv-02) | In Review | Codex（本轮开发） | SF-DELIV-01（Merged） | [PR #108](https://github.com/liuzhouquan/selfforge-agent/pull/108)：工作区交付工作流二次安全加固：交付结果模型严格校验与路径穿越防御、base_sha十六进制格式校验与Git Ref规则守卫、Git配置注入防御与会话ID一致性校验、超大文件列表分批执行及PR结果有界防御 |
 | 52 | [SF-REV-02](#sf-rev-02) | In Review | Codex（本轮开发） | SF-REV-01（Merged） | [PR #109](https://github.com/liuzhouquan/selfforge-agent/pull/109)：代码审查流水线二次安全加固：路径穿越防御与布尔行号拦截、模型配置强校验与有界Prompt预算截断、Markdown代码块JSON容错与字段清洗转义、审查器契约守卫与全量异常Fail-Closed隔离 |
+| 53 | [SF-LOCK-01](#sf-lock-01) | In Review | Codex（本轮开发） | 无 | [PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110)：多格式依赖锁文件深度安全加固与规范化：非bytes输入受控拦截与5MiB尺寸防御、迭代式50层JSON深度限制防DoS、PEP 508平台条件标记全面拒绝、SHA-256大小写与前缀规范化及RequirementCollector共享抽取抽象 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2250,6 +2251,44 @@ Owner / 状态：Codex（本轮开发） / In Review
 PR / 准确 head CI / merge SHA（有则填）：PR #109 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44223097238 / 待合入
 仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；等待文档提交与 R2 CI
 下一步：推送文档提交并触发 R2 CI 验证，更新交付状态。
+```
+
+### SF-LOCK-01
+
+**目标：** 对多格式依赖锁文件导出与环境依赖解析器（`src/selfforge_agent/runtime/lockfiles.py`）进行深度安全加固与规范化：对非 `bytes` 输入与超限内容 Fail-Closed 拦截、迭代式有界深度遍历防范 JSON DoS 栈溢出、全面拦截带有 PEP 508 平台条件标记（markers / marker / sys_platform / platform_machine / targets / extra / environment 等）或 `optional = true` 的非无条件依赖、严格支持 `sha256:` 与 `sha256=` 前缀及大小写统一规范化、并引入 `RequirementCollector` 共享抽象统一 poetry.lock、Pipfile.lock、uv.lock 与 requirements.txt 的校验、版本去重与确定性渲染。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/lockfiles.py` 并增加专项复现安全测试 `tests/test_lockfile_hardening.py`；保持对 `export_hash_locked_requirements` 与上游 `selfforge_agent/runtime/environment.py`、`selfforge_agent/cli.py` 现有调用契约的完全向后兼容。
+
+**行为与防御：**
+1. `_validate_content_bytes` 强制类型检查 `isinstance(content, bytes)`，拦截空内容与超过 `MAX_LOCK_BYTES = 5 * 1024 * 1024`（5 MiB）的内容，受控抛出 `ValueError`；
+2. 引入迭代式 `_check_depth`，使用基于显式栈遍历替代递归函数，将 JSON 解析深度严格限制在 `MAX_JSON_DEPTH = 50` 层以内，防范畸形深层嵌套引发 `RecursionError` DoS；
+3. 全面防范非无条件依赖：`_unconditional` 结合 `MARKER_KEYS` 严格拦截 `platform_machine`、`targets`、`environment`、`extra` 等所有已知平台与环境条件标记，拒绝非字符串 marker 与 `optional = true`；
+4. 引入 `normalize_package_name` 实现 PEP 503 包名规范化（小写并折叠 `[-_.]+` 为 `-`），引入 `validate_package_version` 严格校验 PEP 440 版本格式，并设包总数上限（<= 5000）与单包哈希文件数上限（<= 500）；
+5. 扩展 `_hash` 算法校验，严格支持 `sha256:` 与 `sha256=` 前缀，统一规范化 SHA-256 为小写十六进制并过滤空字节；
+6. 抽象共享 `RequirementCollector`，统一管理各锁文件格式的包名规范化、版本冲突分叉拦截、SHA-256 收集与字典序确定性导出。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-LOCK-01-A1 | 拦截非 bytes 输入、空内容与超 5MiB 内容；迭代式 50 层深度遍历拦截深层嵌套 Pipfile.lock JSON 递归 DoS；包总数（5000）与单包哈希数（500）配额生效 | `tests/test_lockfile_hardening.py::TestLockfileEntryDefense` 专项测试 | E1 |
+| SF-LOCK-01-A2 | poetry.lock、Pipfile.lock、uv.lock 全面拒绝平台条件标记（markers / platform_machine / targets / extra / environment 等）与 optional=true；requirements.txt 拒绝 pip 选项与 extras | `tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening` 专项测试 | E2 |
+| SF-LOCK-01-A3 | 严格 SHA-256 校验，支持 sha256: 与 sha256= 前缀解析及大小写规范化；PEP 503 包名规范化与去重；跨 section 版本分叉冲突 Fail-Closed 拦截 | `tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening` 专项测试 | E3 |
+| SF-LOCK-01-A4 | 共享抽象 `RequirementCollector` 统一包规范化、版本校验与哈希累积，确保确定性输出；全量单元测试与 Docker 集成测试通过，CI 全绿 | `tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction` 与 GitHub Actions CI | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-LOCK-01-A1 | `tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_export_rejects_non_bytes_content`、`tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_export_rejects_oversized_content`、`tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_pipfile_rejects_excessive_json_nesting_depth`、`tests/test_lockfile_hardening.py::TestLockfileEntryDefense::test_export_rejects_package_flood_dos` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_lockfile_hardening.py`；GitHub Actions CI `Unit tests` | `41300faea78546b553641777d1ce54f3b23617be`；passed；CI [Run #44228837255](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255) success；[PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110) |
+| E2 | SF-LOCK-01-A2 | `tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_poetry_rejects_extended_pep508_markers`、`tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_pipfile_rejects_extended_markers_and_targets`、`tests/test_lockfile_hardening.py::TestLockfileMarkerAndConditionsHardening::test_requirements_txt_rejects_pip_options_and_extras` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_lockfile_hardening.py`；GitHub Actions CI `Unit tests` | `41300faea78546b553641777d1ce54f3b23617be`；passed；CI [Run #44228837255](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255) success；[PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110) |
+| E3 | SF-LOCK-01-A3 | `tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_hash_handles_sha256_equals_prefix_and_uppercase`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_hash_rejects_non_sha256_algorithms`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_pep503_name_normalization_and_deduplication`、`tests/test_lockfile_hardening.py::TestLockfileHashAndNormalizationHardening::test_version_fork_conflict_detected_across_sections` | `PATH=/home/lzq/projects/studyfor26job/verified-pr-agent/.venv/bin:$PATH PYTHONPATH=src pytest tests/test_lockfile_hardening.py`；GitHub Actions CI `Unit tests` | `41300faea78546b553641777d1ce54f3b23617be`；passed；CI [Run #44228837255](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255) success；[PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110) |
+| E4 | SF-LOCK-01-A4 | `tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_validates_and_normalizes_entries`、`tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_rejects_version_forks_and_empty_hashes`、`tests/test_lockfile_hardening.py::TestRequirementCollectorSharedAbstraction::test_collector_rejects_empty_render` | `ruff check .`、`python3 scripts/check_sdd.py`、`git diff --check`、`pytest tests/test_lockfile_hardening.py` 与 GitHub Actions CI（单元测试 + Docker 集成测试） | `41300faea78546b553641777d1ce54f3b23617be`；passed；CI [Run #44228837255](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255) success；[PR #110](https://github.com/liuzhouquan/selfforge-agent/pull/110) |
+
+```text
+Owner / 状态：Codex（本轮开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-lock-01 (worktree: selfforge-sf-lock-01) / 41300faea78546b553641777d1ce54f3b23617be
+已完成验收与证据 ID：SF-LOCK-01-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：源码与测试已全量验证通过；无未提交源码；没有付费模型测量
+PR / 准确 head CI / merge SHA（有则填）：PR #110 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44228837255 / 待合并
+仍在运行的本任务进程或 CI（无则写无）：本地任务进程无；PR #110 R1 CI 已全部成功通过
+下一步：待 PR #110 审查合并至 main。
 ```
 
 ## 5. 验收追踪与执行记录格式
