@@ -66,10 +66,17 @@ def _git(
 
 
 def _commit(repo: Path, revision: str) -> str:
-    if not isinstance(revision, str) or not _HEX_SHA.fullmatch(revision.strip()):
+    if not isinstance(revision, str):
+        raise GitContextError("Commit must be a string")
+    if "\0" in revision:
+        raise GitContextError("Commit must not contain null bytes")
+    stripped = revision.strip()
+    if not stripped:
+        raise GitContextError("Commit must not be empty or whitespace")
+    if not _HEX_SHA.fullmatch(stripped):
         raise GitContextError("Commit must be a 7–40 character hexadecimal SHA")
-    clean_rev = revision.strip().lower()
-    resolved = _git(repo, "rev-parse", "--verify", f"{clean_rev}^{{commit}}").decode().strip().lower()
+    clean_rev = stripped.lower()
+    resolved = _git(repo, "rev-parse", "--verify", "--end-of-options", f"{clean_rev}^{{commit}}").decode().strip().lower()
     if not re.fullmatch(r"[0-9a-f]{40}", resolved):
         raise GitContextError("Resolved commit is not a 40-character SHA")
     return resolved
@@ -166,7 +173,7 @@ def build_context(repository: Path, base: str, head: str) -> PRContext:
         raise GitContextError(f"Use the Git working tree root: {root}")
 
     base_sha, head_sha = _commit(repository, base), _commit(repository, head)
-    raw = _git(repository, "diff", "--name-status", "-z", "--find-renames", base_sha, head_sha)
+    raw = _git(repository, "diff", "--name-status", "-z", "--find-renames", "--end-of-options", base_sha, head_sha)
     tokens = raw.decode("utf-8", "surrogateescape").split("\0")
     files: list[ChangedFile] = []
     position = 0
@@ -210,6 +217,7 @@ def build_context(repository: Path, base: str, head: str) -> PRContext:
             "--no-ext-diff",
             "--no-textconv",
             "--unified=3",
+            "--end-of-options",
             base_sha,
             head_sha,
             "--",

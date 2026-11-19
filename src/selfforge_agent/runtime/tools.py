@@ -2,6 +2,7 @@
 
 import fnmatch
 import os
+import re
 import stat
 import time
 from collections.abc import Callable
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from selfforge_agent.runtime.execution import DockerExecutor, Executor, HostExecutor
 from selfforge_agent.verification.feedback import failure_feedback
@@ -21,6 +22,11 @@ MAX_WHOLE_FILE_BYTES = 128_000
 MAX_RANGED_FILE_BYTES = 2_000_000
 MAX_READ_LINES = 200
 MAX_SEARCH_BYTES = 8_000_000
+MAX_TOOL_NAME_LENGTH = 64
+MAX_PATH_LENGTH = 4096
+MAX_EDIT_POLICY_BYTES = 16 * 1024 * 1024  # 16 MiB
+TOOL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
 PROTECTED_NAMES = {
     ".git", ".venv", ".env", ".local", ".selfforge", ".workspaces", ".aws", ".ssh",
     ".npmrc", ".pypirc", ".netrc",
@@ -40,11 +46,42 @@ class ReadFile(ToolArgs):
     start_line: int | None = Field(default=None, ge=1, description="First line, inclusive")
     end_line: int | None = Field(default=None, ge=1, description="Last line, inclusive")
 
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Path must be a non-empty string")
+        if "\x00" in v:
+            raise ValueError("Path must not contain null bytes")
+        if len(v) > MAX_PATH_LENGTH:
+            raise ValueError(f"Path exceeds maximum length of {MAX_PATH_LENGTH}")
+        return v
+
 
 class EditFile(ToolArgs):
     path: str
     old_text: str = Field(description="Exact text to replace; empty only when creating a new file")
     new_text: str
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Path must be a non-empty string")
+        if "\x00" in v:
+            raise ValueError("Path must not contain null bytes")
+        if len(v) > MAX_PATH_LENGTH:
+            raise ValueError(f"Path exceeds maximum length of {MAX_PATH_LENGTH}")
+        return v
+
+    @field_validator("old_text", "new_text")
+    @classmethod
+    def _validate_texts(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise TypeError("Text must be a string")
+        if len(v.encode("utf-8")) > MAX_EDIT_POLICY_BYTES:
+            raise ValueError(f"Text exceeds maximum size limit of {MAX_EDIT_POLICY_BYTES} bytes")
+        return v
 
 
 class SearchCode(ToolArgs):
@@ -52,10 +89,44 @@ class SearchCode(ToolArgs):
     path: str = "."
     glob: str = "*.py"
 
+    @field_validator("pattern")
+    @classmethod
+    def _validate_pattern(cls, v: str) -> str:
+        if not isinstance(v, str) or not v or len(v) > 200 or "\x00" in v:
+            raise ValueError("Search pattern is invalid: must be a non-empty string <= 200 characters without null bytes")
+        return v
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Path must be a non-empty string")
+        if "\x00" in v:
+            raise ValueError("Path must not contain null bytes")
+        if len(v) > MAX_PATH_LENGTH:
+            raise ValueError(f"Path exceeds maximum length of {MAX_PATH_LENGTH}")
+        return v
+
+    @field_validator("glob")
+    @classmethod
+    def _validate_glob(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip() or len(v) > 100 or "\x00" in v:
+            raise ValueError("Search glob is invalid: must be a non-empty string <= 100 characters without null bytes")
+        return v
+
 
 class Bash(ToolArgs):
     command: str
     timeout: float = Field(default=20, gt=0, le=120)
+
+    @field_validator("command")
+    @classmethod
+    def _validate_command(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip() or len(v) > 2_000:
+            raise ValueError("Command is empty or too long")
+        if "\x00" in v:
+            raise ValueError("Command must not contain null bytes")
+        return v
 
 
 class RunTests(ToolArgs):
@@ -63,6 +134,33 @@ class RunTests(ToolArgs):
     keyword: str | None = Field(default=None, min_length=1, max_length=200,
                                 description="Optional pytest -k expression")
     timeout: float = Field(default=60, gt=0, le=180)
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Path must be a non-empty string")
+        if "\x00" in v:
+            raise ValueError("Path must not contain null bytes")
+        if len(v) > MAX_PATH_LENGTH:
+            raise ValueError(f"Path exceeds maximum length of {MAX_PATH_LENGTH}")
+        return v
+
+    @field_validator("keyword")
+    @classmethod
+    def _validate_keyword(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise TypeError("Keyword must be a string")
+        stripped = v.strip()
+        if not stripped or len(v) > 200:
+            raise ValueError("Keyword must be between 1 and 200 characters")
+        if any(c in v for c in ("\r", "\n", "\x00")):
+            raise ValueError("Keyword must not contain null bytes or newlines")
+        if stripped.startswith("-"):
+            raise ValueError("Keyword must not start with '-' (option injection defense)")
+        return v
 
 
 @dataclass(frozen=True)
@@ -79,8 +177,13 @@ class EditPolicy:
     allow_create: bool = True
 
     def __post_init__(self) -> None:
-        if self.max_file_bytes <= 0:
-            raise ValueError("Edit size limit must be positive")
+        if (
+            isinstance(self.max_file_bytes, bool)
+            or not isinstance(self.max_file_bytes, int)
+            or self.max_file_bytes <= 0
+            or self.max_file_bytes > MAX_EDIT_POLICY_BYTES
+        ):
+            raise ValueError(f"Edit size limit must be a positive integer not exceeding {MAX_EDIT_POLICY_BYTES}")
 
 
 @dataclass(frozen=True)
@@ -124,6 +227,14 @@ class ToolRegistry:
         return [item.schema() for item in self.definitions.values()]
 
     def _path(self, value: str) -> Path:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Path must be a non-empty string")
+        if "\x00" in value:
+            raise ValueError("Path must not contain null bytes")
+        if len(value) > MAX_PATH_LENGTH:
+            raise ValueError(f"Path exceeds maximum length of {MAX_PATH_LENGTH}")
+        if "\\" in value or ":" in value:
+            raise ValueError("Path must stay inside the workspace")
         relative = Path(value)
         if relative.is_absolute() or ".." in relative.parts or any(
             _protected(part) for part in relative.parts
@@ -138,15 +249,36 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: dict[str, Any]) -> ToolOutcome:
         started = time.monotonic()
+        if not isinstance(name, str) or not name.strip() or len(name) > MAX_TOOL_NAME_LENGTH or not TOOL_NAME_PATTERN.match(name):
+            return ToolOutcome(
+                f"Tool error: invalid tool name {name!r}", False, time.monotonic() - started
+            )
+        if not isinstance(arguments, dict):
+            return ToolOutcome(
+                "Tool error: arguments must be a dictionary", False, time.monotonic() - started
+            )
+        if name not in self.definitions:
+            return ToolOutcome(
+                f"Tool error: unknown tool {name!r}", False, time.monotonic() - started
+            )
         try:
             definition = self.definitions[name]
             args = definition.args_type.model_validate(arguments)
             outcome = definition.handler(args)
-        except (KeyError, ValidationError, ValueError, TypeError, OSError, RuntimeError) as exc:
+        except (ValidationError, ValueError, TypeError, OSError, RuntimeError) as exc:
             outcome = ToolOutcome(f"Tool error: {exc}", False)
+        except Exception as exc:  # noqa: BLE001 - tool execution boundary must isolate arbitrary errors
+            msg = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            outcome = ToolOutcome(f"Tool error: {msg}", False)
+
         content = outcome.content
+        if not isinstance(content, str):
+            content = str(content)
+        if "\x00" in content:
+            content = content.replace("\x00", "\ufffd")
         if len(content) > MAX_TOOL_OUTPUT:
-            content = content[:MAX_TOOL_OUTPUT] + "\n[output truncated]"
+            marker = "\n[output truncated]"
+            content = content[:MAX_TOOL_OUTPUT - len(marker)] + marker
         return ToolOutcome(content, outcome.ok, time.monotonic() - started)
 
     @contextmanager
@@ -203,6 +335,10 @@ class ToolRegistry:
         policy = self.edit_policy
         if policy.allowed_paths is not None and args.path not in policy.allowed_paths:
             raise ValueError("Edit path is not an allowed changed source file")
+        if len(args.new_text.encode("utf-8")) > policy.max_file_bytes:
+            raise ValueError("Edited file exceeds size limit")
+        if len(args.old_text.encode("utf-8")) > policy.max_file_bytes:
+            raise ValueError("old_text exceeds size limit")
         path = self._path(args.path)
         candidate = self.root
         for part in Path(args.path).parts:
@@ -236,9 +372,9 @@ class ToolRegistry:
 
     def _search(self, args: ToolArgs) -> ToolOutcome:
         assert isinstance(args, SearchCode)
-        if not args.pattern or len(args.pattern) > 200:
+        if not args.pattern or len(args.pattern) > 200 or "\x00" in args.pattern:
             raise ValueError("Search pattern or glob is invalid")
-        if not args.glob or not args.glob.strip() or len(args.glob) > 100:
+        if not args.glob or not args.glob.strip() or len(args.glob) > 100 or "\x00" in args.glob:
             raise ValueError("Search pattern or glob is invalid")
         base = self.root if args.path == "." else self._path(args.path)
         if not base.is_dir():
@@ -308,6 +444,8 @@ class ToolRegistry:
         assert self.executor is not None
         if not args.command.strip() or len(args.command) > 2_000:
             raise ValueError("Command is empty or too long")
+        if "\x00" in args.command:
+            raise ValueError("Command must not contain null bytes")
         result = self.executor.run(args.command, args.timeout)
         return ToolOutcome(f"exit={result.returncode} timeout={result.timed_out}\n{result.output}",
                            result.returncode == 0 and not result.timed_out)
@@ -320,6 +458,12 @@ class ToolRegistry:
             raise ValueError("Test path does not exist")
         if not path.is_file() and not path.is_dir():
             raise ValueError("Test path is not a regular file or directory")
+        if args.keyword is not None:
+            stripped = args.keyword.strip()
+            if stripped.startswith("-"):
+                raise ValueError("Keyword must not start with '-' (option injection defense)")
+            if any(c in args.keyword for c in ("\r", "\n", "\x00")):
+                raise ValueError("Keyword must not contain null bytes or newlines")
         relative = path.relative_to(self.root).as_posix()
         if isinstance(self.executor, DockerExecutor):
             # Retain the existing executor's image and durable cancellation marker.

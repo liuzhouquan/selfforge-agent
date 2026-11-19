@@ -1,35 +1,81 @@
 """Finite structured-lock export; no dependency resolution or target selection."""
 
+from __future__ import annotations
+
+import json
 import re
 import tomllib
+from collections.abc import Iterable
+
+MAX_LOCK_BYTES = 5 * 1024 * 1024  # 5 MiB
+MAX_LOCK_PACKAGES = 5000
+MAX_PACKAGE_FILES = 500
+MAX_JSON_DEPTH = 50
+
+_PKG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+_PKG_VER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]{0,199}$")
+_HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+MARKER_KEYS = (
+    "markers",
+    "marker",
+    "resolution-markers",
+    "platform",
+    "sys_platform",
+    "os_name",
+    "platform_machine",
+    "platform_system",
+    "platform_release",
+    "platform_version",
+    "implementation_name",
+    "implementation_version",
+    "extra",
+    "environment",
+    "targets",
+)
 
 
-def _add(requirements: dict, name: object, version: object, hashes: set[str]) -> None:
-    if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", name)
-            or not isinstance(version, str)
-            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,199}", version)):
-        raise ValueError("Invalid package name or version in lock file")
-    if not hashes:
-        raise ValueError("Lock file includes an external package without supported SHA-256 hashes")
-    key = re.sub(r"[-_.]+", "-", name).lower()
-    if key in requirements:
-        if requirements[key][1] != version:
-            raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
-        requirements[key][2].update(hashes)
-    else:
-        requirements[key] = (key, version, hashes)
+def _validate_content_bytes(content: object) -> bytes:
+    if not isinstance(content, bytes):
+        raise TypeError(f"Lock file content must be bytes, got {type(content).__name__}")
+    if len(content) > MAX_LOCK_BYTES:
+        raise ValueError(f"Lock file content exceeds 5 MiB size limit ({len(content)} bytes)")
+    if not content.strip():
+        raise ValueError("Lock file is empty")
+    return content
+
+
+def normalize_package_name(name: object) -> str:
+    if not isinstance(name, str) or not _PKG_NAME_RE.fullmatch(name.strip()) or "\x00" in name:
+        raise ValueError("Invalid package name in lock file")
+    return re.sub(r"[-_.]+", "-", name.strip()).lower()
+
+
+def validate_package_version(version: object) -> str:
+    if not isinstance(version, str) or not _PKG_VER_RE.fullmatch(version.strip()) or "\x00" in version:
+        raise ValueError("Invalid package version in lock file")
+    clean = version.strip()
+    if any(op in clean for op in ("<", ">", "~", "=")):
+        raise ValueError("Invalid exact package version in lock file")
+    return clean
 
 
 def _hash(value: object) -> set[str]:
     if not isinstance(value, str):
         return set()
-    cleaned = value.strip().lower().removeprefix("sha256:")
-    return {"sha256:" + cleaned} if re.fullmatch(r"[0-9a-f]{64}", cleaned) else set()
+    cleaned = value.strip().lower()
+    if cleaned.startswith(("sha256:", "sha256=")):
+        cleaned = cleaned[7:]
+    if "\x00" in cleaned:
+        return set()
+    return {"sha256:" + cleaned} if _HEX_64_RE.fullmatch(cleaned) else set()
 
 
 def _file_hashes(entries: object, label: str) -> set[str]:
     if not isinstance(entries, list):
         raise ValueError(f"Invalid {label} list in lock file")  # noqa: TRY004 - file data
+    if len(entries) > MAX_PACKAGE_FILES:
+        raise ValueError(f"Package exceeds maximum file entries of {MAX_PACKAGE_FILES}")
     hashes: set[str] = set()
     for entry in entries:
         if not isinstance(entry, (dict, str)):
@@ -39,9 +85,13 @@ def _file_hashes(entries: object, label: str) -> set[str]:
 
 
 def _unconditional(package: dict) -> None:
-    for key in ("markers", "marker", "resolution-markers", "platform", "sys_platform", "os_name"):
+    if package.get("optional") is True:
+        raise ValueError("Optional packages require a target-aware export; cannot flatten this lock")
+    for key in MARKER_KEYS:
         if key in package:
             val = package[key]
+            if val is None:
+                continue
             if not isinstance(val, str):
                 raise ValueError("Invalid package marker in lock file")
             cleaned = val.strip()
@@ -49,16 +99,85 @@ def _unconditional(package: dict) -> None:
                 raise ValueError("Conditional markers require a target-aware export; cannot flatten this lock")
 
 
+def _check_depth(obj: object, max_depth: int = MAX_JSON_DEPTH) -> None:
+    stack = [(obj, 1)]
+    while stack:
+        cur, depth = stack.pop()
+        if depth > max_depth:
+            raise ValueError(f"Lock file exceeds maximum JSON nesting depth ({max_depth})")
+        if isinstance(cur, dict):
+            for v in cur.values():
+                if isinstance(v, (dict, list)):
+                    stack.append((v, depth + 1))
+        elif isinstance(cur, list):
+            for v in cur:
+                if isinstance(v, (dict, list)):
+                    stack.append((v, depth + 1))
+
+
+class RequirementCollector:
+    """Bounded, PEP-503 normalizing accumulator for hash-locked requirements with version-fork conflict detection."""
+
+    def __init__(self, max_packages: int = MAX_LOCK_PACKAGES) -> None:
+        self.max_packages = max_packages
+        self._requirements: dict[str, tuple[str, str, set[str]]] = {}
+
+    def add(self, name: object, version: object, hashes: set[str] | Iterable[str]) -> None:
+        key = normalize_package_name(name)
+        clean_version = validate_package_version(version)
+        normalized_hashes = set()
+        for h in hashes:
+            normalized_hashes.update(_hash(h))
+        if not normalized_hashes:
+            raise ValueError("Lock file includes an external package without supported SHA-256 hashes")
+
+        if key in self._requirements:
+            _existing_name, existing_version, existing_hashes = self._requirements[key]
+            if existing_version != clean_version:
+                raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
+            existing_hashes.update(normalized_hashes)
+        else:
+            if len(self._requirements) >= self.max_packages:
+                raise ValueError(f"Lock file exceeds maximum package count of {self.max_packages}")
+            self._requirements[key] = (key, clean_version, set(normalized_hashes))
+
+    def render(self) -> str:
+        if not self._requirements:
+            raise ValueError("No hashed requirements found in lock file")
+        lines = sorted(
+            f"{name}=={version}" + "".join(f" --hash={h}" for h in sorted(hashes))
+            for name, version, hashes in self._requirements.values()
+        )
+        return "\n".join(lines) + "\n"
+
+
+# Keep _add and _render for backward compatibility
+def _add(requirements: dict, name: object, version: object, hashes: set[str]) -> None:
+    key = normalize_package_name(name)
+    clean_version = validate_package_version(version)
+    normalized_hashes = set()
+    for h in hashes:
+        normalized_hashes.update(_hash(h))
+    if not normalized_hashes:
+        raise ValueError("Lock file includes an external package without supported SHA-256 hashes")
+    if key in requirements:
+        if requirements[key][1] != clean_version:
+            raise ValueError("Version forks require a target-aware export; cannot flatten this lock")
+        requirements[key][2].update(normalized_hashes)
+    else:
+        requirements[key] = (key, clean_version, set(normalized_hashes))
+
+
 def _render(requirements: dict) -> str:
-    if not requirements:
-        raise ValueError("No hashed requirements found in lock file")
-    lines = sorted(f"{name}=={version}" + "".join(f" --hash={h}" for h in sorted(hashes))
-                   for name, version, hashes in requirements.values())
-    return "\n".join(lines) + "\n"
+    collector = RequirementCollector()
+    for name, version, hashes in requirements.values():
+        collector.add(name, version, hashes)
+    return collector.render()
 
 
 def export_toml_requirements(content: bytes) -> str:
     """Export uv or Poetry package pins; skip explicit local/VCS source entries."""
+    _validate_content_bytes(content)
     try:
         data = tomllib.loads(content.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError, RecursionError) as exc:
@@ -66,13 +185,15 @@ def export_toml_requirements(content: bytes) -> str:
     packages = data.get("package", [])
     if not isinstance(packages, list) or not packages:
         raise ValueError("Lock file contains no packages")
+    if len(packages) > MAX_LOCK_PACKAGES:
+        raise ValueError(f"Lock file exceeds maximum package count of {MAX_LOCK_PACKAGES}")
     metadata = data.get("metadata", {})
     if not isinstance(metadata, dict):
         raise ValueError("Invalid metadata in lock file")  # noqa: TRY004 - file data
     metadata_files = metadata.get("files", {})
     if not isinstance(metadata_files, dict):
         raise ValueError("Invalid metadata.files in lock file")  # noqa: TRY004 - file data
-    requirements: dict = {}
+    collector = RequirementCollector()
     for package in packages:
         if not isinstance(package, dict):
             raise ValueError("Invalid package entry in lock file")  # noqa: TRY004 - file data
@@ -93,8 +214,8 @@ def export_toml_requirements(content: bytes) -> str:
         name = package.get("name")
         if isinstance(name, str) and name in metadata_files:
             hashes.update(_file_hashes(metadata_files[name], "metadata.files"))
-        _add(requirements, name, package.get("version"), hashes)
-    return _render(requirements)
+        collector.add(name, package.get("version"), hashes)
+    return collector.render()
 
 
 def _unique_object(pairs: list[tuple]) -> dict:
@@ -108,14 +229,14 @@ def _unique_object(pairs: list[tuple]) -> dict:
 
 def export_pipfile_requirements(content: bytes) -> str:
     """Export unconditional exact pins from default and develop, rejecting malformed sections."""
-    import json
-
+    _validate_content_bytes(content)
     try:
         data = json.loads(content.decode("utf-8"), object_pairs_hook=_unique_object)
     except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
         raise ValueError("Failed to parse lock file as JSON") from exc
     if not isinstance(data, dict):
         raise ValueError("Lock file contains no packages")  # noqa: TRY004 - file data
+    _check_depth(data)
     if "_meta" in data and not isinstance(data["_meta"], dict):
         raise ValueError("Invalid Pipfile metadata in lock file")
     for name in ("default", "develop"):
@@ -123,7 +244,12 @@ def export_pipfile_requirements(content: bytes) -> str:
             raise ValueError("Invalid Pipfile section in lock file")
     if not data.get("default") and not data.get("develop"):
         raise ValueError("Lock file contains no packages")
-    requirements: dict = {}
+
+    total_pkgs = len(data.get("default", {})) + len(data.get("develop", {}))
+    if total_pkgs > MAX_LOCK_PACKAGES:
+        raise ValueError(f"Lock file exceeds maximum package count of {MAX_LOCK_PACKAGES}")
+
+    collector = RequirementCollector()
     for section in ("default", "develop"):
         for name, package in data.get(section, {}).items():
             if not isinstance(package, dict):
@@ -138,19 +264,21 @@ def export_pipfile_requirements(content: bytes) -> str:
             if not isinstance(raw_hashes, list) or any(not isinstance(h, str) for h in raw_hashes):
                 raise ValueError("Invalid hash list in lock file")
             hashes = set().union(*(_hash(h) for h in raw_hashes)) if raw_hashes else set()
-            _add(requirements, name, version[2:], hashes)
-    return _render(requirements)
+            clean_ver = version[2:].strip()
+            collector.add(name, clean_ver, hashes)
+    return collector.render()
 
 
 def export_requirements_txt(content: bytes) -> str:
     """Export hash-locked requirements from pip-compile or flat requirements.txt format."""
+    _validate_content_bytes(content)
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError("Failed to parse lock file as text") from exc
 
     joined = text.replace("\r\n", "\n").replace("\\\n", " ")
-    requirements: dict = {}
+    collector = RequirementCollector()
 
     for raw_line in joined.splitlines():
         line = raw_line.split("#", 1)[0].strip()
@@ -181,6 +309,6 @@ def export_requirements_txt(content: bytes) -> str:
             else:
                 raise ValueError("URLs, markers, extras and pip directives are unsupported")
 
-        _add(requirements, name, version, hashes)
+        collector.add(name, version, hashes)
 
-    return _render(requirements)
+    return collector.render()

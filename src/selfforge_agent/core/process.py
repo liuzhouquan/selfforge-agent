@@ -9,12 +9,48 @@ import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 
 MAX_COMMAND_ARGS = 1000
 MAX_ARG_LENGTH = 128 * 1024
 MAX_TIMEOUT_SECONDS = 3600.0
 MAX_OUTPUT_LIMIT_BYTES = 50 * 1024 * 1024
+MAX_ENV_COUNT = 500
+MAX_ENV_BYTES = 64 * 1024
+MAX_ENV_KEY_LENGTH = 1024
+
+SENSITIVE_ENV_NAMES = frozenset({
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GIT_ASKPASS",
+    "DEEPSEEK_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_API_KEY",
+    "OPENAI_API_KEY",
+    "CHATGPT_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENCODE_API_KEY",
+    "GEMINI_API_KEY",
+    "XAI_API_KEY",
+    "GROK_API_KEY",
+    "MOONSHOT_API_KEY",
+    "KIMI_API_KEY",
+    "ZHIPUAI_API_KEY",
+    "GLM_API_KEY",
+    "SELFFORGE_API_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+})
+
+SENSITIVE_ENV_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_AUTH")
+
+
+def _is_sensitive_env(key: str) -> bool:
+    upper = key.upper()
+    if upper in SENSITIVE_ENV_NAMES:
+        return True
+    return any(upper.endswith(suffix) for suffix in SENSITIVE_ENV_SUFFIXES)
+
 
 
 @dataclass(frozen=True)
@@ -61,18 +97,55 @@ def _validate_cwd(cwd: str | Path | None) -> Path | None:
     return cwd_path
 
 
-def _validate_env(env: dict[str, str] | None) -> dict[str, str] | None:
+def _validate_env(
+    env: dict[str, str] | None,
+    *,
+    scrub_credentials: bool = False,
+    allow_credentials: set[str] | frozenset[str] | None = None,
+) -> dict[str, str] | None:
     if env is None:
-        return None
+        if not scrub_credentials:
+            return None
+        env = dict(os.environ)
+
     if not isinstance(env, dict):
         raise TypeError("env must be a dictionary or None")
+
+    if len(env) > MAX_ENV_COUNT:
+        raise ValueError(f"env has too many variables (maximum allowed is {MAX_ENV_COUNT})")
+
     clean_env: dict[str, str] = {}
+    total_bytes = 0
+    allowed = set(allow_credentials) if allow_credentials else set()
+
     for k, v in env.items():
         if not isinstance(k, str) or not isinstance(v, str):
             raise TypeError("env keys and values must be strings")
+        if not k:
+            raise ValueError("env key must not be empty")
+        if len(k) > MAX_ENV_KEY_LENGTH:
+            raise ValueError(f"env key exceeds maximum allowed length of {MAX_ENV_KEY_LENGTH}")
         if "\0" in k or "\0" in v:
             raise ValueError("env keys and values must not contain null bytes")
+        if "=" in k:
+            raise ValueError(f"env key must not contain '=': {k!r}")
+        if "\r" in k or "\n" in k:
+            raise ValueError(f"env key must not contain newlines: {k!r}")
+
+        k_bytes = len(k.encode("utf-8"))
+        v_bytes = len(v.encode("utf-8"))
+        total_bytes += k_bytes + v_bytes
+
+        if scrub_credentials and _is_sensitive_env(k) and k not in allowed:
+            continue
+
         clean_env[k] = v
+
+    if total_bytes > MAX_ENV_BYTES:
+        raise ValueError(
+            f"total environment size ({total_bytes} bytes) exceeds maximum limit of {MAX_ENV_BYTES} bytes"
+        )
+
     return clean_env
 
 
@@ -109,10 +182,16 @@ def run_bounded(
     timeout: float = 30.0,
     max_bytes: int,
     stderr_bytes: int | None = None,
+    scrub_credentials: bool = False,
+    allow_credentials: set[str] | frozenset[str] | None = None,
 ) -> BoundedProcessResult:
     _validate_command(command)
     cwd_path = _validate_cwd(cwd)
-    clean_env = _validate_env(env)
+    clean_env = _validate_env(
+        env,
+        scrub_credentials=scrub_credentials,
+        allow_credentials=allow_credentials,
+    )
     timeout_val = _validate_timeout(timeout)
     stdout_limit = _validate_output_limit(max_bytes, "max_bytes")
     error_limit = (
@@ -165,15 +244,35 @@ def run_bounded(
             except subprocess.TimeoutExpired as exc:
                 raise TimeoutError("Command timed out") from exc
     finally:
-        # Also clean up children retaining pipes after their parent has exited.
+        # Graceful process group termination: SIGTERM first, followed by escalation to SIGKILL
         if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            else:
+                # The parent exiting does not end its children's cleanup grace.
+                grace_end = monotonic() + 0.15
+                try:
+                    process.wait(timeout=0.15)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+                remaining_grace = grace_end - monotonic()
+                if remaining_grace > 0:
+                    sleep(remaining_grace)
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError, OSError):
                 pass
         elif process.poll() is None:
             try:
-                process.kill()
+                process.terminate()
+                try:
+                    process.wait(timeout=0.15)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+                if process.poll() is None:
+                    process.kill()
             except OSError:
                 pass
         try:

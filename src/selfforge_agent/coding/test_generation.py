@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from selfforge_agent.coding.causal_investigation import CausalInvestigation, investigate_causality
 from selfforge_agent.coding.models import RiskTarget
+from selfforge_agent.coding.risk_prioritization import _clean_text, _normalize_safe_file_path
 from selfforge_agent.coding.worktree import detached_worktree
 from selfforge_agent.core.git_context import build_context
 from selfforge_agent.models import ChangeKind, PRContext, TestResult
@@ -87,14 +88,19 @@ _SYSTEM = (
 def validate_risk_target(context: PRContext, target: RiskTarget | None) -> None:
     if target is None:
         return
+    norm_target_path = _normalize_safe_file_path(target.file_path)
+    if norm_target_path is None:
+        raise ValueError("Risk target must use a safe relative path")
     for change in context.files:
-        if change.path != target.file_path:
+        norm_change_path = _normalize_safe_file_path(change.path)
+        if norm_change_path != norm_target_path:
             continue
         for hunk in change.hunks:
             for line in hunk.lines:
-                if (line.kind == ChangeKind.added and line.new_line == target.line_number
-                        and (line.content.strip() or "<blank added line>") == target.evidence):
-                    return
+                if line.kind == ChangeKind.added and line.new_line == target.line_number:
+                    raw = _clean_text(line.content).strip() or "<blank added line>"
+                    if raw == target.evidence or raw[:2000] == target.evidence:
+                        return
     raise ValueError("Risk target must match an added line in this Base/Head diff")
 
 
