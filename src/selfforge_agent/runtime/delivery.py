@@ -21,14 +21,13 @@ from selfforge_agent.runtime.workspace import CodingWorkspace
 from selfforge_agent.runtime.workspace_diff import MAX_PATH_LIST_BYTES, _visible
 
 _PR_URL_SEARCH_RE = re.compile(
-    r"https://github\.com/(?P<owner>[a-zA-Z0-9][a-zA-Z0-9._-]*)/(?P<repo>[a-zA-Z0-9][a-zA-Z0-9._-]*)/pull/(?P<number>[1-9][0-9]*)"
+    r"https://github\.com/(?P<owner>[a-zA-Z0-9][a-zA-Z0-9._-]*)/(?P<repo>[a-zA-Z0-9._-]+)/pull/(?P<number>[1-9][0-9]*)"
 )
 _PR_URL_EXACT_RE = re.compile(
-    r"^https://github\.com/(?P<owner>[a-zA-Z0-9][a-zA-Z0-9._-]*)/(?P<repo>[a-zA-Z0-9][a-zA-Z0-9._-]*)/pull/(?P<number>[1-9][0-9]*)/?$"
+    r"^https://github\.com/(?P<owner>[a-zA-Z0-9][a-zA-Z0-9._-]*)/(?P<repo>[a-zA-Z0-9._-]+)/pull/(?P<number>[1-9][0-9]*)/?$"
 )
 _PR_URL_PATTERN = _PR_URL_SEARCH_RE
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
-_REF_NAME_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-\./]+$")
 _REMOTE_NAME_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 _SESSION_ID_SAFE_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
@@ -66,7 +65,7 @@ def _validate_session_id(sess_id: object) -> str:
 def _validate_git_ref_name(ref: object, param_name: str = "branch") -> str:
     if not isinstance(ref, str):
         raise TypeError(f"{param_name} must be a string")
-    r = ref.strip()
+    r = ref
     if (
         not r
         or len(r) > 256
@@ -74,7 +73,9 @@ def _validate_git_ref_name(ref: object, param_name: str = "branch") -> str:
         or "\0" in r
         or "\n" in r
         or "\r" in r
-        or not _REF_NAME_SAFE_RE.match(r)
+        or any(ord(c) <= 32 or ord(c) == 127 or c in "~^:?*[\\" for c in r)
+        or r.startswith("/") or r == "@"
+        or any(p.startswith(".") or p.endswith(".lock") for p in r.split("/"))
         or ".." in r
         or "//" in r
         or "@{" in r
@@ -87,7 +88,7 @@ def _validate_git_ref_name(ref: object, param_name: str = "branch") -> str:
 def _validate_relative_path(path: object) -> str:
     if not isinstance(path, str) or not path.strip():
         raise TypeError("path must be a non-empty string")
-    p = path.strip()
+    p = path
     if "\0" in p or "\r" in p or "\n" in p:
         raise ValueError("path must not contain control characters or null bytes")
     if p.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", p):
