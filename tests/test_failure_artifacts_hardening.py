@@ -290,3 +290,44 @@ class TestDeterministicListingAggregationAndCleanup:
         assert not tmp1.exists()
         assert not tmp2.exists()
         assert (root / valid).exists()
+
+
+@pytest.mark.parametrize('field,value', [('version', True), ('repeat', True), ('visible', {'passed': -1})])
+def test_artifact_model_matches_strict_disk_schema(field, value):
+    payload = {'case': 'fixture', 'repeat': 0, 'reason': 'failed', field: value}
+    with pytest.raises(ValidationError):
+        FailureArtifact(**payload)
+
+
+def test_artifact_preparation_rejects_ancestor_symlink(tmp_path):
+    real = tmp_path / 'real'
+    real.mkdir()
+    alias = tmp_path / 'alias'
+    alias.symlink_to(real, target_is_directory=True)
+    with pytest.raises((ValueError, OSError)):
+        prepare_artifacts(alias / 'artifacts', [])
+
+
+@pytest.mark.parametrize('operation', ['read', 'write', 'list', 'cleanup'])
+def test_artifact_operations_reject_ancestor_symlink(tmp_path, operation):
+    real = tmp_path / 'real'
+    real.mkdir()
+    root = prepare_artifacts(real / 'artifacts', [])
+    filename = write_failure(root, case='fixture', repeat=0, reason='failed', visible=None, holdout=None)
+    alias = tmp_path / 'alias'
+    alias.symlink_to(real, target_is_directory=True)
+    linked = alias / root.relative_to(real)
+    with pytest.raises((ValueError, OSError)):
+        if operation == 'read':
+            read_failure(linked, filename)
+        elif operation == 'write':
+            write_failure(linked, case='fixture', repeat=1, reason='failed', visible=None, holdout=None)
+        elif operation == 'list':
+            list_failures(linked)
+        else:
+            cleanup_temporary_artifacts(linked)
+
+
+def test_failure_reason_rejects_terminal_osc_sequence(tmp_path):
+    with pytest.raises(ValueError, match='ANSI|control'):
+        write_failure(tmp_path, case='fixture', repeat=0, reason='\x1b]0;spoof\x07failed', visible=None, holdout=None)
