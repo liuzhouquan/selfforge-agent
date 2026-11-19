@@ -165,6 +165,7 @@ flowchart LR
 | 55 | [SF-CORE-02](#sf-core-02) | In Review | Codex（本轮开发） | 无 | [PR #112](https://github.com/liuzhouquan/selfforge-agent/pull/112)：进程执行管道死锁防御、优雅终止降级、环境变量有界脱敏与 Git Context 修订严格校验 |
 | 56 | [SF-SESS-02](#sf-sess-02) | In Review | Codex（本轮开发） | 无 | [PR #113](https://github.com/liuzhouquan/selfforge-agent/pull/113)：会话快照与导出原子写盘、Trace与敏感信息自动脱敏、事件配额防御及损坏会话恢复降级 |
 | 57 | [SF-HTTP-01](#sf-http-01) | In Review | Codex（自主开发） | 无 | [PR #114](https://github.com/liuzhouquan/selfforge-agent/pull/114)：模型 HTTP 传输与网络安全加固：CRLF 头注入防御、自定义 Header 格式与上限校验、请求体 Schema/大小有界防御、URL 片段拦截与 IPv6 环回支持、瞬态故障指数退避重试与截止期守护、响应流 Chunk 计数预算与 Socket 资源泄漏防护 |
+| 58 | [SF-TOOL-02](#sf-tool-02) | In Review | Codex（自主开发） | 无 | [PR #115](https://github.com/liuzhouquan/selfforge-agent/pull/115)：工具执行器与参数模式安全加固：入参模式防御与非字典入参拒绝、路径/命令/关键字注入防护（杜绝空字节与前导选项）、编辑载荷与策略大小有界防御、输出有界安全截断与异常受控隔离 |
 
 阶段完成条件：前三项验收全部闭合且已合并；新环境完整验证可复现；通用修复验证具备独立旧失败/新通过的 Docker 证据；当前规格能追溯到测试与准确提交。SF-EVAL-08 是后续测量准备，仍不代表产品的真实任务可靠性已经达标。
 
@@ -2445,6 +2446,45 @@ PR / 准确 head CI / merge SHA（有则填）：PR #114 / https://github.com/li
 下一步：等待审查并合并 PR #114；准备后续任务开发。
 ```
 
+### SF-TOOL-02
+
+**目标：** 对工具注册与执行器（`ToolRegistry`）进行二次深度安全与韧性加固，防止非字典入参异常泄漏、非法工具名穿透、空字节与前导选项参数注入、超大编辑载荷内存耗尽，并提供工具执行输出安全脱敏与全类型异常受控隔离。
+
+**范围/入口：** 改动 `src/selfforge_agent/runtime/tools.py`；新增专项安全与韧性测试套件 `tests/test_tool_execution_hardening.py`；保持与既有调用方（`cli.py`、`coding/agent.py`、`runtime/agent.py`、`api/app.py`、`evaluation.py`、`benchmark.py`）及既有安全测试 `tests/test_runtime_tool_safety.py`、`tests/test_runtime_tool_loop.py` 的完全向后兼容。
+
+**行为：**
+1. `ToolRegistry.execute` 严格校验工具名格式（限制 64 字符且符合 `^[a-zA-Z0-9_-]+$`），严格校验工具参数入参必须为字典类型（`dict`），非字典或未声明未知工具均返回受控错误；
+2. `ReadFile`、`EditFile`、`SearchCode`、`RunTests` 的路径统一执行空字节（`\x00`）、空白及超长路径（4096 字符）拦截，`_path` 拒绝 Windows 反斜杠与跨平台驱动盘符注入；
+3. `Bash.command` 严格拦截空字节与空白命令，`RunTests.keyword` 严格拦截前导选项注入（禁止以 `-` 开头）、换行符与空字节；
+4. `EditFile` 在执行文本替换前预检新旧文本尺寸，防止内存膨胀 DoS；`EditPolicy` 校验 `max_file_bytes` 为正整数且不超过 16 MiB；
+5. `SearchCode` 对 `pattern` 与 `glob` 执行严格空字节与长度上界校验；
+6. `ToolRegistry.execute` 捕获任意未受控异常（包括 `AttributeError`、`ZeroDivisionError`、`IndexError` 等），避免工作区工具崩溃中断自主编码主循环；对输出内容中的空字节安全清洗脱敏，并严守 `MAX_TOOL_OUTPUT`（6,000 字符）截断边界。
+
+| 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
+| --- | --- | --- | --- |
+| SF-TOOL-02-A1 | 非字典参数输入被拒，非法工具名与未知工具受控报错，未声明额外字段被 Pydantic 模型拦截 | `tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema` | E1 |
+| SF-TOOL-02-A2 | Bash 命令空字节被拒，pytest 关键字前导选项注入与换行/空字节被拒，路径空字节与穿越被拒 | `tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening` | E2 |
+| SF-TOOL-02-A3 | EditFile 超大载荷在执行前拦截，EditPolicy 非法大小上限被拒，SearchCode 模式与通配符空字节被拒 | `tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense` | E3 |
+| SF-TOOL-02-A4 | 工具执行中的任意异常（如除以零/属性错误）受控隔离为失败结果，输出空字节被安全清洗，输出超限严格截断 | `tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation` | E4 |
+
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-TOOL-02-A1 | `tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_non_dict_arguments`、`tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_invalid_tool_names`、`tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_unknown_tool`、`tests/test_tool_execution_hardening.py::TestToolArgumentValidationAndSchema::test_execute_rejects_extra_undeclared_fields` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_tool_execution_hardening.py`；GitHub Actions CI `Unit tests` | `2a271b0586e41366113b246a4892c57a972c83b7`；passed；CI [Run #44304338655](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655) |
+| E2 | SF-TOOL-02-A2 | `tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_bash_command_rejects_null_bytes`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_bash_command_rejects_empty_or_whitespace_only`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_run_tests_keyword_rejects_leading_dash_option_injection`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_run_tests_keyword_rejects_null_bytes_and_newlines`、`tests/test_tool_execution_hardening.py::TestInjectionAndPathSanitizationHardening::test_path_validation_rejects_null_bytes_and_empty_paths` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_tool_execution_hardening.py`；GitHub Actions CI `Unit tests` | `2a271b0586e41366113b246a4892c57a972c83b7`；passed；CI [Run #44304338655](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655) |
+| E3 | SF-TOOL-02-A3 | `tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_edit_file_rejects_oversized_payload_before_modification`、`tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_edit_policy_rejects_invalid_size_limits`、`tests/test_tool_execution_hardening.py::TestPayloadSizeAndDoSDefense::test_search_code_rejects_null_bytes_and_overlong_inputs` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_tool_execution_hardening.py`；GitHub Actions CI `Unit tests` | `2a271b0586e41366113b246a4892c57a972c83b7`；passed；CI [Run #44304338655](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655) |
+| E4 | SF-TOOL-02-A4 | `tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_isolates_arbitrary_exceptions`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_isolates_zero_division_and_index_error`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_sanitizes_null_bytes_in_output`、`tests/test_tool_execution_hardening.py::TestOutputBoundingAndExceptionIsolation::test_execute_strictly_bounds_output_length` | `PATH=.venv/bin:$PATH PYTHONPATH=src pytest tests/test_tool_execution_hardening.py`；GitHub Actions CI `Unit tests` | `2a271b0586e41366113b246a4892c57a972c83b7`；passed；CI [Run #44304338655](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655) |
+
+执行记录（Owner/状态以上表为准）：Base=`a046afacd0eded27d64a3b3185d1a2b6c21b0fa9`；Branch=`feat/sf-tool-02`；Worktree=`selfforge-sf-tool-02`；PR=[#115](https://github.com/liuzhouquan/selfforge-agent/pull/115)。先编写 `tests/test_tool_execution_hardening.py` 抓住 11 项基线缺陷，随后完成实现；源码提交 `2a271b0586e41366113b246a4892c57a972c83b7` 已通过本地回归（16 passed，非集成全量 1658 passed）与 CI `Run #44304338655`（Lint / SDD / Unit 1658 passed / Docker integration 15 passed）。
+
+```text
+Owner / 状态：Codex（自主开发） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：a046afacd0eded27d64a3b3185d1a2b6c21b0fa9 / feat/sf-tool-02 (worktree: selfforge-sf-tool-02) / 2a271b0586e41366113b246a4892c57a972c83b7
+已完成验收与证据 ID：SF-TOOL-02-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无
+PR / 准确 head CI / merge SHA（有则填）：PR #115 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44304338655
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待审查并合并 PR #115；准备后续任务开发。
+```
 
 
 
