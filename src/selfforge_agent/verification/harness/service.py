@@ -2,6 +2,8 @@
 
 from selfforge_agent.verification.harness.base_adapter import BaseHarnessAdapter
 from selfforge_agent.verification.harness.contracts import (
+    HarnessReasonCode,
+    HarnessStatus,
     TestExecutionRequest,
     TestPlan,
     TestRunResult,
@@ -49,3 +51,40 @@ class TestHarness:
 
         adapter = self.get_adapter(plan.backend)
         return adapter.execute_plan(plan)
+
+    def execute_with_availability_check(self, target: TestPlan | TestExecutionRequest) -> TestRunResult:
+        """Execute with controlled environment unavailable classification."""
+        backend = target.backend
+        sandbox = target.sandbox
+
+        if backend not in self._adapters:
+            return TestRunResult(
+                run_id=f"run-env-unavail-{backend}",
+                adapter_id=backend,
+                adapter_version="1.0",
+                plan_digest="0" * 64,
+                status=HarnessStatus.ERROR,
+                reason_code=HarnessReasonCode.ENVIRONMENT_UNAVAILABLE,
+                exit_code=None,
+                duration_seconds=0.0,
+                error_message=f"Environment unavailable for backend {backend!r}: toolchain/adapter is not installed",
+                environment=f"{sandbox}; backend={backend}; status=unavailable",
+                command=[backend, "test"],
+            )
+
+        try:
+            return self.execute(target)
+        except UnsupportedBackendError as exc:
+            return TestRunResult(
+                run_id=f"run-env-unavail-{backend}",
+                adapter_id=backend,
+                adapter_version="1.0",
+                plan_digest="0" * 64,
+                status=HarnessStatus.ERROR,
+                reason_code=HarnessReasonCode.ENVIRONMENT_UNAVAILABLE,
+                exit_code=None,
+                duration_seconds=0.0,
+                error_message=f"Environment unavailable: {exc}",
+                environment=f"{sandbox}; backend={backend}; status=unavailable",
+                command=[backend, "test"],
+            )
