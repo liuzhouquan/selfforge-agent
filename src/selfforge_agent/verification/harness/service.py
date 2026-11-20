@@ -10,6 +10,7 @@ from selfforge_agent.verification.harness.contracts import (
     UnsupportedBackendError,
 )
 from selfforge_agent.verification.harness.pytest_adapter import PytestAdapter
+from selfforge_agent.verification.harness.vitest_adapter import VitestAdapter
 
 
 class TestHarness:
@@ -20,6 +21,7 @@ class TestHarness:
     def __init__(self, adapters: dict[str, BaseHarnessAdapter] | None = None) -> None:
         self._adapters: dict[str, BaseHarnessAdapter] = adapters if adapters is not None else {
             "pytest": PytestAdapter(),
+            "vitest": VitestAdapter(),
         }
 
     def register_adapter(self, backend: str, adapter: BaseHarnessAdapter) -> None:

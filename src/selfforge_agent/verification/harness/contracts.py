@@ -97,6 +97,78 @@ class PytestSelection(BaseModel):
         return v
 
 
+JS_TS_EXTENSIONS = frozenset({
+    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts",
+})
+
+
+class VitestSelection(BaseModel):
+    """Framework-specific test selection parameters for Vitest."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    test_path: str | None = Field(default=None, max_length=4096)
+    test_name_pattern: str | None = Field(default=None, max_length=512)
+    config_file: str | None = Field(default=None, max_length=4096)
+
+    @field_validator("test_path")
+    @classmethod
+    def validate_test_path(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("test_path must not be blank")
+        if "\x00" in v:
+            raise ValueError("test_path must not contain null bytes")
+        v = v.strip()
+        if v.startswith("-"):
+            raise ValueError("test_path must not start with '-'")
+        p = Path(v)
+        if p.is_absolute():
+            raise ValueError("test_path must be a relative path inside the repository")
+        for part in p.parts:
+            if part == ".." or is_protected_name(part):
+                raise ValueError(f"test_path traverses protected or invalid path component: {part}")
+        return v
+
+    @field_validator("test_name_pattern")
+    @classmethod
+    def validate_pattern(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("test_name_pattern must not be blank")
+        v = v.strip()
+        if v.startswith("-"):
+            raise ValueError("test_name_pattern must not start with '-'")
+        if "\x00" in v:
+            raise ValueError("test_name_pattern must not contain null bytes")
+        if any(ord(c) < 32 and c not in " \t" for c in v) or "\n" in v or "\r" in v:
+            raise ValueError("test_name_pattern contains control characters or newlines")
+        return v
+
+    @field_validator("config_file")
+    @classmethod
+    def validate_config_file(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("config_file must not be blank")
+        if "\x00" in v:
+            raise ValueError("config_file must not contain null bytes")
+        v = v.strip()
+        if v.startswith("-"):
+            raise ValueError("config_file must not start with '-'")
+        p = Path(v)
+        if p.is_absolute():
+            raise ValueError("config_file must be a relative path inside the repository")
+        for part in p.parts:
+            if part == ".." or is_protected_name(part):
+                raise ValueError(f"config_file traverses protected or invalid path component: {part}")
+        if "jest" in p.name.lower():
+            raise ValueError("Jest configuration is not supported by Vitest adapter")
+        return v
+
+
 class TestExecutionRequest(BaseModel):
     """Versioned test execution request specifying repository, target, budget and backend."""
     __test__ = False
@@ -106,7 +178,7 @@ class TestExecutionRequest(BaseModel):
     repository: Path
     backend: str = Field(default="pytest", max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$")
     cwd: str = Field(default=".", max_length=4096)
-    selection: PytestSelection | dict[str, Any] | None = None
+    selection: PytestSelection | VitestSelection | dict[str, Any] | None = None
     timeout: float = Field(default=60.0, gt=0, le=3600.0)
     sandbox: Literal["host", "docker"] = "docker"
     trusted: bool = False
