@@ -218,8 +218,8 @@ flowchart LR
 | 63 | [SF-IMG-02](#sf-img-02) | Merged | Codex（审查整合） | SF-IMG-01（Merged） | [PR #120](https://github.com/liuzhouquan/selfforge-agent/pull/120)：离线依赖镜像二级深度安全加固：哈希规范化、Wheelhouse诊断抽象、镜像引用防注入与构建模型Schema形式化 |
 | 64 | [SF-CTX-02](#sf-ctx-02) | Merged | Codex（审查整合） | SF-CTX-01（Merged） | [PR #121](https://github.com/liuzhouquan/selfforge-agent/pull/121)：模型上下文管理器二级深度安全加固：估算边界防护、交互切片严格单射配对、压缩锚点序保护与度量报告Schema形式化 |
 | 65 | [SF-HARNESS-01](#sf-harness-01) | Merged | Codex（审查整合） | 现有 pytest/JUnit、执行器、指纹 | [PR #122](https://github.com/liuzhouquan/selfforge-agent/pull/122)：共享请求/计划/结果契约、统一成功门槛与 pytest 兼容适配 |
-| 66 | [SF-HARNESS-02](#sf-harness-02) | In Review | Codex（实现交付） | SF-HARNESS-01（Merged） | [PR #123](https://github.com/liuzhouquan/selfforge-agent/pull/123)：只读发现、冻结测试 profile、工具链/离线依赖与隔离 staging |
-| 67 | [SF-HARNESS-03](#sf-harness-03) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | JS/TS Vitest 后端与独立 JUnit 工件（未实现、未验证） |
+| 66 | [SF-HARNESS-02](#sf-harness-02) | Merged | Codex（审查整合） | SF-HARNESS-01（Merged） | [PR #123](https://github.com/liuzhouquan/selfforge-agent/pull/123)：只读发现、冻结测试 profile、工具链/离线依赖与隔离 staging |
+| 67 | [SF-HARNESS-03](#sf-harness-03) | In Review | Codex（实现交付） | SF-HARNESS-01 / SF-HARNESS-02（Merged） | [PR #124](https://github.com/liuzhouquan/selfforge-agent/pull/124)：JS/TS Vitest 后端与独立 JUnit 工件 |
 | 68 | [SF-HARNESS-04](#sf-harness-04) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | Go 原生 JSON 事件后端及用例/包级状态归一化（未实现、未验证） |
 | 69 | [SF-HARNESS-05](#sf-harness-05) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | Java Maven Surefire 后端与编译/测试失败分类（未实现、未验证） |
 | 70 | [SF-HARNESS-06](#sf-harness-06) | Waiting | 未认领 | SF-HARNESS-01 / SF-HARNESS-02 | Java Gradle Test 后端与新鲜报告/缓存边界（未实现、未验证） |
@@ -2932,7 +2932,7 @@ PR / 准确 head CI / merge SHA（有则填）：PR #122 / https://github.com/li
 
 **范围/入口：** `src/selfforge_agent/runtime/environment.py`、`src/selfforge_agent/runtime/execution.py`、`src/selfforge_agent/runtime/fingerprint.py`、`src/selfforge_agent/runtime/session.py`；Python wheelhouse 接口保持兼容。
 
-**前提 / 状态：** SF-HARNESS-01；In Review。
+**前提 / 状态：** SF-HARNESS-01；Merged。
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
@@ -2951,11 +2951,11 @@ PR / 准确 head CI / merge SHA（有则填）：PR #122 / https://github.com/li
 **执行记录：**
 
 ```text
-Owner / 状态：Codex（实现交付） / In Review
+Owner / 状态：Codex（审查整合） / Merged
 实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：638fa450c6094cf4b5f24ea5846f41948fad4fce / feat/sf-harness-02 (worktree: selfforge-sf-harness-02) / fa25170e88993d8256c86425d21c07e0a0e5534f
 已完成验收与证据 ID：SF-HARNESS-02-A1..A4（E1–E4）
 未完成 / 环境限制 / 未提交内容归属：无未提交内容；本地 13 项环境与发现测试全部通过；HARNESS-01/02 组合契约测试 38 项全部通过；全量 1930 单元测试通过；CI Docker 集成测试通过；后续各语言特定适配器执行由 SF-HARNESS-03..06 承接
-PR / 准确 head CI / merge SHA（有则填）：PR #123 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44679206554 / 待合并回填
+PR / 准确 head CI / merge SHA（有则填）：PR #123 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44679206554 / 1f7469df84d7a9a3ee8c8a4e843af4e6319cdf1b
 仍在运行的本任务进程或 CI（无则写无）：无
 下一步：等待 PR #123 审查与合并；合并后下一项 Ready 任务为 SF-HARNESS-03。
 ```
@@ -2966,18 +2966,33 @@ PR / 准确 head CI / merge SHA（有则填）：PR #123 / https://github.com/li
 
 **范围/入口：** 共享 verification 适配器入口与既有 DockerExecutor；实现时固定 Vitest/Node/依赖版本及报告输出配置。
 
-**前提 / 状态：** SF-HARNESS-01 / SF-HARNESS-02；Waiting，未认领。本节是实施规格，本次文档变更不代表功能已经实现。
+**前提 / 状态：** SF-HARNESS-01 / SF-HARNESS-02（Merged）；In Review。
 
 | 验收 ID | Given / When / Then | 最少证明方式 | 初始证据 |
 | --- | --- | --- | --- |
-| SF-HARNESS-03-A1 | JS和TS正控都能在无网络Docker单次执行，明确选择测试文件/名称；不启watch或触发npx下载安装 | 真实JS/TS夹具各含正控和断言失败；记录工具链/镜像及实际执行计划 | 未实现、未验证 |
-| SF-HARNESS-03-A2 | 从本次独立工件文件读取JUnit，日志不能污染XML；错报告路径、旧报告、输出截断、空/全skip均不成功 | 报告生命周期、UTF-8、日志混合、缺工件、malformed XML与零测试反例 | 未实现、未验证 |
-| SF-HARNESS-03-A3 | 配置/导入/转译错误归为构建或执行错误，不能误称断言回归；超时/取消不保留旧通过证据 | 真实TypeScript语法错误、配置错误与进程超时/取消用例 | 未实现、未验证 |
-| SF-HARNESS-03-A4 | 工具结果和归一化结果符合共享门槛；Python后端无回退或选择变化 | 后端参数化契约测试及实际Docker结果经共享成功判定 | 未实现、未验证 |
+| SF-HARNESS-03-A1 | JS和TS正控都能在无网络Docker单次执行，明确选择测试文件/名称；不启watch或触发npx下载安装 | 真实JS/TS夹具各含正控和断言失败；记录工具链/镜像及实际执行计划 | E1（`tests/test_harness_vitest.py::test_vitest_selection_validation_js_and_ts`、`test_vitest_plan_generation_single_shot_and_no_watch` 等） |
+| SF-HARNESS-03-A2 | 从本次独立工件文件读取JUnit，日志不能污染XML；错报告路径、旧报告、输出截断、空/全skip均不成功 | 报告生命周期、UTF-8、日志混合、缺工件、malformed XML与零测试反例 | E2（`tests/test_harness_vitest.py::test_vitest_docker_execution_success`、`test_vitest_stdout_logs_do_not_contaminate_xml` 等） |
+| SF-HARNESS-03-A3 | 配置/导入/转译错误归为构建或执行错误，不能误称断言回归；超时/取消不保留旧通过证据 | 真实TypeScript语法错误、配置错误与进程超时/取消用例 | E3（`tests/test_harness_vitest.py::test_vitest_transpile_and_syntax_error_classified_as_build_error`、`test_vitest_timeout_and_cancellation`） |
+| SF-HARNESS-03-A4 | 工具结果和归一化结果符合共享门槛；Python后端无回退或选择变化 | 后端参数化契约测试及实际Docker结果经共享成功判定 | E4（`tests/test_harness_vitest.py::test_backend_parameterized_harness_integration`、`test_pytest_backward_compatibility_retained` 等） |
 
-**执行记录：** 尚未领取；实现时登记实际Base、Owner、分支/worktree、测试节点与准确CI。当前没有实现提交、PR或运行证据。
+| 记录 | 验收 ID | 测试节点 / 实际入口 | 命令与环境 | 验证 SHA / 结果 / CI |
+| --- | --- | --- | --- | --- |
+| E1 | SF-HARNESS-03-A1 | `tests/test_harness_vitest.py::test_vitest_selection_validation_js_and_ts`、`tests/test_harness_vitest.py::test_vitest_selection_pattern_and_traversal_guards`、`tests/test_harness_vitest.py::test_vitest_plan_generation_single_shot_and_no_watch`、`tests/test_harness_vitest.py::test_vitest_rejects_jest_and_browser_mode`、`tests/test_harness_vitest.py::test_vitest_host_execution_requires_trust` | `PYTHONPATH=src pytest tests/test_harness_vitest.py -k "test_vitest_selection or test_vitest_plan or test_vitest_rejects or test_vitest_host_execution_requires_trust"` | `8a75093e7547258b006fe5875931695d8efd8100`；passed；CI [R1 44693901677](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44693901677) |
+| E2 | SF-HARNESS-03-A2 | `tests/test_harness_vitest.py::test_vitest_docker_execution_success`、`tests/test_harness_vitest.py::test_vitest_stdout_logs_do_not_contaminate_xml`、`tests/test_harness_vitest.py::test_vitest_missing_or_corrupt_artifact_fails_closed`、`tests/test_harness_vitest.py::test_vitest_empty_suite_and_all_skipped_fail` | `PYTHONPATH=src pytest tests/test_harness_vitest.py -k "test_vitest_docker or test_vitest_stdout or test_vitest_missing or test_vitest_empty"` | `8a75093e7547258b006fe5875931695d8efd8100`；passed；CI [R1 44693901677](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44693901677) |
+| E3 | SF-HARNESS-03-A3 | `tests/test_harness_vitest.py::test_vitest_assertion_failure_classified_as_test_failure`、`tests/test_harness_vitest.py::test_vitest_transpile_and_syntax_error_classified_as_build_error`、`tests/test_harness_vitest.py::test_vitest_timeout_and_cancellation`、`tests/test_harness_vitest.py::test_vitest_environment_unavailable_mapping` | `PYTHONPATH=src pytest tests/test_harness_vitest.py -k "test_vitest_assertion or test_vitest_transpile or test_vitest_timeout or test_vitest_environment"` | `8a75093e7547258b006fe5875931695d8efd8100`；passed；CI [R1 44693901677](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44693901677) |
+| E4 | SF-HARNESS-03-A4 | `tests/test_harness_vitest.py::test_vitest_to_test_result_bridge`、`tests/test_harness_vitest.py::test_backend_parameterized_harness_integration`、`tests/test_harness_vitest.py::test_pytest_backward_compatibility_retained` 及既有 `tests/test_harness_contracts.py`、`tests/test_harness_environment.py` | `PYTHONPATH=src pytest tests/test_harness_vitest.py tests/test_harness_contracts.py tests/test_harness_environment.py` | `8a75093e7547258b006fe5875931695d8efd8100`；passed（55 passed）；CI [R1 44693901677](https://github.com/liuzhouquan/selfforge-agent/actions/runs/44693901677) |
 
-**下一步：** 等待前提任务验收闭合，再认领本任务；不得把 Waiting 改成已完成。
+**执行记录：**
+
+```text
+Owner / 状态：Codex（实现交付） / In Review
+实际 base SHA / 分支及 worktree 标识 / 当前 HEAD：1f7469df84d7a9a3ee8c8a4e843af4e6319cdf1b / feat/sf-harness-03 (worktree: selfforge-sf-harness-03) / 8a75093e7547258b006fe5875931695d8efd8100
+已完成验收与证据 ID：SF-HARNESS-03-A1..A4（E1–E4）
+未完成 / 环境限制 / 未提交内容归属：无未提交内容；本地 17 项 Vitest 新增单元测试全部通过；HARNESS 全套 55 项契约与环境测试通过；全量 1947 项单元测试通过；CI 集成测试通过；后续 Go / Java 适配器由 SF-HARNESS-04..06 承接
+PR / 准确 head CI / merge SHA（有则填）：PR #124 / https://github.com/liuzhouquan/selfforge-agent/actions/runs/44693901677 / 待合并回填
+仍在运行的本任务进程或 CI（无则写无）：无
+下一步：等待 PR #124 审查与合并；合并后下一项 Ready 任务为 SF-HARNESS-04。
+```
 
 ### SF-HARNESS-04
 

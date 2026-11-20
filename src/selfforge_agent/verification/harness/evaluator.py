@@ -69,18 +69,23 @@ def evaluate_harness_result(
 
     # 3. Missing report artifact path
     if xml_bytes is None:
+        is_build_error = exit_code not in (0, None)
         return TestRunResult(
             run_id=run_id,
             adapter_id=plan.adapter_id,
             adapter_version=plan.adapter_version,
             plan_digest=plan.plan_digest,
             status=HarnessStatus.ERROR,
-            reason_code=HarnessReasonCode.INVALID_EVIDENCE,
+            reason_code=HarnessReasonCode.BUILD_ERROR if is_build_error else HarnessReasonCode.INVALID_EVIDENCE,
             exit_code=exit_code,
             duration_seconds=duration,
             stdout=stdout[-50000:],
             stderr=stderr[-50000:],
-            error_message=f"{plan.adapter_id} did not produce JUnit XML",
+            error_message=(
+                f"{plan.adapter_id} exited with code {exit_code} (build or collection error)"
+                if is_build_error
+                else f"{plan.adapter_id} did not produce JUnit XML"
+            ),
             environment=plan.environment,
             command=plan.command,
         )
@@ -88,7 +93,15 @@ def evaluate_harness_result(
     # 4. Parse JUnit XML artifact
     evidence = parse_junit(xml_bytes, timed_out)
     if evidence.error is not None:
-        if exit_code == 2:
+        is_build_error = (exit_code == 2) or (
+            exit_code is not None
+            and exit_code != 0
+            and any(
+                marker in (stdout + stderr)
+                for marker in ("SyntaxError", "Cannot find", "Failed to parse", "Parse error")
+            )
+        )
+        if is_build_error:
             return TestRunResult(
                 run_id=run_id,
                 adapter_id=plan.adapter_id,
@@ -100,7 +113,7 @@ def evaluate_harness_result(
                 duration_seconds=duration,
                 stdout=stdout[-50000:],
                 stderr=stderr[-50000:],
-                error_message=f"{plan.adapter_id} exited with code 2 (build/collection error): {evidence.error}",
+                error_message=f"{plan.adapter_id} exited with code {exit_code} (build/collection error): {evidence.error}",
                 environment=plan.environment,
                 command=plan.command,
             )
@@ -217,15 +230,17 @@ def evaluate_harness_result(
     total = passed + failed + errors + skipped
 
     # 6. Evaluate final status and reason code based on shared threshold
+    has_test_failures = failed > 0 or any(f.kind == "failure" for f in evidence.failures)
+
     if failed > 0 or errors > 0:
-        if failed > 0 or evidence.failures:
+        if has_test_failures:
             status = HarnessStatus.FAILED
             reason_code = HarnessReasonCode.TEST_FAILURE
             error_message = None
         else:
             status = HarnessStatus.ERROR
             reason_code = HarnessReasonCode.BUILD_ERROR
-            error_message = f"{plan.adapter_id} exited with errors (build or collection failure)"
+            error_message = f"{plan.adapter_id} exited with errors (build, transpile, or collection failure)"
     elif exit_code != 0:
         status = HarnessStatus.ERROR
         reason_code = HarnessReasonCode.BUILD_ERROR

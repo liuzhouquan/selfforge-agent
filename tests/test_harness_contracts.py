@@ -103,12 +103,12 @@ def test_request_fail_closed_on_unsupported_backend(tmp_path: Path):
     harness = TestHarness()
     req = TestExecutionRequest(
         repository=repo,
-        backend="vitest",  # Unsupported until SF-HARNESS-03
+        backend="unsupported_backend",
         sandbox="host",
         trusted=True,
     )
     with patch("subprocess.Popen") as mock_popen:
-        with pytest.raises(UnsupportedBackendError, match="Unsupported test backend 'vitest'"):
+        with pytest.raises(UnsupportedBackendError, match="Unsupported test backend 'unsupported_backend'"):
             harness.build_plan(req)
         mock_popen.assert_not_called()
 

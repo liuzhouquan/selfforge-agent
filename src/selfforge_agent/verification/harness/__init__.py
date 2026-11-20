@@ -10,6 +10,7 @@ from selfforge_agent.verification.harness.contracts import (
     TestPlan,
     TestRunResult,
     UnsupportedBackendError,
+    VitestSelection,
 )
 from selfforge_agent.verification.harness.discovery import (
     AmbiguousSelectionError,
@@ -25,6 +26,7 @@ from selfforge_agent.verification.harness.profile import (
 )
 from selfforge_agent.verification.harness.pytest_adapter import PytestAdapter, TrustRequiredError
 from selfforge_agent.verification.harness.service import TestHarness
+from selfforge_agent.verification.harness.vitest_adapter import VitestAdapter
 
 __all__ = [
     "AmbiguousSelectionError",
@@ -42,6 +44,8 @@ __all__ = [
     "TestRunResult",
     "TrustRequiredError",
     "UnsupportedBackendError",
+    "VitestAdapter",
+    "VitestSelection",
     "build_frozen_plan_from_profile",
     "discover_project_candidates",
     "evaluate_harness_result",
