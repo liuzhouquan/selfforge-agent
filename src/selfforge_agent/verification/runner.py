@@ -122,6 +122,7 @@ def _read_junit_file(xml_path: Path) -> bytes | None:
 
 
 class TestRunner:
+    __test__ = False
     requires_trust = True
 
     def run(
@@ -199,6 +200,7 @@ class TestRunner:
 class DockerTestRunner:
     """Run each worktree's tests in a discarded copy and parse its JUnit artifact."""
 
+    __test__ = False
     requires_trust = False
 
     def __init__(self, image: str = "selfforge-agent-sandbox:latest") -> None:

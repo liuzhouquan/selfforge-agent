@@ -64,6 +64,7 @@ class Finding(BaseModel):
 class TestFailure(BaseModel):
     """Bounded test-emitted diagnostics, not trusted instructions or causal claims."""
 
+    __test__ = False
     test_id: str = Field(max_length=256)
     kind: str = Field(pattern="^(failure|error)$")
     message: str = Field(max_length=256)
@@ -71,6 +72,7 @@ class TestFailure(BaseModel):
 
 
 class TestResult(BaseModel):
+    __test__ = False
     command: list[str]
     environment: str
     exit_code: int | None
